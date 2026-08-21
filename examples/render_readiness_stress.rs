@@ -1,10 +1,10 @@
 //! Repeatedly measures the gap between protocol readiness and the first visible rendered frame.
-use automation_control::{
-    Command,
+use bug_hunter::{
     driver::{LaunchSpec, LaunchTargetKind, Session, SessionOptions},
     observation::{Projection, Request as ObservationRequest, Selector},
     screenshot::Command as ScreenshotCommand,
     time::Command as TimeCommand,
+    Command,
 };
 use serde::Serialize;
 use std::{
@@ -149,7 +149,7 @@ fn run_session(
         }
     };
     let ready = session.ready()?;
-    if ready.mode != automation_control::RunMode::Rendered {
+    if ready.mode != bug_hunter::RunMode::Rendered {
         return Err(format!("run {run_index} started in {:?} mode", ready.mode).into());
     }
     if !ready.controls.contains(&"screenshot".into()) {

@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn explicit_example_is_a_supported_launch_target() {
         let spec = LaunchSpec {
-            package: "automation_control".into(),
+            package: "bug_hunter".into(),
             kind: LaunchTargetKind::Example,
             target: "bevy_controller".into(),
             features: vec!["driver".into()],
@@ -126,9 +126,8 @@ mod tests {
             .get_args()
             .map(|value| value.to_string_lossy().into_owned())
             .collect();
-        assert!(
-            args.windows(2)
-                .any(|values| values == ["--example", "bevy_controller"])
-        );
+        assert!(args
+            .windows(2)
+            .any(|values| values == ["--example", "bevy_controller"]));
     }
 }

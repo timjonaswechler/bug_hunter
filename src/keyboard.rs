@@ -5,8 +5,8 @@
 
 use bevy::{
     input::{
-        ButtonState,
         keyboard::{Key as BevyKey, KeyCode, KeyboardInput},
+        ButtonState,
     },
     prelude::*,
     window::{PrimaryWindow, Window},
@@ -267,7 +267,7 @@ impl std::error::Error for Error {}
 /// event or guarantee that application systems consume it. Press before release:
 ///
 /// ```
-/// use automation_control::keyboard::{Command, Key};
+/// use bug_hunter::keyboard::{Command, Key};
 /// let commands = [Command::Press { key: Key::A }, Command::Release { key: Key::A }];
 /// assert!(commands.iter().all(|command| command.validate().is_ok()));
 /// ```
@@ -347,12 +347,10 @@ mod tests {
         let press = Command::Press { key: Key::Escape };
         let release = Command::Release { key: Key::Escape };
 
-        assert!(
-            keyboard_event(&mut state, &world, &press)
-                .unwrap()
-                .state
-                .is_pressed()
-        );
+        assert!(keyboard_event(&mut state, &world, &press)
+            .unwrap()
+            .state
+            .is_pressed());
         assert!(state.is_pressed(&Key::Escape));
         assert_eq!(
             keyboard_event(&mut state, &world, &press).unwrap_err(),

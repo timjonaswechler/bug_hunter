@@ -8,7 +8,7 @@
 //!
 //! Host and child artifacts have separate roots. [`SessionOptions::artifact_dir`] contains Session
 //! Recordings and driver diagnostics. [`SessionOptions::session_artifact_dir`] is passed to the
-//! child through [`crate::AUTOMATION_CONTROL_ARTIFACT_DIR`] for screenshots and other artifacts the
+//! child through [`crate::bug_hunter_ARTIFACT_DIR`] for screenshots and other artifacts the
 //! Controlled Session writes. Neither root is implicitly nested below the other.
 
 mod command_line;
@@ -31,12 +31,12 @@ pub use command_line::{
     CommandLine, CommandLineError, ReportOptions, RunOptions, USAGE as COMMAND_LINE_USAGE,
 };
 pub use config::{
-    ApplicationConfig, CONFIG_VERSION, Config, ConfigError, DefaultMode, ReportConfig,
-    ScreenConfig, SessionConfig, ToolConfig,
+    ApplicationConfig, Config, ConfigError, DefaultMode, ReportConfig, ScreenConfig, SessionConfig,
+    ToolConfig, CONFIG_VERSION,
 };
 pub use diagnostics::{
-    DEFAULT_RECENT_LOG_CAPACITY, DiagnosticArtifacts, DiagnosticsError, FAILURE_REPORT_VERSION,
-    FailureHeadline, FailureReport, RecentLogs,
+    DiagnosticArtifacts, DiagnosticsError, FailureHeadline, FailureReport, RecentLogs,
+    DEFAULT_RECENT_LOG_CAPACITY, FAILURE_REPORT_VERSION,
 };
 pub use issue_report::{IssueDraft, ReportError};
 pub use launch::{LaunchSpec, LaunchTargetKind};

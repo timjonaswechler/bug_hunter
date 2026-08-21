@@ -1,4 +1,4 @@
-use automation_control::driver::{ReportConfig, github};
+use bug_hunter::driver::{github, ReportConfig};
 use serde_json::json;
 use std::{
     fs,

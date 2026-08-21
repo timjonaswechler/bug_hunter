@@ -1,12 +1,12 @@
 use bevy::{prelude::*, time::Fixed};
+use bevy_test_apps::composition;
 #[cfg(feature = "automation")]
 use bevy_test_apps::LogicalSurface;
-use bevy_test_apps::composition;
 
-#[cfg(feature = "automation")]
-use automation_control::AutomationTarget;
 #[cfg(not(feature = "automation"))]
 use bevy::window::WindowResolution;
+#[cfg(feature = "automation")]
+use bug_hunter::AutomationTarget;
 
 const SURFACE_WIDTH: u32 = 640;
 const SURFACE_HEIGHT: u32 = 360;

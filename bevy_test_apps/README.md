@@ -1,8 +1,8 @@
 # Bevy test applications
 
-This package holds small Bevy applications used to exercise `automation_control`. Each application is an explicit binary, so another application only needs a new `src/bin/*.rs` file and `[[bin]]` entry.
+This package holds small Bevy applications used to exercise `bug_hunter`. Each application is an explicit binary, so another application only needs a new `src/bin/*.rs` file and `[[bin]]` entry.
 
-Rendered binaries use `composition::rendered` with a configured window. Without features, it builds a Player Run with Bevy's native input plugins. With `--features automation`, it builds a Rendered Mode Controlled Session with `InputPlugin` and `GilrsPlugin` disabled, screenshot support enabled, and `automation_control` supplying Virtual Input over protocol v2.
+Rendered binaries use `composition::rendered` with a configured window. Without features, it builds a Player Run with Bevy's native input plugins. With `--features automation`, it builds a Rendered Mode Controlled Session with `InputPlugin` and `GilrsPlugin` disabled, screenshot support enabled, and `bug_hunter` supplying Virtual Input over protocol v2.
 
 With `--features automation`, `logical_state` uses `composition::logical`. Without the feature it uses the rendered composition as a native Player Run, like the other binaries. The logical composition installs no Winit, `WindowPlugin`, `RenderPlugin`, `InputPlugin`, Gilrs, or native pointer producer. It creates one data-only `Window` component with fixed dimensions so Bevy UI layout and Virtual Pointer coordinates share a session-local surface. No operating-system window backs that entity.
 
@@ -19,7 +19,7 @@ cargo run -p bevy_test_apps --bin context_menu
 The controller launches the automation composition and checks pointer buttons, scrolling, keyboard state, focused text entry, reflected state, and screenshots through the public `driver::Session` interface:
 
 ```bash
-cargo run -p automation_control --example bevy_controller --features driver
+cargo run -p bug_hunter --example bevy_controller --features driver
 ```
 
 ## Blend modes
@@ -37,7 +37,7 @@ The scene uses seed `0x5eedb1e5`. Each `C` press derives colors from that seed, 
 The rendered controller checks held arrow keys, controlled time, separate mode-key presses, reflected state, camera and material components, and screenshots at fixed controlled frames:
 
 ```bash
-cargo run -p automation_control --example blend_modes_controller --features driver
+cargo run -p bug_hunter --example blend_modes_controller --features driver
 ```
 
 ## Mesh picking
@@ -51,7 +51,7 @@ cargo run -p bevy_test_apps --bin mesh_picking
 The rendered controller drives the same binary through Virtual Input and controlled time. It checks mesh hover, press, release, drag, reflected transforms and interaction state, deterministic rotation, and screenshots:
 
 ```bash
-cargo run -p automation_control --example picking_controller --features driver
+cargo run -p bug_hunter --example picking_controller --features driver
 ```
 
 ## UI drag and drop
@@ -65,7 +65,7 @@ cargo run -p bevy_test_apps --bin ui_drag_drop
 The rendered controller derives tile centers from observed UI bounds, then builds complete drags from pointer moves, a press, controlled frames, and a release. It checks the Bevy `DragStart`, `Drag`, `DragDrop`, and `DragEnd` lifecycle, reflected layout and presentation components, valid and invalid drops, and screenshots of the initial, dragging, and dropped states:
 
 ```bash
-cargo run -p automation_control --example ui_drag_drop_controller --features driver
+cargo run -p bug_hunter --example ui_drag_drop_controller --features driver
 ```
 
 ## Game menu
@@ -81,7 +81,7 @@ With `--features automation`, the persistent `game-menu-state` target reflects t
 The rendered controller navigates with Virtual Pointer and Virtual Keyboard input, verifies state-scoped despawning and stale-handle rejection, and captures the main menu, settings, display settings, and game screen:
 
 ```bash
-cargo run -p automation_control --example game_menu_controller --features driver
+cargo run -p bug_hunter --example game_menu_controller --features driver
 ```
 
 ## Logical state
@@ -95,7 +95,7 @@ cargo run -p bevy_test_apps --bin logical_state --features automation
 The driver integration test removes display environment variables and controls the child through the public session API:
 
 ```bash
-cargo test -p automation_control --features driver --test logical_state -- --test-threads=1
+cargo test -p bug_hunter --features driver --test logical_state -- --test-threads=1
 ```
 
 ## Application conventions

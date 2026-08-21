@@ -1,6 +1,6 @@
-# `automation_control`
+# `bug_hunter`
 
-`automation_control` provides the protocol and Bevy integration used by isolated Controlled
+`bug_hunter` provides the protocol and Bevy integration used by isolated Controlled
 Sessions. A Player Run does not depend on this crate. The crate does not know Star-Sim menu
 semantics and never injects operating-system input.
 
@@ -43,7 +43,7 @@ without changing the clock. Controlled Sessions do not run Bevy simulation sched
 advance command is pending. Input commands update session-local Virtual Input immediately, while
 Bevy application systems consume the queued transitions on the next controlled frame.
 
-A rendered composition opts into screenshots with `automation_control::screenshot::Plugin`. The
+A rendered composition opts into screenshots with `bug_hunter::screenshot::Plugin`. The
 plugin does not install a renderer, and `ready.controls` includes `screenshot` only when the
 composition already has Bevy's renderer and screenshot capture. Logical Mode and renderer-free
 compositions return `screenshot_capability_unavailable`.
@@ -66,7 +66,7 @@ systems and GPUs are not guaranteed.
 ## Embed the plugin
 
 ```rust
-use automation_control::AutomationControlPlugin;
+use bug_hunter::AutomationControlPlugin;
 
 app.add_plugins(AutomationControlPlugin::logical_stdio());
 // A rendered composition uses `rendered_stdio()` instead.
@@ -75,7 +75,7 @@ app.add_plugins(AutomationControlPlugin::logical_stdio());
 Tests and embedding applications provide the protocol mode and transport adapters explicitly:
 
 ```rust
-use automation_control::RunMode;
+use bug_hunter::RunMode;
 
 app.add_plugins(AutomationControlPlugin::with_io(
     RunMode::Rendered,
@@ -138,10 +138,10 @@ list. Handles are valid only for the current Bevy World.
 ## Debug Host
 
 Enable the optional Debug Host support for a host application. The former `driver` feature and
-`automation_control::driver` module remain aliases for compatibility.
+`bug_hunter::driver` module remain aliases for compatibility.
 
 ```toml
-automation_control = { path = "../../crates/automation_control", features = ["host"] }
+bug_hunter = { path = "../../crates/bug_hunter", features = ["host"] }
 ```
 
 ```rust
@@ -164,14 +164,14 @@ Enable recording at launch with an artifact-root-relative path:
 
 ```rust
 use std::path::PathBuf;
-use automation_control::driver::{SessionOptions, recording::Controller};
+use bug_hunter::driver::{SessionOptions, recording::Controller};
 
 let options = SessionOptions::new()
     .with_artifact_dir("artifacts/session")
     .with_record(Some(PathBuf::from("recordings/run.jsonl")))
     .with_recording_context(
         "alpha",
-        automation_control::RunMode::Logical,
+        bug_hunter::RunMode::Logical,
         serde_json::json!({"surface": [640, 360]}),
     )
     .with_controller(Controller::new("repl"));
@@ -197,7 +197,7 @@ sequences, returning an unsupported-version error for newer formats.
 Host waits compose existing observation and time commands. They do not add a wait command to the wire protocol. `FrameLimit` validates both the maximum frame count and each controlled time step against the protocol limits:
 
 ```rust
-use automation_control::driver::wait::FrameLimit;
+use bug_hunter::driver::wait::FrameLimit;
 
 let response = session.wait_for_observation(
     observation,
@@ -213,7 +213,7 @@ The predicate sees the current observation before any frame advances. After each
 The display-free `logical_state` binary runs in Logical Mode with a fixed data-only surface. It exercises Virtual Pointer and Keyboard input, controlled timers, `Update`, `FixedUpdate`, reflected state, deterministic observations, bounded host waits, and typed screenshot rejection through a real child process:
 
 ```bash
-cargo test -p automation_control --features driver --test logical_state -- --test-threads=1
+cargo test -p bug_hunter --features driver --test logical_state -- --test-threads=1
 ```
 
 The `bevy_test_apps` package also contains the rendered `context_menu` binary. Without features it runs as a Player
@@ -224,14 +224,14 @@ reflection conventions, and the adapted Bevy example's provenance are documented
 [`bevy_test_apps/README.md`](bevy_test_apps/README.md).
 
 ```bash
-cargo run -p automation_control --example bevy_controller --features driver
+cargo run -p bug_hunter --example bevy_controller --features driver
 ```
 
 The default smoke exits as soon as its assertions pass. To keep the Controlled Session open while
 moving the virtual pointer in one circle per second, provide a duration:
 
 ```bash
-cargo run -p automation_control --example bevy_controller --features driver -- --circle-seconds 60
+cargo run -p bug_hunter --example bevy_controller --features driver -- --circle-seconds 60
 ```
 
 A display and render adapter are required for that smoke test. Display-free protocol, observation,
@@ -240,8 +240,8 @@ and driver tests do not need them.
 ## Testing
 
 ```bash
-cargo test -p automation_control
-cargo test -p automation_control --features driver
+cargo test -p bug_hunter
+cargo test -p bug_hunter --features driver
 ```
 
 The rendered readiness stress test launches fresh `ui_drag_drop` sessions and distinguishes black
@@ -251,7 +251,7 @@ binary once so repeated launches do not include Cargo startup time:
 ```bash
 cargo build -p bevy_test_apps --bin ui_drag_drop --features automation
 RENDER_STRESS_APP=target/debug/ui_drag_drop \
-  cargo run -p automation_control --example render_readiness_stress --features driver
+  cargo run -p bug_hunter --example render_readiness_stress --features driver
 ```
 
 Use `RENDER_STRESS_RUNS`, `RENDER_STRESS_FRAMES`, `RENDER_STRESS_ATTEMPTS`, and

@@ -8,8 +8,8 @@ use crate::artifact_root_path;
 use bevy::{
     prelude::*,
     render::{
-        RenderApp,
         view::window::screenshot::{CapturedScreenshots, Screenshot, ScreenshotCaptured},
+        RenderApp,
     },
     window::PrimaryWindow,
 };
@@ -18,7 +18,7 @@ use cap_std::{
     fs::{Dir, OpenOptions},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
@@ -58,7 +58,7 @@ impl Command {
     /// `..` components.
     ///
     /// ```
-    /// use automation_control::screenshot::Command;
+    /// use bug_hunter::screenshot::Command;
     /// assert!(Command::new("captures/current.png").validate().is_ok());
     /// assert!(Command::new("../outside.png").validate().is_err());
     /// ```
@@ -155,7 +155,7 @@ impl Default for Plugin {
 impl Plugin {
     /// Creates the plugin with an explicit session artifact root.
     ///
-    /// This root takes precedence over [`crate::AUTOMATION_CONTROL_ARTIFACT_DIR`]. [`Default`]
+    /// This root takes precedence over [`crate::bug_hunter_ARTIFACT_DIR`]. [`Default`]
     /// instead resolves the environment-aware fallback through [`crate::artifact_root_path`].
     pub fn with_artifact_root(path: impl Into<PathBuf>) -> Self {
         Self {

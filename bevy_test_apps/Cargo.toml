@@ -7,12 +7,12 @@ autobins = false
 
 [dependencies]
 bevy = { version = "0.19.1", features = [] }
-automation_control = { path = "../", optional = true }
+bug_hunter = { path = "../", optional = true }
 rand = "0.9"
 
 [features]
 default = []
-automation = ["dep:automation_control"]
+automation = ["dep:bug_hunter"]
 
 [[bin]]
 name = "context_menu"

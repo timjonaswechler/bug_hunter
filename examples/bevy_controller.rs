@@ -1,6 +1,5 @@
 //! Controller smoke test for the rendered Controlled Session.
-use automation_control::{
-    Command, Handle,
+use bug_hunter::{
     driver::{LaunchSpec, LaunchTargetKind, Session, SessionOptions},
     keyboard::{Command as KeyboardCommand, Key},
     observation::{Projection, Request as ObservationRequest, Selector},
@@ -8,6 +7,7 @@ use automation_control::{
     screenshot::Command as ScreenshotCommand,
     text::Command as TextCommand,
     time::Command as TimeCommand,
+    Command, Handle,
 };
 use serde_json::Value;
 use std::{
@@ -52,7 +52,7 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let ready = session.ready()?;
     assert_eq!(ready.version, 2);
-    assert_eq!(ready.mode, automation_control::RunMode::Rendered);
+    assert_eq!(ready.mode, bug_hunter::RunMode::Rendered);
     assert_eq!(
         ready.controls,
         ["pointer", "keyboard", "text", "time", "screenshot"]
@@ -332,9 +332,11 @@ fn observe_session_state(
             type_paths: vec!["context_menu::SessionState".into()],
         },
     )))?;
-    Ok(response.result.ok_or("state observation has no result")?["items"][0]["components"]
-        ["context_menu::SessionState"]["value"]
-        .clone())
+    Ok(
+        response.result.ok_or("state observation has no result")?["items"][0]["components"]
+            ["context_menu::SessionState"]["value"]
+            .clone(),
+    )
 }
 
 fn find_named<'a>(items: &'a [Value], name: &str) -> Result<&'a Value, Box<dyn std::error::Error>> {

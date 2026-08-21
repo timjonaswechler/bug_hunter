@@ -32,8 +32,8 @@ pub use client::{
 };
 pub use entity::{Handle, HandleError};
 pub use protocol::{
-    Command, PROTOCOL_VERSION, ProtocolError, Ready, Request, Response, ResponseStatus, RunMode,
-    decode_request,
+    decode_request, Command, ProtocolError, Ready, Request, Response, ResponseStatus, RunMode,
+    PROTOCOL_VERSION,
 };
 pub use target::AutomationTarget;
 pub use time::Clock as ControlledClock;
@@ -42,13 +42,13 @@ pub use time::Clock as ControlledClock;
 ///
 /// The root contains artifacts produced by the child session, such as screenshots. It is distinct
 /// from the host-side Session Recording root used by the feature-gated driver.
-pub const AUTOMATION_CONTROL_ARTIFACT_DIR: &str = "AUTOMATION_CONTROL_ARTIFACT_DIR";
+pub const bug_hunter_ARTIFACT_DIR: &str = "bug_hunter_ARTIFACT_DIR";
 
-/// Resolves [`AUTOMATION_CONTROL_ARTIFACT_DIR`], falling back to `default` when absent or empty.
+/// Resolves [`bug_hunter_ARTIFACT_DIR`], falling back to `default` when absent or empty.
 ///
 /// An explicit root passed to [`screenshot::Plugin::with_artifact_root`] bypasses this helper.
 pub fn artifact_root_path(default: impl Into<std::path::PathBuf>) -> std::path::PathBuf {
-    std::env::var_os(AUTOMATION_CONTROL_ARTIFACT_DIR)
+    std::env::var_os(bug_hunter_ARTIFACT_DIR)
         .filter(|value| !value.is_empty())
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| default.into())

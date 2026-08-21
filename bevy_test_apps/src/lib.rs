@@ -47,8 +47,8 @@ pub mod composition {
                     .disable::<bevy::gilrs::GilrsPlugin>(),
             )
             .add_plugins((
-                automation_control::AutomationControlPlugin::rendered_stdio(),
-                automation_control::screenshot::Plugin::default(),
+                bug_hunter::AutomationControlPlugin::rendered_stdio(),
+                bug_hunter::screenshot::Plugin::default(),
             ))
         }
 
@@ -79,7 +79,7 @@ pub mod composition {
             ));
 
         #[cfg(feature = "automation")]
-        app.add_plugins(automation_control::AutomationControlPlugin::logical_stdio());
+        app.add_plugins(bug_hunter::AutomationControlPlugin::logical_stdio());
 
         app.world_mut().spawn((
             Name::new("logical-surface"),

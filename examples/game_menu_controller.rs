@@ -1,12 +1,12 @@
 //! Controller smoke test for the rendered game-menu Controlled Session.
-use automation_control::{
-    Command, Handle,
+use bug_hunter::{
     driver::{DriverError, LaunchSpec, LaunchTargetKind, Session, SessionOptions},
     keyboard::{Command as KeyboardCommand, Key},
     observation::{Projection, Request as ObservationRequest, Selector},
     pointer::{Button, Command as PointerCommand},
     screenshot::Command as ScreenshotCommand,
     time::Command as TimeCommand,
+    Command, Handle,
 };
 use serde_json::Value;
 use std::{

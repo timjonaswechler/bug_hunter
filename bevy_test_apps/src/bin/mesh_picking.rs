@@ -7,7 +7,7 @@ use bevy::{
 };
 
 #[cfg(feature = "automation")]
-use automation_control::AutomationTarget;
+use bug_hunter::AutomationTarget;
 
 #[derive(Component)]
 struct RotatingMesh;

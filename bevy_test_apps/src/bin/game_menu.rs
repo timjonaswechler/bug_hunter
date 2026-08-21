@@ -9,7 +9,7 @@ use bevy::{
 };
 
 #[cfg(feature = "automation")]
-use automation_control::AutomationTarget;
+use bug_hunter::AutomationTarget;
 
 const TEXT_COLOR: Color = Color::srgb(0.92, 0.92, 0.92);
 const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);

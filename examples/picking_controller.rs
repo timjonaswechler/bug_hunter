@@ -1,11 +1,11 @@
 //! Controller smoke test for the rendered mesh-picking Controlled Session.
-use automation_control::{
-    Command, Handle,
+use bug_hunter::{
     driver::{LaunchSpec, LaunchTargetKind, Session, SessionOptions},
     observation::{Projection, Request as ObservationRequest, Selector},
     pointer::{Button, Command as PointerCommand},
     screenshot::Command as ScreenshotCommand,
     time::Command as TimeCommand,
+    Command, Handle,
 };
 use serde_json::Value;
 use std::{
@@ -38,7 +38,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         SessionOptions::new().with_artifact_dir(&artifact_root),
     )?;
     let ready = session.ready()?;
-    assert_eq!(ready.mode, automation_control::RunMode::Rendered);
+    assert_eq!(ready.mode, bug_hunter::RunMode::Rendered);
     advance(&mut session, 1)?;
 
     let targets = observe(&mut session, Selector::Targets, Projection::Summary)?;

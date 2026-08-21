@@ -10,8 +10,8 @@ use crate::{
 };
 use bevy::{
     camera::{
-        NormalizedRenderTarget,
         visibility::{InheritedVisibility, Visibility},
+        NormalizedRenderTarget,
     },
     ecs::{
         entity::ContainsEntity,
@@ -24,9 +24,9 @@ use bevy::{
     ui::{ComputedNode, Node, UiGlobalTransform},
 };
 use serde::{
-    Deserialize, Deserializer, Serialize, Serializer, de::Error as DeError, ser::SerializeMap,
+    de::Error as DeError, ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::{collections::BTreeSet, fmt};
 
 /// Default maximum items returned by one observation page.
@@ -244,7 +244,7 @@ impl std::error::Error for Error {}
 /// Target discovery and a second page can be requested as follows:
 ///
 /// ```
-/// use automation_control::observation::{Projection, Request, Selector};
+/// use bug_hunter::observation::{Projection, Request, Selector};
 /// let first = Request { limit: 10, ..Request::new(Selector::Targets, Projection::Summary) };
 /// let second = Request { cursor: Some(10), ..first.clone() };
 /// assert!(first.validate().is_ok() && second.validate().is_ok());
@@ -253,7 +253,7 @@ impl std::error::Error for Error {}
 /// Component and clock requests:
 ///
 /// ```
-/// use automation_control::{Handle, observation::{Projection, Request, Selector}};
+/// use bug_hunter::{Handle, observation::{Projection, Request, Selector}};
 /// let components = Request::new(
 ///     Selector::Entity(Handle::new(1, 1)),
 ///     Projection::Components { type_paths: vec!["my_app::Health".into()] },
@@ -305,11 +305,9 @@ fn select_entities(world: &World, selector: &Selector) -> Result<Vec<Entity>, Er
             .filter(|entity| entity.contains::<PointerId>())
             .map(|entity| entity.id())
             .collect(),
-        Selector::Entity(handle) => vec![
-            handle
-                .resolve(world)
-                .map_err(|_| Error::UnknownEntity(*handle))?,
-        ],
+        Selector::Entity(handle) => vec![handle
+            .resolve(world)
+            .map_err(|_| Error::UnknownEntity(*handle))?],
         Selector::VirtualInput => unreachable!("virtual input is observed from resources"),
         Selector::Clock => unreachable!("clock is observed from a resource"),
     };
@@ -369,12 +367,10 @@ fn observe_clock(world: &World, request: &Request) -> Result<Value, Error> {
         return Err(Error::InvalidCursor);
     }
     let items = if cursor == 0 {
-        vec![
-            world
-                .get_resource::<Clock>()
-                .map(Clock::observation)
-                .unwrap_or_else(|| Clock::default().observation()),
-        ]
+        vec![world
+            .get_resource::<Clock>()
+            .map(Clock::observation)
+            .unwrap_or_else(|| Clock::default().observation())]
     } else {
         Vec::new()
     };
@@ -942,12 +938,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(value["items"][0]["children"].as_array().unwrap().len(), 1);
-        assert!(
-            value["items"][0]["children"][0]["children"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(value["items"][0]["children"][0]["children"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         assert_eq!(
             Request::new(
                 Selector::Entity(handle),

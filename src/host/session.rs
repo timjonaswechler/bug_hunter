@@ -14,7 +14,7 @@ use super::{
     },
 };
 use crate::{
-    AUTOMATION_CONTROL_ARTIFACT_DIR, Command, PROTOCOL_VERSION, Ready, Request, Response,
+    bug_hunter_ARTIFACT_DIR, Command, PROTOCOL_VERSION, Ready, Request, Response,
     ResponseStatus, observation::Request as ObservationRequest, time::Command as TimeCommand,
 };
 use serde_json::Value;
@@ -74,11 +74,11 @@ impl std::error::Error for DriverError {}
 ///
 /// `artifact_dir` is the host root for Session Recordings and driver artifacts.
 /// `session_artifact_dir` is the child root supplied through
-/// [`crate::AUTOMATION_CONTROL_ARTIFACT_DIR`]. It is not automatically nested beneath the host
+/// [`crate::bug_hunter_ARTIFACT_DIR`]. It is not automatically nested beneath the host
 /// root. If omitted, the child root falls back to `artifact_dir`, then to `artifacts`.
 ///
 /// ```
-/// use automation_control::driver::SessionOptions;
+/// use bug_hunter::driver::SessionOptions;
 /// let options = SessionOptions::new()
 ///     .with_artifact_dir("artifacts/host")
 ///     .with_session_artifact_dir("artifacts/sessions/alpha");
@@ -205,7 +205,7 @@ impl Session {
         let session_artifact_root = options
             .session_artifact_dir
             .unwrap_or_else(|| artifact_root.clone());
-        command.env(AUTOMATION_CONTROL_ARTIFACT_DIR, &session_artifact_root);
+        command.env(bug_hunter_ARTIFACT_DIR, &session_artifact_root);
         #[cfg(unix)]
         command.process_group(0);
         let mut child = command

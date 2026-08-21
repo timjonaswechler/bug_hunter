@@ -236,7 +236,7 @@ pub fn resolve_surface(world: &World, requested: Option<Handle>) -> Result<Surfa
 /// event. Call move before actions that require a location.
 ///
 /// ```
-/// use automation_control::pointer::{Button, Command};
+/// use bug_hunter::pointer::{Button, Command};
 /// let sequence = [
 ///     Command::Move { surface: None, position: [10.0, 20.0] },
 ///     Command::Press { button: Button::Primary },
@@ -384,14 +384,12 @@ mod tests {
         for command in commands {
             assert!(command.validate().is_ok());
         }
-        assert!(
-            Command::Move {
-                surface: None,
-                position: [f32::NAN, 0.0]
-            }
-            .validate()
-            .is_err()
-        );
+        assert!(Command::Move {
+            surface: None,
+            position: [f32::NAN, 0.0]
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]

@@ -6,7 +6,7 @@ use bevy::{
 };
 
 #[cfg(feature = "automation")]
-use automation_control::AutomationTarget;
+use bug_hunter::AutomationTarget;
 
 const TILE_SIZE: f32 = 120.0;
 
@@ -250,12 +250,8 @@ mod drag {
         if source == destination {
             return;
         }
-        let Ok(
-            [
-                (source_tile, mut source_node),
-                (destination_tile, mut destination_node),
-            ],
-        ) = tiles.get_many_mut([source, destination])
+        let Ok([(source_tile, mut source_node), (destination_tile, mut destination_node)]) =
+            tiles.get_many_mut([source, destination])
         else {
             return;
         };

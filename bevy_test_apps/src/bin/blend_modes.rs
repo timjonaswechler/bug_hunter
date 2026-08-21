@@ -2,10 +2,10 @@
 
 use bevy::{camera::Hdr, color::palettes::css::ORANGE, prelude::*, window::WindowResolution};
 use bevy_test_apps::composition;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 #[cfg(feature = "automation")]
-use automation_control::AutomationTarget;
+use bug_hunter::AutomationTarget;
 
 const COLOR_SEED: u64 = 0x5eed_b1e5;
 const INITIAL_ALPHA: f32 = 0.9;

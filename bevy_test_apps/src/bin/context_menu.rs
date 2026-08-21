@@ -11,7 +11,7 @@ use bevy_test_apps::composition;
 use std::fmt::Debug;
 
 #[cfg(feature = "automation")]
-use automation_control::AutomationTarget;
+use bug_hunter::AutomationTarget;
 
 /// Event opening a new context menu at a pointer position.
 #[derive(Event)]
