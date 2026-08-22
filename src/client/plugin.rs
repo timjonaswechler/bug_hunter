@@ -247,10 +247,6 @@ struct Configuration {
     mode: RunMode,
 }
 
-fn rendered_mode(configuration: Res<Configuration>) -> bool {
-    configuration.mode == RunMode::Rendered
-}
-
 #[derive(Default, Resource)]
 struct PendingRequests(Vec<PendingRequest>);
 

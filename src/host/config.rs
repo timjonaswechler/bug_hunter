@@ -19,7 +19,6 @@ pub struct Config {
     pub application: ApplicationConfig,
     pub session: SessionConfig,
     pub report: ReportConfig,
-    pub screen: ScreenConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -151,9 +150,6 @@ impl Config {
                 self.application.mode_argument.as_str(),
             ),
             ("session.id", self.session.id.as_str()),
-            ("screen.target", self.screen.target.as_str()),
-            ("screen.component", self.screen.component.as_str()),
-            ("screen.result_field", self.screen.result_field.as_str()),
         ] {
             require_value(name, value)?;
         }
@@ -174,9 +170,6 @@ impl Config {
             return Err(format!(
                 "session.startup_frames must be between 1 and {MAX_FRAMES}"
             ));
-        }
-        if !self.screen.value_pointer.starts_with('/') {
-            return Err("screen.value_pointer must be a JSON pointer beginning with '/'".into());
         }
         if let Some(generated_by) = &self.report.generated_by {
             require_value("report.generated_by", generated_by)?;
@@ -258,12 +251,6 @@ startup_frames = 1
 
 [report]
 generated_by = "test_debug report"
-
-[screen]
-target = "session.status"
-component = "app::SessionObservation"
-value_pointer = "/active_screen"
-result_field = "active_screen"
 "#;
 
     #[test]
@@ -276,13 +263,6 @@ result_field = "active_screen"
     #[test]
     fn rejects_unknown_and_invalid_profile_fields() {
         assert!(Config::parse(&PROFILE.replace("version = 1", "version = 2")).is_err());
-        assert!(
-            Config::parse(&PROFILE.replace(
-                "value_pointer = \"/active_screen\"",
-                "value_pointer = \"active_screen\""
-            ))
-            .is_err()
-        );
         assert!(
             Config::parse(&PROFILE.replace("profile_id = \"test-v1\"", "profile_id = \"\""))
                 .is_err()

@@ -24,9 +24,3 @@ startup_frames = 1
 
 [report]
 generated_by = "automation_debug report"
-
-[screen]
-target = "session.status"
-component = "test_app::SessionObservation"
-value_pointer = "/active_screen"
-result_field = "active_screen"

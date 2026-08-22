@@ -247,8 +247,10 @@ fn execute(
 pub(crate) fn write_status(output: &mut impl Write, status: &Status) -> io::Result<()> {
     writeln!(
         output,
-        "instance={} mode={} screen={} paused={}",
-        status.instance, status.mode, status.active_screen, status.paused
+        "instance={} mode={} paused={}", 
+        status.instance,
+        status.mode,
+        status.paused
     )?;
     writeln!(output, "last action: {}", status.last_action)
 }
@@ -400,7 +402,6 @@ mod tests {
         let status = Status {
             instance: "alpha".into(),
             mode: Mode::Rendered,
-            active_screen: "museum".into(),
             paused: false,
             last_action: "click menu.tab.museum".into(),
         };
@@ -408,7 +409,7 @@ mod tests {
         write_status(&mut output, &status).unwrap();
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "instance=alpha mode=rendered screen=museum paused=false\nlast action: click menu.tab.museum\n"
+            "instance=alpha mode=rendered paused=false\nlast action: click menu.tab.museum\n"
         );
     }
 }

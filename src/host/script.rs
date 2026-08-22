@@ -1,9 +1,6 @@
 use super::{
     Config, RecentLogs,
-    controller::{
-        Action, Button, ControllerError, ControllerSession, KeyboardAction, Mode, Observation,
-        PointerAction,
-    },
+    controller::{Action, Button, ControllerError, ControllerSession, KeyboardAction, Mode, PointerAction},
     recording::Controller,
 };
 use crate::{screenshot::Command as ScreenshotCommand, time::MAX_FRAMES};
@@ -122,28 +119,43 @@ impl From<ScriptButton> for Button {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum Condition {
-    Screen { equals: String },
+    Component {
+        target: String,
+        component: String,
+        field: String,
+        equals: Value,
+    },
 }
 
 impl Condition {
-    const fn observation(&self) -> Observation {
+    fn description(&self) -> String {
         match self {
-            Self::Screen { .. } => Observation::ActiveScreen,
+            Self::Component {
+                target,
+                component,
+                field,
+                ..
+            } => format!("{component}@{target}.{field}"),
         }
     }
 
-    fn matches(&self, result_field: &str, actual: &Value) -> bool {
+    fn expected(&self) -> Value {
         match self {
-            Self::Screen { equals } => actual[result_field] == *equals,
+            Self::Component { equals, .. } => equals.clone(),
         }
     }
 
-    fn expected(&self, result_field: &str) -> Value {
+    fn check(&self, session: &mut ControllerSession) -> Result<(bool, Value), ControllerError> {
         match self {
-            Self::Screen { equals } => Value::Object(serde_json::Map::from_iter([(
-                result_field.to_owned(),
-                Value::String(equals.clone()),
-            )])),
+            Self::Component {
+                target,
+                component,
+                field,
+                equals,
+            } => {
+                let actual = session.observe_component_value(target, component, field)?;
+                Ok((&actual == equals, actual))
+            }
         }
     }
 }
@@ -356,13 +368,7 @@ pub(crate) fn run(
         (Ok(script), Ok(session)) => (script, session),
     };
 
-    let execution = execute_steps(
-        script_path,
-        &script.steps,
-        mode,
-        &profile.screen.result_field,
-        &mut session,
-    );
+    let execution = execute_steps(script_path, &script.steps, mode, &mut session);
     if let Err(error) = &execution {
         session.capture_script_error(error.kind_name());
     }
@@ -442,13 +448,9 @@ fn execute_steps(
     path: &Path,
     steps: &[Step],
     mode: Mode,
-    screen_result_field: &str,
     session: &mut ControllerSession,
 ) -> Result<(usize, usize), Error> {
-    let initial = session
-        .observe(Observation::ActiveScreen)
-        .map_err(|error| action_error(path, 1, error, None))?;
-    let mut last_observation = Some((Observation::ActiveScreen.as_str().into(), initial));
+    let mut last_observation: Option<(String, Value)> = None;
     let mut completed = 0;
     let mut skipped = 0;
 
@@ -498,17 +500,38 @@ fn execute_steps(
                 condition,
                 max_frames,
             } => {
-                let observation = condition.observation();
-                match session.wait_for(observation, *max_frames, |actual| {
-                    condition.matches(screen_result_field, actual)
-                }) {
-                    Ok(actual) => {
-                        last_observation = Some((observation.as_str().into(), actual));
+                let description = condition.description();
+                let (matched, mut actual) = condition
+                    .check(session)
+                    .map_err(|error| action_error(path, position, error, last_observation.clone()))?;
+                if matched {
+                    last_observation = Some((description.clone(), actual));
+                } else {
+                    if session.is_paused() {
+                        return Err(action_error(
+                            path,
+                            position,
+                            ControllerError::PausedWait,
+                            last_observation.clone(),
+                        ));
                     }
-                    Err(ControllerError::WaitLimitReached {
-                        last_observation: actual,
-                        ..
-                    }) => {
+                    let mut found = false;
+                    for _ in 0..*max_frames {
+                        session
+                            .step(1)
+                            .map_err(|error| action_error(path, position, error, last_observation.clone()))?;
+                        let (now_matched, now_actual) = condition.check(session).map_err(|error| {
+                            action_error(path, position, error, last_observation.clone())
+                        })?;
+                        actual = now_actual;
+                        if now_matched {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if found {
+                        last_observation = Some((description.clone(), actual));
+                    } else {
                         return Err(Error {
                             kind: ErrorKind::Timeout,
                             script: path.to_path_buf(),
@@ -516,34 +539,26 @@ fn execute_steps(
                             message: format!(
                                 "wait condition was not met within {max_frames} controlled frames"
                             ),
-                            expected: Some(condition.expected(screen_result_field)),
+                            expected: Some(condition.expected()),
                             actual: Some(actual.clone()),
-                            last_observation: Some((observation.as_str().into(), actual)),
+                            last_observation: Some((description, actual)),
                         });
-                    }
-                    Err(error) => {
-                        return Err(action_error(
-                            path,
-                            position,
-                            error,
-                            last_observation.clone(),
-                        ));
                     }
                 }
             }
             Step::Expect { condition } => {
-                let observation = condition.observation();
-                let actual = session.observe(observation).map_err(|error| {
-                    action_error(path, position, error, last_observation.clone())
-                })?;
-                last_observation = Some((observation.as_str().into(), actual.clone()));
-                if !condition.matches(screen_result_field, &actual) {
+                let description = condition.description();
+                let (matched, actual) = condition
+                    .check(session)
+                    .map_err(|error| action_error(path, position, error, last_observation.clone()))?;
+                last_observation = Some((description.clone(), actual.clone()));
+                if !matched {
                     return Err(Error {
                         kind: ErrorKind::Expectation,
                         script: path.to_path_buf(),
                         step: Some(position),
                         message: "expectation did not match".into(),
-                        expected: Some(condition.expected(screen_result_field)),
+                        expected: Some(condition.expected()),
                         actual: Some(actual),
                         last_observation,
                     });
@@ -650,13 +665,13 @@ mod tests {
     #[test]
     fn wait_limits_are_required_and_bounded() {
         let missing = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"wait","condition":{"type":"screen","equals":"museum"}}]}"#,
+            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"wait","condition":{"type":"component","target":"session.status","component":"test_app::SessionObservation","field":"active_screen","equals":"museum"}}]}"#,
         )
         .unwrap_err();
         assert!(missing.to_string().contains("max_frames"));
 
         let script = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"wait","condition":{"type":"screen","equals":"museum"},"max_frames":0}]}"#,
+            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"wait","condition":{"type":"component","target":"session.status","component":"test_app::SessionObservation","field":"active_screen","equals":"museum"},"max_frames":0}]}"#,
         )
         .unwrap();
         let error = validate(Path::new("zero.json"), &script).unwrap_err();

@@ -9,6 +9,6 @@ use bevy::{ecs::reflect::ReflectComponent, prelude::Component, reflect::Reflect}
 ///
 /// The marker intentionally carries no semantic identifier, role, label, or action list. Entity
 /// handles are selected from the current World observation and are valid only for this session.
-#[derive(Component, Debug, Default, Reflect)]
+#[derive(Component, Clone, Debug, Default, Reflect)]
 #[reflect(Component)]
 pub struct AutomationTarget;

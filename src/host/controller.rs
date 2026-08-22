@@ -184,7 +184,7 @@ pub(crate) enum Observation {
     Pointers,
     VirtualInput,
     Clock,
-    ActiveScreen,
+
 }
 
 impl Observation {
@@ -206,7 +206,7 @@ impl Observation {
             Self::Pointers => "pointers",
             Self::VirtualInput => "input",
             Self::Clock => "clock",
-            Self::ActiveScreen => "screen",
+
         }
     }
 }
@@ -215,7 +215,7 @@ impl Observation {
 pub(crate) struct Status {
     pub(crate) instance: String,
     pub(crate) mode: Mode,
-    pub(crate) active_screen: String,
+
     pub(crate) paused: bool,
     pub(crate) last_action: String,
 }
@@ -613,12 +613,68 @@ impl ControllerSession {
         Ok(())
     }
 
+    pub(crate) fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    pub(crate) fn observe_component_value(
+        &mut self,
+        target: &str,
+        component: &str,
+        field: &str,
+    ) -> Result<Value, ControllerError> {
+        if field.trim().is_empty() {
+            return Err(ControllerError::Invalid("field must not be empty".into()));
+        }
+        let targets = self.observe_raw(Observation::Targets)?;
+        let handle = TargetView::named(&targets, target)?.handle()?;
+        let result = self.request(WireCommand::Observe(ObservationRequest::new(
+            Selector::Entity(handle),
+            Projection::Components {
+                type_paths: vec![component.to_owned()],
+            },
+        )))?;
+        let component_value = result
+            .get("items")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("components"))
+            .and_then(|components| components.get(component))
+            .ok_or_else(|| {
+                ControllerError::Invalid("component observation is unavailable".into())
+            })?;
+        if component_value.get("status").and_then(Value::as_str) != Some("available") {
+            return Err(ControllerError::Invalid(format!(
+                "component {component:?} is not available: {}",
+                component_value
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            )));
+        }
+        let mut current = component_value.get("value").ok_or_else(|| {
+            ControllerError::Invalid(format!("component {component:?} has no value"))
+        })?;
+        for segment in field.split('.') {
+            if segment.is_empty() {
+                return Err(ControllerError::Invalid(format!(
+                    "field {field:?} contains empty segment"
+                )));
+            }
+            current = current.get(segment).ok_or_else(|| {
+                ControllerError::Invalid(format!(
+                    "field {field:?} not found in component {component:?}"
+                ))
+            })?;
+        }
+        let value = current.clone();
+        Ok(value)
+    }
+
     pub(crate) fn status(&mut self) -> Result<Status, ControllerError> {
-        let active_screen = self.active_screen()?;
         Ok(Status {
             instance: self.instance.clone(),
             mode: self.mode,
-            active_screen,
             paused: self.paused,
             last_action: self.last_action.clone(),
         })
@@ -678,40 +734,17 @@ impl ControllerSession {
     }
 
     fn observe_raw(&mut self, observation: Observation) -> Result<Value, ControllerError> {
-        if observation == Observation::ActiveScreen {
-            let screen = self.active_screen()?;
-            return Ok(Value::Object(serde_json::Map::from_iter([(
-                self.profile.screen.result_field.clone(),
-                Value::String(screen),
-            )])));
-        }
         let selector = match observation {
             Observation::Targets => Selector::Targets,
             Observation::Ui => Selector::Ui,
             Observation::Pointers => Selector::Pointers,
             Observation::VirtualInput => Selector::VirtualInput,
             Observation::Clock => Selector::Clock,
-            Observation::ActiveScreen => unreachable!(),
         };
         self.request(WireCommand::Observe(ObservationRequest::new(
             selector,
             Projection::Summary,
         )))
-    }
-
-    fn active_screen(&mut self) -> Result<String, ControllerError> {
-        let target = self.profile.screen.target.clone();
-        let component = self.profile.screen.component.clone();
-        let pointer = self.profile.screen.value_pointer.clone();
-        let targets = self.observe_raw(Observation::Targets)?;
-        let handle = TargetView::named(&targets, &target)?.handle()?;
-        let result = self.request(WireCommand::Observe(ObservationRequest::new(
-            Selector::Entity(handle),
-            Projection::Components {
-                type_paths: vec![component.clone()],
-            },
-        )))?;
-        screen_value(&result, &component, &pointer)
     }
 
     fn request(&mut self, command: WireCommand) -> Result<Value, ControllerError> {
@@ -772,31 +805,6 @@ impl<'a> TargetView<'a> {
             .and_then(|value| serde_json::from_value(value).ok())
             .ok_or_else(|| ControllerError::Invalid("configured target handle is invalid".into()))
     }
-}
-
-fn screen_value(
-    observation: &Value,
-    component_name: &str,
-    value_pointer: &str,
-) -> Result<String, ControllerError> {
-    let component = observation
-        .get("items")
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("components"))
-        .and_then(|components| components.get(component_name))
-        .ok_or_else(|| ControllerError::Invalid("screen observation is unavailable".into()))?;
-    if component.get("status").and_then(Value::as_str) != Some("available") {
-        return Err(ControllerError::Invalid(
-            "screen observation is unavailable".into(),
-        ));
-    }
-    component
-        .get("value")
-        .and_then(|value| value.pointer(value_pointer))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| ControllerError::Invalid("screen observation is invalid".into()))
 }
 
 fn resolve_key(name: &str) -> Result<Key, ControllerError> {

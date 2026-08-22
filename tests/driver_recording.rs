@@ -1,11 +1,10 @@
 use bug_hunter::{
-    driver::{
-        recording::{Controller, Event, Recording, SessionOutcome},
+    Command, RunMode,
+    host::{
         RecentLogs, Session, SessionConfig, SessionOptions,
     },
     observation::{Projection, Request as ObservationRequest, Selector},
     time::Command as TimeCommand,
-    Command, RunMode,
 };
 use serde_json::json;
 use std::{fs, io::Cursor, path::PathBuf, process::Command as ProcessCommand};
@@ -77,10 +76,12 @@ done"#,
         entry.event,
         Event::ControllerAction { ref controller, .. } if controller.origin == "repl"
     )));
-    assert!(first
-        .entries
-        .iter()
-        .any(|entry| matches!(entry.event, Event::Observation { .. })));
+    assert!(
+        first
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.event, Event::Observation { .. }))
+    );
     assert!(matches!(
         first.entries.last().unwrap().event,
         Event::RecordingStopped
@@ -278,19 +279,23 @@ sleep 30"#,
     )
     .unwrap();
     session.ready().unwrap();
-    assert!(session
-        .request(Command::Observe(ObservationRequest::new(
-            Selector::Clock,
-            Projection::Summary,
-        )))
-        .is_err());
+    assert!(
+        session
+            .request(Command::Observe(ObservationRequest::new(
+                Selector::Clock,
+                Projection::Summary,
+            )))
+            .is_err()
+    );
     drop(session);
 
     let recording = Recording::parse_path(artifact_root.join("observe-error.jsonl")).unwrap();
-    assert!(!recording
-        .entries
-        .iter()
-        .any(|entry| matches!(entry.event, Event::Observation { .. })));
+    assert!(
+        !recording
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.event, Event::Observation { .. }))
+    );
     let response_index = recording
         .entries
         .iter()
