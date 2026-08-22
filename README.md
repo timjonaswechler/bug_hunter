@@ -1,33 +1,114 @@
 # `bug_hunter`
 
-`bug_hunter` provides the protocol and Bevy integration used by isolated Controlled
-Sessions. A Player Run does not depend on this crate. The crate does not know Star-Sim menu
-semantics and never injects operating-system input.
+`bug_hunter` is inspired by ThePrimeagen's video about he's become a game developer ([Youtube](https://www.youtube.com/watch?v=tYQyh1tjSFc)).
+He had build a system that lets AI Agents control a game.
 
-## Protocol v2
+I thought why only AI Agents, why not humans and scripts as well?
 
-The session emits one `ready` message. The host assigns request sequences beginning at `1`.
-Controllers send only commands and do not provide protocol versions or request IDs.
+This repo is a try to bring this idea to life.
+A user can start a host app that opens the possiblities to control the game. 
 
-```json
-{"type":"ready","version":2,"mode":"rendered","controls":["pointer","keyboard","text","time","screenshot"],"observation_scopes":["targets","ui","pointers","entity","virtual_input","clock"]}
+> Showcase gif or short video
+
+## Integration into your project
+
+1. Add the code base as submodule
+
+```bash
+git submodule add https://github.com/timjonaswechler/bug_hunter crates/bug_hunter
 ```
 
-```json
-{"sequence":1,"command":{"type":"observe","selector":{"type":"ui"},"projection":{"type":"summary"},"limit":64}}
+2. Add to your project root `Cargo.toml`
+
+```toml
+[workspace]
+members = [
+    "crates/bug_hunter",
+    "crates/bug_hunter/bevy_test_apps",
+]    
 ```
 
-```json
-{"sequence":2,"command":{"type":"pointer","action":{"type":"move","surface":null,"position":[320.0,180.0]}}}
+3. Build a host app for your project
+
+```bash
+mkdir apps/bug_hunter_host
+cd apps/bug_hunter_host
+cargo init
 ```
 
-```json
-{"sequence":3,"command":{"type":"keyboard","action":{"type":"press","key":"a"}}}
-{"sequence":4,"command":{"type":"keyboard","action":{"type":"release","key":"a"}}}
-{"sequence":5,"command":{"type":"text","text":"controlled text"}}
-{"sequence":6,"command":{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}}
-{"sequence":7,"command":{"type":"screenshot","path":"captures/after-step.png"}}
+4. Add the host app to bug_hunter_host `Cargo.toml`
+
+```toml
+[dependencies]
+bug_hunter = { path = "../../crates/bug_hunter", features = ["host"] }
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = "1.0"
 ```
+
+5. Change the `main.rs` of your host app to use the bug hunter host
+
+```rust
+fn main() {
+    bug_hunter::host::run_embedded(include_str!("../automation.toml"));
+}
+```
+
+6. Create the `automation.toml` file
+
+```toml
+version = 1
+profile_id = "bug_hunter_host-v1"
+
+[tool]
+name = "bug_hunter_host"
+about = "Start and control one isolated Star Sim session"
+default_artifact_dir = "artifacts/bug_hunter_host"
+
+[application]
+package = "app"
+kind = "binary"
+target = "app"
+features = ["automation-control"]
+arguments = []
+mode_argument = "--controlled-mode"
+
+[session]
+id = "alpha"
+default_mode = "rendered"
+surface_width = 640
+surface_height = 360
+frame_nanoseconds = 16666667
+startup_frames = 1
+
+[report]
+generated_by = "bug_hunter_host report"
+
+[screen]
+target = "session.status"
+component = "app::menu::SessionObservation"
+value_pointer = "/active_screen"
+result_field = "active_screen"
+
+```
+
+
+
+
+## Roadmap
+
+- [ ] Test/add the functionality script, agent and human can control the game together. 
+  The host app is started with a script. After that is done the session waits for any input from a human or agent.
+
+- [ ] Add other issue reporting services
+  - [ ] local (fallback)
+  - [ ] gitlab
+  - [ ] discord
+  - [ ] ...
+
+- [ ] 
+
 
 The public command groups are `Observe`, `Pointer`, `Keyboard`, `Text`, `Time`, `Screenshot`, and `Shutdown`. Pointer
 actions are `Move`, `Press`, `Release`, and `Scroll`; there is no wire-level click. Keyboard press
