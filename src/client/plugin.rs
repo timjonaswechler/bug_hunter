@@ -186,8 +186,8 @@ impl Plugin for AutomationControlPlugin {
             ))
             .add_systems(Startup, emit_ready)
             .add_systems(PostStartup, pointer::ensure_mouse_pointer)
-            .add_systems(PostStartup, pointer::spawn_helper.run_if(rendered_mode))
-            .add_systems(First, pointer::update_helper.run_if(rendered_mode))
+            .add_systems(PostStartup, pointer::spawn_helper)
+            .add_systems(First, pointer::update_helper)
             .add_systems(
                 control_schedule::Input,
                 (
