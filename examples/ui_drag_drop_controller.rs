@@ -1,11 +1,11 @@
 //! Controller test for the rendered UI drag-and-drop Controlled Session.
 use bug_hunter::{
-    driver::{LaunchSpec, LaunchTargetKind, Session, SessionOptions},
+    Command, Handle,
+    host::{LaunchSpec, LaunchTargetKind, Session, SessionOptions},
     observation::{Projection, Request as ObservationRequest, Selector},
     pointer::{Button, Command as PointerCommand},
     screenshot::Command as ScreenshotCommand,
     time::Command as TimeCommand,
-    Command, Handle,
 };
 use serde_json::Value;
 use std::{

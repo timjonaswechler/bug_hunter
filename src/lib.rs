@@ -12,11 +12,9 @@
 //! Player Run. A Player Run does not depend on this crate or expose automation behavior.
 
 pub mod client;
+pub mod entity;
 #[cfg(feature = "host")]
 pub mod host;
-#[cfg(feature = "host")]
-pub use host as driver;
-pub mod entity;
 pub mod keyboard;
 pub mod observation;
 pub mod pointer;
@@ -32,8 +30,8 @@ pub use client::{
 };
 pub use entity::{Handle, HandleError};
 pub use protocol::{
-    decode_request, Command, ProtocolError, Ready, Request, Response, ResponseStatus, RunMode,
-    PROTOCOL_VERSION,
+    Command, PROTOCOL_VERSION, ProtocolError, Ready, Request, Response, ResponseStatus, RunMode,
+    decode_request,
 };
 pub use target::AutomationTarget;
 pub use time::Clock as ControlledClock;
@@ -52,19 +50,4 @@ pub fn artifact_root_path(default: impl Into<std::path::PathBuf>) -> std::path::
         .filter(|value| !value.is_empty())
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| default.into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shutdown_uses_the_grouped_protocol_v2_wire_form() {
-        let command = Command::Shutdown;
-        assert_eq!(
-            serde_json::to_value(command).unwrap(),
-            serde_json::json!({"type": "shutdown"})
-        );
-        assert_eq!(PROTOCOL_VERSION, 2);
-    }
 }

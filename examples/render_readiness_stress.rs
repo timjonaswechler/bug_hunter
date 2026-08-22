@@ -1,10 +1,10 @@
 //! Repeatedly measures the gap between protocol readiness and the first visible rendered frame.
 use bug_hunter::{
-    driver::{LaunchSpec, LaunchTargetKind, Session, SessionOptions},
+    Command,
+    host::{LaunchSpec, LaunchTargetKind, Session, SessionOptions},
     observation::{Projection, Request as ObservationRequest, Selector},
     screenshot::Command as ScreenshotCommand,
     time::Command as TimeCommand,
-    Command,
 };
 use serde::Serialize;
 use std::{

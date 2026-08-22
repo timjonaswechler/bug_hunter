@@ -1,13 +1,13 @@
 //! Controller smoke test for the rendered Controlled Session.
 use bug_hunter::{
-    driver::{LaunchSpec, LaunchTargetKind, Session, SessionOptions},
+    Command, Handle,
+    host::{LaunchSpec, LaunchTargetKind, Session, SessionOptions},
     keyboard::{Command as KeyboardCommand, Key},
     observation::{Projection, Request as ObservationRequest, Selector},
     pointer::{Button, Command as PointerCommand},
     screenshot::Command as ScreenshotCommand,
     text::Command as TextCommand,
     time::Command as TimeCommand,
-    Command, Handle,
 };
 use serde_json::Value;
 use std::{
