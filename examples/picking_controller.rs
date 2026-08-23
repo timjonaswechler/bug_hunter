@@ -38,7 +38,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         SessionOptions::new().with_artifact_dir(&artifact_root),
     )?;
     let ready = session.ready()?;
-    assert_eq!(ready.mode, bug_hunter::RunMode::Rendered);
+    assert!(ready.controls.contains(&"screenshot".into()));
     advance(&mut session, 1)?;
 
     let targets = observe(&mut session, Selector::Targets, Projection::Summary)?;

@@ -168,19 +168,6 @@ fn reject_extra_fields<E: DeError>(object: &Map<String, Value>) -> Result<(), E>
     }
 }
 
-/// Execution-mode metadata reported by a Controlled Session.
-///
-/// Selecting a value does not install or remove a renderer; the embedding application chooses its
-/// Bevy composition.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunMode {
-    /// No window or renderer, driven only by controlled time.
-    Logical,
-    /// A composition with rendering and visual artifacts.
-    Rendered,
-}
-
 /// Startup handshake and capability metadata emitted before responses.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Ready {
@@ -189,8 +176,6 @@ pub struct Ready {
     pub kind: String,
     /// Negotiated protocol version, normally [`PROTOCOL_VERSION`].
     pub version: u32,
-    /// Composition metadata supplied to the control plugin.
-    pub mode: RunMode,
     /// Supported command capability names.
     pub controls: Vec<String>,
     /// Supported observation selector names.
@@ -202,11 +187,10 @@ impl Ready {
     ///
     /// Screenshot support is added later only when a rendered composition has installed
     /// [`crate::screenshot::Plugin`] and the required Bevy screenshot resources.
-    pub fn new(mode: RunMode) -> Self {
+    pub fn new() -> Self {
         Self {
             kind: "ready".into(),
             version: PROTOCOL_VERSION,
-            mode,
             controls: vec![
                 "pointer".into(),
                 "keyboard".into(),
@@ -394,7 +378,7 @@ mod tests {
 
     #[test]
     fn ready_is_negotiated_once_and_uses_v2_capability_names() {
-        let ready = Ready::new(RunMode::Rendered);
+        let ready = Ready::new();
         assert_eq!(ready.version, 2);
         assert_eq!(serde_json::to_value(&ready).unwrap()["type"], "ready");
         assert_eq!(

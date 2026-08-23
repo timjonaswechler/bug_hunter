@@ -1,9 +1,9 @@
 use super::{
     Config,
-    controller::{ControllerError, ControllerSession, Mode},
+    controller::{ControllerError, ControllerSession},
 };
 use crate::{
-    Command, PROTOCOL_VERSION, Response, ResponseStatus, RunMode,
+    Command, Response, ResponseStatus,
     host::{
         RecentLogs,
         recording::{
@@ -636,14 +636,6 @@ fn write_result(artifact_dir: &Path, result: &ResultArtifact) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn profile() -> Config {
-        Config::parse(include_str!("../../tests/fixtures/host_profile.toml")).unwrap()
-    }
-
-    fn context(configuration: Value) -> SessionContext {
-        SessionContext::new("alpha", configuration)
-    }
 
     #[test]
     fn rendered_artifacts_compare_metadata_instead_of_png_bytes() {

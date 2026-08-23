@@ -40,7 +40,6 @@ pub struct ApplicationConfig {
     pub features: Vec<String>,
     #[serde(default)]
     pub arguments: Vec<String>,
-    pub mode_argument: String,
 }
 
 impl ApplicationConfig {
@@ -52,19 +51,6 @@ impl ApplicationConfig {
             features: self.features.clone(),
             arguments: self.arguments.clone(),
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DefaultMode {
-    Logical,
-    Rendered,
-}
-
-impl Default for DefaultMode {
-    fn default() -> Self {
-        Self::Rendered
     }
 }
 
@@ -143,10 +129,6 @@ impl Config {
             ("tool.about", self.tool.about.as_str()),
             ("application.package", self.application.package.as_str()),
             ("application.target", self.application.target.as_str()),
-            (
-                "application.mode_argument",
-                self.application.mode_argument.as_str(),
-            ),
             ("session.id", self.session.id.as_str()),
         ] {
             require_value(name, value)?;
@@ -237,7 +219,6 @@ package = "app"
 target = "app"
 features = ["automation-control"]
 arguments = []
-mode_argument = "--controlled-mode"
 
 [session]
 id = "alpha"

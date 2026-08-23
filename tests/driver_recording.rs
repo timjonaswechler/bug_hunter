@@ -1,5 +1,5 @@
 use bug_hunter::{
-    Command, RunMode,
+    Command,
     host::{
         RecentLogs, Session, SessionConfig, SessionOptions,
         recording::{Controller, Event, Recording, SessionOutcome},
@@ -30,7 +30,7 @@ fn records_canonical_events_across_repeated_segments_with_continuous_host_sequen
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":["pointer","time"],"observation_scopes":["clock"]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":["pointer","time"],"observation_scopes":["clock"]}'
 while IFS= read -r line; do
   sequence=$(printf '%s' "$line" | sed -n 's/.*"sequence":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
@@ -47,7 +47,7 @@ done"#,
         .with_recording_context("alpha", json!({"surface": [640, 360]}))
         .with_controller(Controller::new("repl"));
     let mut session = Session::spawn_command(command, options).expect("child should start");
-    assert_eq!(session.ready().unwrap().mode, RunMode::Logical);
+    session.ready().unwrap();
     session
         .request(Command::Observe(ObservationRequest::new(
             Selector::Clock,
@@ -115,7 +115,7 @@ fn recording_redacts_sensitive_values_and_bounds_entries() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":["time"],"observation_scopes":[]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":["time"],"observation_scopes":[]}'
 while IFS= read -r line; do
   sequence=$(printf '%s' "$line" | sed -n 's/.*"sequence":\([0-9][0-9]*\).*/\1/p')
   printf '{"sequence":%s,"status":"completed","result":{"api_key":"provider-key-value","raw_model_prompt":"private prompt body","auth":"neutral-auth-value","note":"sk-live-1234567890"}}\n' "$sequence"
@@ -180,7 +180,7 @@ fn implicit_context_waits_for_ready_and_supports_config_and_late_start() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"rendered","controls":[],"observation_scopes":[]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":[],"observation_scopes":[]}'
 while IFS= read -r line; do
   sequence=$(printf '%s' "$line" | sed -n 's/.*"sequence":\([0-9][0-9]*\).*/\1/p')
   printf '{"sequence":%s,"status":"completed","result":{}}\n' "$sequence"
@@ -194,7 +194,7 @@ done"#,
         artifact_root.clone(),
     );
     let mut session = Session::spawn_command(command, options).unwrap();
-    assert_eq!(session.ready().unwrap().mode, RunMode::Rendered);
+    session.ready().unwrap();
     session.shutdown().unwrap();
 
     let recording = Recording::parse_path(artifact_root.join("from-config.jsonl")).unwrap();
@@ -206,7 +206,7 @@ done"#,
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":[],"observation_scopes":[]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":[],"observation_scopes":[]}'
 while IFS= read -r line; do
   sequence=$(printf '%s' "$line" | sed -n 's/.*"sequence":\([0-9][0-9]*\).*/\1/p')
   printf '{"sequence":%s,"status":"completed","result":{}}\n' "$sequence"
@@ -262,7 +262,7 @@ fn error_observation_response_is_recorded_as_response_then_error() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":[],"observation_scopes":["clock"]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":[],"observation_scopes":["clock"]}'
 read line
 printf '%s\n' '{"sequence":1,"status":"error","result":{"partial":true},"error":{"code":"observe_failed","message":"safe failure"}}'
 sleep 30"#,
@@ -317,7 +317,7 @@ fn direct_response_parse_and_shutdown_failures_are_recorded() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"mode\":\"logical\",\"controls\":[],\"observation_scopes\":[]}' ; read line; printf 'not-json\\n'; sleep 30",
+        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"controls\":[],\"observation_scopes\":[]}' ; read line; printf 'not-json\\n'; sleep 30",
     ]);
     let mut session = Session::spawn_command(
         command,
@@ -338,7 +338,7 @@ fn direct_response_parse_and_shutdown_failures_are_recorded() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":[],"observation_scopes":[]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":[],"observation_scopes":[]}'
 read line
 printf '%s\n' '{"sequence":1,"status":"completed","result":{}}'
 exit 7"#,
@@ -366,7 +366,7 @@ fn ready_mode_mismatch_records_a_parseable_abort() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"mode\":\"rendered\",\"controls\":[],\"observation_scopes\":[]}' ; sleep 30",
+        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"controls\":[],\"observation_scopes\":[]}' ; sleep 30",
     ]);
     let mut session = Session::spawn_command(
         command,
@@ -400,7 +400,7 @@ fn dropping_a_live_recorded_session_writes_an_aborted_end() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"mode\":\"logical\",\"controls\":[],\"observation_scopes\":[]}' ; sleep 30",
+        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"controls\":[],\"observation_scopes\":[]}' ; sleep 30",
     ]);
     let mut session = Session::spawn_command(
         command,

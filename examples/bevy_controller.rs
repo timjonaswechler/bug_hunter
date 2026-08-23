@@ -52,7 +52,6 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let ready = session.ready()?;
     assert_eq!(ready.version, 2);
-    assert_eq!(ready.mode, bug_hunter::RunMode::Rendered);
     assert_eq!(
         ready.controls,
         ["pointer", "keyboard", "text", "time", "screenshot"]

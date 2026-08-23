@@ -149,9 +149,6 @@ fn run_session(
         }
     };
     let ready = session.ready()?;
-    if ready.mode != bug_hunter::RunMode::Rendered {
-        return Err(format!("run {run_index} started in {:?} mode", ready.mode).into());
-    }
     if !ready.controls.contains(&"screenshot".into()) {
         return Err(format!("run {run_index} did not advertise screenshot capture").into());
     }

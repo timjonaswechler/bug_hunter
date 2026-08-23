@@ -1,5 +1,5 @@
 use bug_hunter::{
-    Command, Handle, Response, RunMode,
+    Command, Handle, Response,
     host::{DriverError, LaunchSpec, LaunchTargetKind, Session, SessionOptions},
     keyboard::{Command as KeyboardCommand, Key},
     observation::{Projection, Request as ObservationRequest, Selector},
@@ -33,7 +33,6 @@ fn logical_state_starts_without_a_display_or_screenshot_capability() {
     let mut session = spawn_logical_state().unwrap();
     let ready = session.ready().unwrap();
 
-    assert_eq!(ready.mode, RunMode::Logical);
     assert_eq!(ready.controls, ["pointer", "keyboard", "text", "time"]);
     assert!(!ready.controls.iter().any(|control| control == "screenshot"));
     let error = session

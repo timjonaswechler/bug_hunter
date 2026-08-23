@@ -1,7 +1,7 @@
 use super::{
     Config, RecentLogs,
     controller::{
-        Action, Button, ControllerError, ControllerSession, KeyboardAction, Mode, PointerAction,
+        Action, Button, ControllerError, ControllerSession, KeyboardAction, PointerAction,
     },
     recording::Controller,
 };
@@ -32,25 +32,8 @@ struct Script {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SessionConfiguration {
-    mode: ScriptMode,
     #[serde(default)]
     record: Option<PathBuf>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ScriptMode {
-    Logical,
-    Rendered,
-}
-
-impl From<ScriptMode> for Mode {
-    fn from(value: ScriptMode) -> Self {
-        match value {
-            ScriptMode::Logical => Self::Logical,
-            ScriptMode::Rendered => Self::Rendered,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,8 +60,6 @@ enum Step {
     Screenshot {
         path: String,
         expect: ScreenshotExpectation,
-        #[serde(default)]
-        rendered_only: bool,
     },
 }
 
@@ -209,7 +190,6 @@ impl ScreenshotExpectation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ErrorKind {
     InvalidScript,
-    Timeout,
     Action,
     Expectation,
 }
@@ -253,7 +233,6 @@ impl Error {
     pub(crate) const fn exit_code(&self) -> i32 {
         match self.kind {
             ErrorKind::InvalidScript => INVALID_SCRIPT_EXIT,
-            ErrorKind::Timeout => TIMEOUT_EXIT,
             ErrorKind::Action => ACTION_EXIT,
             ErrorKind::Expectation => EXPECTATION_EXIT,
         }
@@ -296,13 +275,11 @@ impl std::error::Error for Error {}
 pub(crate) struct Summary {
     pub(crate) completed: usize,
     pub(crate) skipped: usize,
-    pub(crate) mode: Mode,
 }
 
 pub(crate) fn run(
     profile: &Config,
     script_path: &Path,
-    mode_override: Option<Mode>,
     artifact_dir: PathBuf,
     record_override: Option<PathBuf>,
     recent_logs: RecentLogs,
@@ -332,12 +309,6 @@ pub(crate) fn run(
         Ok(script)
     });
 
-    let configured_mode = script
-        .as_ref()
-        .ok()
-        .map(|script| script.session.mode.into())
-        .or_else(|| document.as_ref().and_then(mode_from_document));
-    let mode = mode_override.or(configured_mode).unwrap_or(Mode::Logical);
     let configured_record = script
         .as_ref()
         .ok()
@@ -368,7 +339,7 @@ pub(crate) fn run(
         (Ok(script), Ok(session)) => (script, session),
     };
 
-    let execution = execute_steps(script_path, &script.steps, mode, &mut session);
+    let execution = execute_steps(script_path, &script.steps, &mut session);
     if let Err(error) = &execution {
         session.capture_script_error(error.kind_name());
     }
@@ -381,19 +352,7 @@ pub(crate) fn run(
             script.steps.len().max(1),
             error.to_string(),
         )),
-        (Ok((completed, skipped)), Ok(())) => Ok(Summary {
-            completed,
-            skipped,
-            mode,
-        }),
-    }
-}
-
-fn mode_from_document(document: &Value) -> Option<Mode> {
-    match document.pointer("/session/mode").and_then(Value::as_str) {
-        Some("logical") => Some(Mode::Logical),
-        Some("rendered") => Some(Mode::Rendered),
-        _ => None,
+        (Ok((completed, skipped)), Ok(())) => Ok(Summary { completed, skipped }),
     }
 }
 
@@ -408,7 +367,6 @@ impl Error {
     const fn kind_name(&self) -> &'static str {
         match self.kind {
             ErrorKind::InvalidScript => "invalid_session_script",
-            ErrorKind::Timeout => "session_script_timeout",
             ErrorKind::Action => "session_script_action_failed",
             ErrorKind::Expectation => "session_script_expectation_failed",
         }
@@ -447,12 +405,11 @@ fn validate(path: &Path, script: &Script) -> Result<(), Error> {
 fn execute_steps(
     path: &Path,
     steps: &[Step],
-    mode: Mode,
     session: &mut ControllerSession,
 ) -> Result<(usize, usize), Error> {
     let mut last_observation: Option<(String, Value)> = None;
     let mut completed = 0;
-    let mut skipped = 0;
+    let skipped = 0;
 
     for (index, step) in steps.iter().enumerate() {
         let position = index + 1;
@@ -522,12 +479,7 @@ fn execute_steps(
             Step::Screenshot {
                 path: artifact_path,
                 expect,
-                rendered_only,
             } => {
-                if *rendered_only && mode == Mode::Logical {
-                    skipped += 1;
-                    continue;
-                }
                 let actual = session
                     .capture_screenshot(ScreenshotCommand::new(artifact_path))
                     .map_err(|error| {
@@ -594,7 +546,7 @@ mod tests {
     #[test]
     fn rejects_unknown_fields_with_a_source_position() {
         let error = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"text","text":"hello","response":{}}]}"#,
+            r#"{"version":1,"session":{},"steps":[{"type":"text","text":"hello","response":{}}]}"#,
         )
         .unwrap_err();
         assert!(error.to_string().contains("unknown field `response`"));
@@ -605,7 +557,7 @@ mod tests {
     #[test]
     fn rejects_unknown_actions_with_a_source_position() {
         let error = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"shell","command":"false"}]}"#,
+            r#"{"version":1,"session":{},"steps":[{"type":"shell","command":"false"}]}"#,
         )
         .unwrap_err();
         assert!(error.to_string().contains("unknown variant `shell`"));
@@ -616,7 +568,7 @@ mod tests {
     #[test]
     fn step_frames_are_required_and_bounded() {
         let script = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"step","frames":0}]}"#,
+            r#"{"version":1,"session":{},"steps":[{"type":"step","frames":0}]}"#,
         )
         .unwrap();
         let error = validate(Path::new("zero.json"), &script).unwrap_err();
@@ -647,7 +599,7 @@ mod tests {
     #[test]
     fn raw_virtual_input_actions_are_part_of_the_script_format() {
         let script = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"pointer","action":{"type":"move","x":0.5,"y":0.25}},{"type":"pointer","action":{"type":"press","button":"left"}},{"type":"pointer","action":{"type":"release","button":"left"}},{"type":"pointer","action":{"type":"click","button":"right"}},{"type":"pointer","action":{"type":"scroll","x":0.0,"y":-1.0}},{"type":"keyboard","action":{"type":"press","key":"Escape"}},{"type":"keyboard","action":{"type":"release","key":"Escape"}},{"type":"text","text":"museum"}]}"#,
+            r#"{"version":1,"session":{},"steps":[{"type":"pointer","action":{"type":"move","x":0.5,"y":0.25}},{"type":"pointer","action":{"type":"press","button":"left"}},{"type":"pointer","action":{"type":"release","button":"left"}},{"type":"pointer","action":{"type":"click","button":"right"}},{"type":"pointer","action":{"type":"scroll","x":0.0,"y":-1.0}},{"type":"keyboard","action":{"type":"press","key":"Escape"}},{"type":"keyboard","action":{"type":"release","key":"Escape"}},{"type":"text","text":"museum"}]}"#,
         )
         .unwrap();
         assert_eq!(script.steps.len(), 8);

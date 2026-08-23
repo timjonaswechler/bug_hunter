@@ -10,7 +10,7 @@
 //! public [`Recording::entries`] can be mutated into an invalid value; call [`Recording::validate`]
 //! before consuming or publishing manually constructed recordings.
 
-use crate::{Command, PROTOCOL_VERSION, ProtocolError, ResponseStatus, RunMode, observation};
+use crate::{Command, PROTOCOL_VERSION, ProtocolError, ResponseStatus, observation};
 use cap_std::{ambient_authority, fs::Dir};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

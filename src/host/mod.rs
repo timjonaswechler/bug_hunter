@@ -30,8 +30,8 @@ pub use command_line::{
     CommandLine, CommandLineError, ReportOptions, RunOptions, USAGE as COMMAND_LINE_USAGE,
 };
 pub use config::{
-    ApplicationConfig, Config, ConfigError, DefaultMode, ReportConfig, ScreenConfig, SessionConfig,
-    ToolConfig, CONFIG_VERSION,
+    ApplicationConfig, Config, ConfigError, ReportConfig, ScreenConfig, SessionConfig, ToolConfig,
+    CONFIG_VERSION,
 };
 pub use diagnostics::{
     DiagnosticArtifacts, DiagnosticsError, FailureHeadline, FailureReport, RecentLogs,

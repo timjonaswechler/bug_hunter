@@ -72,7 +72,6 @@ kind = "binary"
 target = "app"
 features = ["automation-control"]
 arguments = []
-mode_argument = "--controlled-mode"
 
 [session]
 id = "alpha"
@@ -149,24 +148,16 @@ systems and GPUs are not guaranteed.
 ```rust
 use bug_hunter::AutomationControlPlugin;
 
-app.add_plugins(AutomationControlPlugin::logical_stdio());
-// A rendered composition uses `rendered_stdio()` instead.
+app.add_plugins(AutomationControlPlugin::default());
 ```
 
-Tests and embedding applications provide the protocol mode and transport adapters explicitly:
+Tests and embedding applications can provide custom transport adapters explicitly:
 
 ```rust
-use bug_hunter::RunMode;
-
-app.add_plugins(AutomationControlPlugin::with_io(
-    RunMode::Rendered,
-    input,
-    output,
-));
+app.add_plugins(AutomationControlPlugin::with_io(input, output));
 ```
 
-`RunMode` is protocol metadata. It does not select an application composition or install or remove a
-renderer; the embedding application remains responsible for composing the matching session.
+The embedding application remains responsible for composing its own session (window, renderer, etc.).
 
 The rendered `bevy_test_apps` composition disables `InputPlugin` and `GilrsPlugin`. The control
 plugin also disables Bevy's native mouse and touch picking producers, writes `PointerInput` into
@@ -252,14 +243,12 @@ let options = SessionOptions::new()
     .with_record(Some(PathBuf::from("recordings/run.jsonl")))
     .with_recording_context(
         "alpha",
-        bug_hunter::RunMode::Logical,
         serde_json::json!({"surface": [640, 360]}),
     )
     .with_controller(Controller::new("repl"));
 ```
 
-`with_recording_context` lets a host include its complete configuration and checks its mode against
-`ready`. Without explicit context, the driver waits for `ready` and fills the mode and protocol before
+`with_recording_context` lets a host include its complete configuration. Without explicit context, the driver waits for `ready` and fills the protocol before
 writing `SessionStarted`. `Session::start_recording(None)` allocates a collision-free path below the
 artifact root. `Session::stop_recording()` flushes and closes the current segment. Starting another segment keeps
 the same strictly increasing host sequence and writes the complete open-session context first.

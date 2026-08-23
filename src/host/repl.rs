@@ -301,7 +301,6 @@ fn stdin_events() -> Receiver<InputEvent> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::controller::Mode;
     use super::*;
 
     #[test]

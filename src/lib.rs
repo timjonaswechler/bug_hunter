@@ -30,7 +30,7 @@ pub use client::{
 };
 pub use entity::{Handle, HandleError};
 pub use protocol::{
-    Command, PROTOCOL_VERSION, ProtocolError, Ready, Request, Response, ResponseStatus, RunMode,
+    Command, PROTOCOL_VERSION, ProtocolError, Ready, Request, Response, ResponseStatus,
     decode_request,
 };
 pub use target::AutomationTarget;

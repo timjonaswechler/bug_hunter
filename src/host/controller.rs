@@ -3,7 +3,7 @@ use super::{
     recording::Controller,
 };
 use crate::{
-    Command as WireCommand, Handle, RunMode,
+    Command as WireCommand, Handle,
     keyboard::{Command as KeyboardCommand, Key},
     observation::{Projection, Request as ObservationRequest, Selector},
     pointer::{Button as WireButton, Command as PointerCommand},
@@ -13,34 +13,6 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{fmt, path::PathBuf};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Mode {
-    Logical,
-    Rendered,
-}
-
-impl Mode {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Logical => "logical",
-            Self::Rendered => "rendered",
-        }
-    }
-
-    const fn wire(self) -> RunMode {
-        match self {
-            Self::Logical => RunMode::Logical,
-            Self::Rendered => RunMode::Rendered,
-        }
-    }
-}
-
-impl fmt::Display for Mode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SurfaceSize {
@@ -216,10 +188,7 @@ pub(crate) enum ControllerError {
     Launch(String),
     Communication(String),
     Child(String),
-    Request {
-        code: String,
-        message: String,
-    },
+    Request { code: String, message: String },
     Invalid(String),
     Shutdown,
 }
@@ -333,10 +302,7 @@ impl ControllerSession {
             .get("paused")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let mut launch = profile.application.launch();
-        launch
-            .arguments
-            .push(profile.application.mode_argument.clone());
+        let launch = profile.application.launch();
         let mut options = SessionOptions::new()
             .with_recent_logs(recent_logs)
             .with_artifact_dir(artifact_dir)
@@ -347,7 +313,7 @@ impl ControllerSession {
             options = options.with_session_artifact_dir(session_artifact_dir);
         }
         let mut driver = DriverSession::spawn(&launch, options).map_err(map_driver_error)?;
-        let ready = driver.ready().map_err(map_driver_error)?;
+        driver.ready().map_err(map_driver_error)?;
 
         Ok(Self {
             driver: Some(driver),
@@ -360,7 +326,7 @@ impl ControllerSession {
     }
 
     #[cfg(test)]
-    fn from_driver(driver: DriverSession, mode: Mode) -> Self {
+    fn from_driver(driver: DriverSession) -> Self {
         let profile = test_profile();
         Self {
             driver: Some(driver),
@@ -532,10 +498,6 @@ impl ControllerSession {
         self.advance(frames)?;
         self.last_action = format!("step {frames}");
         Ok(())
-    }
-
-    pub(crate) fn is_paused(&self) -> bool {
-        self.paused
     }
 
     pub(crate) fn observe_component_value(
@@ -834,9 +796,9 @@ mod tests {
     #[test]
     fn request_errors_hide_protocol_envelopes_and_sequences() {
         let driver = shell_session(
-            r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":["pointer","time"],"observation_scopes":[]}'; read line; printf '%s\n' '{"sequence":1,"status":"error","error":{"code":"pointer_failed","message":"no pointer location"}}'; sleep 1"#,
+            r#"printf '%s\n' '{"type":"ready","version":2,"controls":["pointer","time"],"observation_scopes":[]}'; read line; printf '%s\n' '{"sequence":1,"status":"error","error":{"code":"pointer_failed","message":"no pointer location"}}'; sleep 1"#,
         );
-        let mut session = ControllerSession::from_driver(driver, Mode::Logical);
+        let mut session = ControllerSession::from_driver(driver);
         let message = session
             .perform(Action::Pointer(PointerAction::Press(Button::Left)))
             .unwrap_err()
@@ -847,5 +809,3 @@ mod tests {
         assert!(!message.contains("version"));
     }
 }
-
-
