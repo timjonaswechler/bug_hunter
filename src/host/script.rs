@@ -1,6 +1,8 @@
 use super::{
     Config, RecentLogs,
-    controller::{Action, Button, ControllerError, ControllerSession, KeyboardAction, Mode, PointerAction},
+    controller::{
+        Action, Button, ControllerError, ControllerSession, KeyboardAction, Mode, PointerAction,
+    },
     recording::Controller,
 };
 use crate::{screenshot::Command as ScreenshotCommand, time::MAX_FRAMES};
@@ -344,7 +346,6 @@ pub(crate) fn run(
         .or_else(|| document.as_ref().and_then(record_from_document));
     let session = ControllerSession::start(
         profile,
-        mode,
         artifact_dir,
         record_override.or(configured_record),
         recent_logs,
@@ -501,9 +502,9 @@ fn execute_steps(
                 max_frames,
             } => {
                 let description = condition.description();
-                let (matched, mut actual) = condition
-                    .check(session)
-                    .map_err(|error| action_error(path, position, error, last_observation.clone()))?;
+                let (matched, mut actual) = condition.check(session).map_err(|error| {
+                    action_error(path, position, error, last_observation.clone())
+                })?;
                 if matched {
                     last_observation = Some((description.clone(), actual));
                 } else {
@@ -517,12 +518,13 @@ fn execute_steps(
                     }
                     let mut found = false;
                     for _ in 0..*max_frames {
-                        session
-                            .step(1)
-                            .map_err(|error| action_error(path, position, error, last_observation.clone()))?;
-                        let (now_matched, now_actual) = condition.check(session).map_err(|error| {
+                        session.step(1).map_err(|error| {
                             action_error(path, position, error, last_observation.clone())
                         })?;
+                        let (now_matched, now_actual) =
+                            condition.check(session).map_err(|error| {
+                                action_error(path, position, error, last_observation.clone())
+                            })?;
                         actual = now_actual;
                         if now_matched {
                             found = true;
@@ -548,9 +550,9 @@ fn execute_steps(
             }
             Step::Expect { condition } => {
                 let description = condition.description();
-                let (matched, actual) = condition
-                    .check(session)
-                    .map_err(|error| action_error(path, position, error, last_observation.clone()))?;
+                let (matched, actual) = condition.check(session).map_err(|error| {
+                    action_error(path, position, error, last_observation.clone())
+                })?;
                 last_observation = Some((description.clone(), actual.clone()));
                 if !matched {
                     return Err(Error {

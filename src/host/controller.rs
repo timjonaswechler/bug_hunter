@@ -71,15 +71,9 @@ impl SurfaceSize {
     }
 }
 
-fn session_configuration(
-    profile: &Config,
-    mode: Mode,
-    surface: SurfaceSize,
-    paused: bool,
-) -> Value {
+fn session_configuration(profile: &Config, surface: SurfaceSize, paused: bool) -> Value {
     json!({
         "profile_id": profile.profile_id,
-        "mode": mode.as_str(),
         "surface": {"width": surface.width, "height": surface.height},
         "paused": paused,
     })
@@ -184,7 +178,6 @@ pub(crate) enum Observation {
     Pointers,
     VirtualInput,
     Clock,
-
 }
 
 impl Observation {
@@ -206,7 +199,6 @@ impl Observation {
             Self::Pointers => "pointers",
             Self::VirtualInput => "input",
             Self::Clock => "clock",
-
         }
     }
 }
@@ -214,7 +206,6 @@ impl Observation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Status {
     pub(crate) instance: String,
-    pub(crate) mode: Mode,
 
     pub(crate) paused: bool,
     pub(crate) last_action: String,
@@ -279,7 +270,6 @@ impl ControllerError {
 pub(crate) struct ControllerSession {
     driver: Option<DriverSession>,
     profile: Config,
-    mode: Mode,
     surface: SurfaceSize,
     instance: String,
     paused: bool,
@@ -289,7 +279,6 @@ pub(crate) struct ControllerSession {
 impl ControllerSession {
     pub(crate) fn start(
         profile: &Config,
-        mode: Mode,
         artifact_dir: PathBuf,
         record: Option<PathBuf>,
         recent_logs: RecentLogs,
@@ -301,13 +290,12 @@ impl ControllerSession {
         );
         let mut session = Self::start_with_configuration(
             profile,
-            mode,
             surface,
             artifact_dir,
             record,
             recent_logs,
             controller,
-            session_configuration(profile, mode, surface, false),
+            session_configuration(profile, surface, false),
             None,
         )?;
         session.advance(profile.session.startup_frames)?;
@@ -316,7 +304,6 @@ impl ControllerSession {
 
     pub(crate) fn start_replay(
         profile: &Config,
-        mode: Mode,
         artifact_dir: PathBuf,
         record: Option<PathBuf>,
         recent_logs: RecentLogs,
@@ -336,7 +323,6 @@ impl ControllerSession {
         }
         Self::start_with_configuration(
             profile,
-            mode,
             surface,
             artifact_dir,
             record,
@@ -349,7 +335,6 @@ impl ControllerSession {
 
     fn start_with_configuration(
         profile: &Config,
-        mode: Mode,
         surface: SurfaceSize,
         artifact_dir: PathBuf,
         record: Option<PathBuf>,
@@ -366,27 +351,21 @@ impl ControllerSession {
         launch
             .arguments
             .push(profile.application.mode_argument.clone());
-        launch.arguments.push(mode.as_str().into());
         let mut options = SessionOptions::new()
             .with_recent_logs(recent_logs)
             .with_artifact_dir(artifact_dir)
             .with_record(record)
-            .with_recording_context(&profile.session.id, mode.wire(), configuration)
+            .with_recording_context(&profile.session.id, configuration)
             .with_controller(controller);
         if let Some(session_artifact_dir) = session_artifact_dir {
             options = options.with_session_artifact_dir(session_artifact_dir);
         }
         let mut driver = DriverSession::spawn(&launch, options).map_err(map_driver_error)?;
         let ready = driver.ready().map_err(map_driver_error)?;
-        if ready.mode != mode.wire() {
-            return Err(ControllerError::Communication(
-                "child reported a different execution mode".into(),
-            ));
-        }
+
         Ok(Self {
             driver: Some(driver),
             profile: profile.clone(),
-            mode,
             surface,
             instance: profile.session.id.clone(),
             paused,
@@ -405,7 +384,6 @@ impl ControllerSession {
             ),
             instance: profile.session.id.clone(),
             profile,
-            mode,
             paused: false,
             last_action: "none".into(),
         }
@@ -539,8 +517,7 @@ impl ControllerSession {
         &mut self,
         path: Option<PathBuf>,
     ) -> Result<PathBuf, ControllerError> {
-        let configuration =
-            session_configuration(&self.profile, self.mode, self.surface, self.paused);
+        let configuration = session_configuration(&self.profile, self.surface, self.paused);
         let driver = self.driver_mut()?;
         driver
             .configure_recording(configuration)
@@ -674,7 +651,6 @@ impl ControllerSession {
     pub(crate) fn status(&mut self) -> Result<Status, ControllerError> {
         Ok(Status {
             instance: self.instance.clone(),
-            mode: self.mode,
             paused: self.paused,
             last_action: self.last_action.clone(),
         })

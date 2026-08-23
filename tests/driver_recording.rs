@@ -2,6 +2,7 @@ use bug_hunter::{
     Command, RunMode,
     host::{
         RecentLogs, Session, SessionConfig, SessionOptions,
+        recording::{Controller, Event, Recording, SessionOutcome},
     },
     observation::{Projection, Request as ObservationRequest, Selector},
     time::Command as TimeCommand,
@@ -43,7 +44,7 @@ done"#,
     let options = SessionOptions::new()
         .with_artifact_dir(&artifact_root)
         .with_record(Some(PathBuf::from("first.jsonl")))
-        .with_recording_context("alpha", RunMode::Logical, json!({"surface": [640, 360]}))
+        .with_recording_context("alpha", json!({"surface": [640, 360]}))
         .with_controller(Controller::new("repl"));
     let mut session = Session::spawn_command(command, options).expect("child should start");
     assert_eq!(session.ready().unwrap().mode, RunMode::Logical);
@@ -124,11 +125,7 @@ done"#,
     let options = SessionOptions::new()
         .with_artifact_dir(&artifact_root)
         .with_record(Some(PathBuf::from("private.jsonl")))
-        .with_recording_context(
-            "alpha",
-            RunMode::Logical,
-            json!({"credential": "context-secret-value"}),
-        );
+        .with_recording_context("alpha", json!({"credential": "context-secret-value"}));
     let mut session = Session::spawn_command(command, options).unwrap();
     session.ready().unwrap();
     session
@@ -204,7 +201,6 @@ done"#,
     let Event::SessionStarted { context } = &recording.entries[0].event else {
         panic!("implicit recording must start with context")
     };
-    assert_eq!(context.mode, RunMode::Rendered);
     assert_eq!(context.protocol_version, 2);
 
     let mut command = ProcessCommand::new("sh");
@@ -377,7 +373,7 @@ fn ready_mode_mismatch_records_a_parseable_abort() {
         SessionOptions::new()
             .with_artifact_dir(&artifact_root)
             .with_record(Some(PathBuf::from("mismatch.jsonl")))
-            .with_recording_context("alpha", RunMode::Logical, json!({})),
+            .with_recording_context("alpha", json!({})),
     )
     .unwrap();
     assert!(session.ready().unwrap_err().to_string().contains("mode"));
@@ -410,7 +406,7 @@ fn dropping_a_live_recorded_session_writes_an_aborted_end() {
         SessionOptions::new()
             .with_artifact_dir(&artifact_root)
             .with_record(Some(PathBuf::from("aborted.jsonl")))
-            .with_recording_context("alpha", RunMode::Logical, json!({})),
+            .with_recording_context("alpha", json!({})),
     )
     .unwrap();
     session.ready().unwrap();

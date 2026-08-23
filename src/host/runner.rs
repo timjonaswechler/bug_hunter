@@ -143,24 +143,12 @@ fn execute(profile: &Config, cli: Cli) -> Result<(), ExecuteError> {
             create,
             json,
         }) => report(profile, artifact_dir, create, json).map_err(ExecuteError::General),
-        None => controlled_repl(
-            profile,
-            cli.mode
-                .map(Into::into)
-                .unwrap_or_else(|| match profile.session.default_mode {
-                    super::DefaultMode::Logical => Mode::Logical,
-                    super::DefaultMode::Rendered => Mode::Rendered,
-                }),
-            artifact_dir,
-            cli.record,
-        )
-        .map_err(ExecuteError::General),
+        None => controlled_repl(profile, artifact_dir, cli.record).map_err(ExecuteError::General),
     }
 }
 
 fn controlled_repl(
     profile: &Config,
-    mode: Mode,
     artifact_dir: PathBuf,
     record: Option<PathBuf>,
 ) -> Result<(), String> {
@@ -175,7 +163,6 @@ fn controlled_repl(
         .and_then(|path| recording::path_below_artifact_root(&artifact_dir, path).ok());
     let result = ControllerSession::start(
         profile,
-        mode,
         artifact_dir.clone(),
         record,
         recent_logs.clone(),
@@ -203,10 +190,7 @@ fn replay_recording(
     let recent_logs = RecentLogs::default();
     let summary = replay::run(profile, &recording, artifact_dir, record, recent_logs)
         .map_err(ExecuteError::Replay)?;
-    println!(
-        "Session Replay passed: {} actions, mode={}",
-        summary.actions, summary.mode
-    );
+    println!("Session Replay passed: {} actions", summary.actions,);
     Ok(())
 }
 

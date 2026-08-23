@@ -1,13 +1,11 @@
 use bug_hunter::{
-    driver::{
-        wait::FrameLimit, DriverError, LaunchSpec, LaunchTargetKind, Session, SessionOptions,
-    },
+    Command, Handle, Response, RunMode,
+    host::{DriverError, LaunchSpec, LaunchTargetKind, Session, SessionOptions, wait::FrameLimit},
     keyboard::{Command as KeyboardCommand, Key},
     observation::{Projection, Request as ObservationRequest, Selector},
     pointer::{Button, Command as PointerCommand},
     screenshot::Command as ScreenshotCommand,
     time::Command as TimeCommand,
-    Command, Handle, Response, RunMode,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -150,11 +148,13 @@ fn host_waits_are_bounded_observe_and_advance_loops() {
             },
         )
         .unwrap();
-    assert!(ready.result.unwrap()["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|item| item["name"] == "logical-button"));
+    assert!(
+        ready.result.unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["name"] == "logical-button")
+    );
 
     let error = session
         .wait_for_observation(targets, FrameLimit::new(2, 10_000_000).unwrap(), |_| false)

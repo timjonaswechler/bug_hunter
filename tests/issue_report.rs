@@ -1,4 +1,4 @@
-use bug_hunter::driver::{FailureReport, IssueDraft, FAILURE_REPORT_VERSION};
+use bug_hunter::host::{FAILURE_REPORT_VERSION, FailureReport, IssueDraft};
 use serde_json::json;
 use std::{
     fs,
@@ -46,9 +46,11 @@ fn failure_artifacts_generate_a_typed_issue_draft() {
         "[automation failure] stellar catalog invariant violated"
     );
     assert!(draft.body.contains("- Kind: `panic`"));
-    assert!(draft
-        .body
-        .contains("- CLI error: `child exited with status 101`"));
+    assert!(
+        draft
+            .body
+            .contains("- CLI error: `child exited with status 101`")
+    );
     assert!(draft.body.contains("ERROR star_sim::automation"));
     assert!(!draft.body.contains("request-2\""));
     assert!(draft.body.contains("request-3\""));

@@ -376,15 +376,18 @@ pub(crate) fn update_helper(
             || state.is_pressed(Button::Secondary)
             || state.is_pressed(Button::Middle)
         {
-            background_color.0 = Color::srgb(1.0, 1.0, 0.0);
+            background_color.0 = Color::srgb(0.0, 0.8, 0.0);
             if state.is_pressed(Button::Primary) {
-                text.0 = String::from("L");
+                if !text.0.contains("L") {
+                    text.0 = String::from("L");
+                }
             } else if state.is_pressed(Button::Secondary) {
                 text.0 = String::from("R");
             } else if state.is_pressed(Button::Middle) {
                 text.0 = String::from("M");
             }
         } else {
+            background_color.0 = Color::srgb(1.0, 0.0, 0.0);
             text.0 = String::new();
         }
     }

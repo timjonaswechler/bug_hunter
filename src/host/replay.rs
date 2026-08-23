@@ -121,7 +121,6 @@ impl std::error::Error for Error {}
 #[derive(Debug)]
 pub(crate) struct Summary {
     pub(crate) actions: usize,
-    pub(crate) mode: Mode,
 }
 
 struct RecordedAction<'a> {
@@ -168,19 +167,6 @@ pub(crate) fn run(
             ));
         }
     };
-    let mode = match validate_context(profile, context) {
-        Ok(mode) => mode,
-        Err(error) => {
-            return Err(persist_early_failure(
-                source,
-                &artifact_dir,
-                &session_artifact_dir,
-                &context.configuration,
-                0,
-                error,
-            ));
-        }
-    };
     if let Err(error) = validate_terminal(&recording) {
         return Err(persist_early_failure(
             source,
@@ -216,7 +202,6 @@ pub(crate) fn run(
     let records_replay = record.is_some();
     let mut session = match ControllerSession::start_replay(
         profile,
-        mode,
         artifact_dir.clone(),
         record,
         recent_logs,
@@ -272,7 +257,6 @@ pub(crate) fn run(
     write_result(&artifact_dir, &artifact).map_err(Error::invalid)?;
     result.map(|_| Summary {
         actions: actions.len(),
-        mode,
     })
 }
 
@@ -326,54 +310,6 @@ fn context(recording: &Recording) -> Result<&SessionContext, Error> {
         Event::SessionStarted { context } => Ok(context),
         _ => Err(Error::invalid("Session Recording has no session context")),
     }
-}
-
-fn validate_context(profile: &Config, context: &SessionContext) -> Result<Mode, Error> {
-    if context.protocol_version != PROTOCOL_VERSION {
-        return Err(Error::invalid(format!(
-            "incompatible protocol version {}; expected {PROTOCOL_VERSION}",
-            context.protocol_version
-        )));
-    }
-    if let Some(recorded_profile) = context.configuration.get("profile_id") {
-        let recorded_profile = recorded_profile
-            .as_str()
-            .ok_or_else(|| Error::invalid("recorded profile_id must be a string"))?;
-        if recorded_profile != profile.profile_id {
-            return Err(Error::invalid(format!(
-                "recorded profile {recorded_profile:?} conflicts with configured profile {:?}",
-                profile.profile_id
-            )));
-        }
-    }
-    let configured_mode = context.configuration.get("mode").and_then(Value::as_str);
-    let expected_mode = match context.mode {
-        RunMode::Logical => ("logical", Mode::Logical),
-        RunMode::Rendered => ("rendered", Mode::Rendered),
-    };
-    if configured_mode != Some(expected_mode.0) {
-        return Err(Error::invalid(format!(
-            "recorded session configuration mode does not match {:?}",
-            context.mode
-        )));
-    }
-    let width = context
-        .configuration
-        .pointer("/surface/width")
-        .and_then(Value::as_f64);
-    let height = context
-        .configuration
-        .pointer("/surface/height")
-        .and_then(Value::as_f64);
-    if width != Some(f64::from(profile.session.surface_width))
-        || height != Some(f64::from(profile.session.surface_height))
-    {
-        return Err(Error::invalid(format!(
-            "recorded surface is incompatible; expected {}x{}",
-            profile.session.surface_width, profile.session.surface_height
-        )));
-    }
-    Ok(expected_mode.1)
 }
 
 fn validate_terminal(recording: &Recording) -> Result<(), Error> {
@@ -706,30 +642,7 @@ mod tests {
     }
 
     fn context(configuration: Value) -> SessionContext {
-        SessionContext::new("alpha", RunMode::Logical, configuration)
-    }
-
-    #[test]
-    fn replay_accepts_legacy_context_and_rejects_a_conflicting_profile() {
-        let profile = profile();
-        let legacy = context(json!({
-            "mode": "logical",
-            "surface": {"width": 640.0, "height": 360.0},
-            "paused": false
-        }));
-        assert_eq!(validate_context(&profile, &legacy).unwrap(), Mode::Logical);
-
-        let conflicting = context(json!({
-            "profile_id": "different-profile",
-            "mode": "logical",
-            "surface": {"width": 640.0, "height": 360.0}
-        }));
-        assert!(
-            validate_context(&profile, &conflicting)
-                .unwrap_err()
-                .to_string()
-                .contains("conflicts")
-        );
+        SessionContext::new("alpha", configuration)
     }
 
     #[test]

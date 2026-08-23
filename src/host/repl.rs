@@ -247,10 +247,8 @@ fn execute(
 pub(crate) fn write_status(output: &mut impl Write, status: &Status) -> io::Result<()> {
     writeln!(
         output,
-        "instance={} mode={} paused={}", 
-        status.instance,
-        status.mode,
-        status.paused
+        "instance={} paused={}",
+        status.instance, status.paused
     )?;
     writeln!(output, "last action: {}", status.last_action)
 }
@@ -401,7 +399,6 @@ mod tests {
     fn status_is_stable_and_human_readable() {
         let status = Status {
             instance: "alpha".into(),
-            mode: Mode::Rendered,
             paused: false,
             last_action: "click menu.tab.museum".into(),
         };

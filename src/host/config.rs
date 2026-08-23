@@ -72,7 +72,6 @@ impl Default for DefaultMode {
 #[serde(deny_unknown_fields)]
 pub struct SessionConfig {
     pub id: String,
-    pub default_mode: DefaultMode,
     pub surface_width: u32,
     pub surface_height: u32,
     pub frame_nanoseconds: u64,
@@ -83,7 +82,6 @@ impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             id: "session".into(),
-            default_mode: DefaultMode::Rendered,
             surface_width: 640,
             surface_height: 360,
             frame_nanoseconds: 16_666_667,
@@ -243,7 +241,6 @@ mode_argument = "--controlled-mode"
 
 [session]
 id = "alpha"
-default_mode = "rendered"
 surface_width = 640
 surface_height = 360
 frame_nanoseconds = 16666667

@@ -14,8 +14,8 @@ use super::{
     },
 };
 use crate::{
-    bug_hunter_ARTIFACT_DIR, Command, PROTOCOL_VERSION, Ready, Request, Response,
-    ResponseStatus, observation::Request as ObservationRequest, time::Command as TimeCommand,
+    Command, PROTOCOL_VERSION, Ready, Request, Response, ResponseStatus, bug_hunter_ARTIFACT_DIR,
+    observation::Request as ObservationRequest, time::Command as TimeCommand,
 };
 use serde_json::Value;
 use std::{
@@ -151,14 +151,13 @@ impl SessionOptions {
         self
     }
 
-    /// Sets explicit Session Recording identity, expected mode, and opaque host configuration.
+    /// Sets explicit Session Recording identity, expected  and opaque host configuration.
     pub fn with_recording_context(
         mut self,
         session_id: impl Into<String>,
-        mode: crate::RunMode,
         configuration: Value,
     ) -> Self {
-        self.recording.context = SessionContext::new(session_id, mode, configuration);
+        self.recording.context = SessionContext::new(session_id, configuration);
         self.recording.context_explicit = true;
         self
     }
@@ -283,17 +282,7 @@ impl Session {
                 DriverError::Protocol(format!("invalid ready message: {ready:?}")),
             );
         }
-        if self.recording.context_explicit && ready.mode != self.recording.context.mode {
-            return self.fail(
-                "ready_mode_mismatch",
-                DriverError::Protocol(format!(
-                    "child reported mode {:?}, expected {:?}",
-                    ready.mode, self.recording.context.mode
-                )),
-            );
-        }
         if !self.recording.context_explicit {
-            self.recording.context.mode = ready.mode;
             self.recording.context.protocol_version = ready.version;
         }
         self.recording.ready = true;

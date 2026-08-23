@@ -76,7 +76,7 @@ mode_argument = "--controlled-mode"
 
 [session]
 id = "alpha"
-default_mode = "rendered"
+
 surface_width = 640
 surface_height = 360
 frame_nanoseconds = 16666667
