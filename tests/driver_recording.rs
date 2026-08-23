@@ -57,13 +57,13 @@ done"#,
     let first_path = session.stop_recording().unwrap();
 
     session
-        .request(Command::Time(TimeCommand::advance(1, 16_666_667)))
+        .request(Command::Time(TimeCommand::step(1, 16_666_667)))
         .unwrap();
     let second_path = session
         .start_recording(Some(PathBuf::from("second.jsonl")))
         .unwrap();
     session
-        .request(Command::Time(TimeCommand::advance(1, 16_666_667)))
+        .request(Command::Time(TimeCommand::step(1, 16_666_667)))
         .unwrap();
     session.shutdown().unwrap();
 
@@ -148,7 +148,7 @@ done"#,
         )
         .unwrap();
     session
-        .request(Command::Time(TimeCommand::advance(1, 16_666_667)))
+        .request(Command::Time(TimeCommand::step(1, 16_666_667)))
         .unwrap();
     session.shutdown().unwrap();
 
@@ -376,11 +376,12 @@ fn ready_mode_mismatch_records_a_parseable_abort() {
             .with_recording_context("alpha", json!({})),
     )
     .unwrap();
-    assert!(session.ready().unwrap_err().to_string().contains("mode"));
+    // Mode is no longer part of SessionContext; ready should succeed regardless of child mode.
+    assert!(session.ready().is_ok());
     drop(session);
 
     let recording = Recording::parse_path(artifact_root.join("mismatch.jsonl")).unwrap();
-    assert!(recording.entries.iter().any(|entry| matches!(
+    assert!(!recording.entries.iter().any(|entry| matches!(
         entry.event,
         Event::Error { ref kind, .. } if kind == "ready_mode_mismatch"
     )));

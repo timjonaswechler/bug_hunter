@@ -68,9 +68,8 @@ enum Step {
     Text {
         text: String,
     },
-    Wait {
-        condition: Condition,
-        max_frames: u64,
+    Step {
+        frames: u64,
     },
     Expect {
         condition: Condition,
@@ -433,12 +432,12 @@ fn validate(path: &Path, script: &Script) -> Result<(), Error> {
         ));
     }
     for (index, step) in script.steps.iter().enumerate() {
-        if let Step::Wait { max_frames, .. } = step
-            && (*max_frames == 0 || *max_frames > MAX_FRAMES)
+        if let Step::Step { frames } = step
+            && (*frames == 0 || *frames > MAX_FRAMES)
         {
             return Err(Error::invalid(
                 path,
-                format!("$.steps[{index}].max_frames must be between 1 and {MAX_FRAMES}"),
+                format!("$.steps[{index}].frames must be between 1 and {MAX_FRAMES}"),
             ));
         }
     }
@@ -497,56 +496,10 @@ fn execute_steps(
                 position,
                 &last_observation,
             )?,
-            Step::Wait {
-                condition,
-                max_frames,
-            } => {
-                let description = condition.description();
-                let (matched, mut actual) = condition.check(session).map_err(|error| {
+            Step::Step { frames } => {
+                session.step(*frames).map_err(|error| {
                     action_error(path, position, error, last_observation.clone())
                 })?;
-                if matched {
-                    last_observation = Some((description.clone(), actual));
-                } else {
-                    if session.is_paused() {
-                        return Err(action_error(
-                            path,
-                            position,
-                            ControllerError::PausedWait,
-                            last_observation.clone(),
-                        ));
-                    }
-                    let mut found = false;
-                    for _ in 0..*max_frames {
-                        session.step(1).map_err(|error| {
-                            action_error(path, position, error, last_observation.clone())
-                        })?;
-                        let (now_matched, now_actual) =
-                            condition.check(session).map_err(|error| {
-                                action_error(path, position, error, last_observation.clone())
-                            })?;
-                        actual = now_actual;
-                        if now_matched {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if found {
-                        last_observation = Some((description.clone(), actual));
-                    } else {
-                        return Err(Error {
-                            kind: ErrorKind::Timeout,
-                            script: path.to_path_buf(),
-                            step: Some(position),
-                            message: format!(
-                                "wait condition was not met within {max_frames} controlled frames"
-                            ),
-                            expected: Some(condition.expected()),
-                            actual: Some(actual.clone()),
-                            last_observation: Some((description, actual)),
-                        });
-                    }
-                }
             }
             Step::Expect { condition } => {
                 let description = condition.description();
@@ -618,11 +571,7 @@ fn action_error(
     error: ControllerError,
     last_observation: Option<(String, Value)>,
 ) -> Error {
-    let kind = if matches!(error, ControllerError::WaitLimitReached { .. }) {
-        ErrorKind::Timeout
-    } else {
-        ErrorKind::Action
-    };
+    let kind = ErrorKind::Action;
     Error {
         kind,
         script: path.to_path_buf(),
@@ -665,19 +614,13 @@ mod tests {
     }
 
     #[test]
-    fn wait_limits_are_required_and_bounded() {
-        let missing = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"wait","condition":{"type":"component","target":"session.status","component":"test_app::SessionObservation","field":"active_screen","equals":"museum"}}]}"#,
-        )
-        .unwrap_err();
-        assert!(missing.to_string().contains("max_frames"));
-
+    fn step_frames_are_required_and_bounded() {
         let script = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"wait","condition":{"type":"component","target":"session.status","component":"test_app::SessionObservation","field":"active_screen","equals":"museum"},"max_frames":0}]}"#,
+            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"step","frames":0}]}"#,
         )
         .unwrap();
         let error = validate(Path::new("zero.json"), &script).unwrap_err();
-        assert!(error.to_string().contains("$.steps[0].max_frames"));
+        assert!(error.to_string().contains("$.steps[0].frames"));
     }
 
     #[test]

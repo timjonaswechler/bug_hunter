@@ -279,7 +279,7 @@ mod tests {
         fs::write(
             &recording_path,
             concat!(
-                "{\"version\":1,\"sequence\":1,\"type\":\"session_started\",\"context\":{\"session_id\":\"alpha\",\"mode\":\"rendered\",\"protocol_version\":2,\"configuration\":{\"mode\":\"rendered\"}}}\n",
+                "{\"version\":1,\"sequence\":1,\"type\":\"session_started\",\"context\":{\"session_id\":\"alpha\",\"protocol_version\":2,\"configuration\":{\"mode\":\"rendered\"}}}\n",
                 "{\"version\":1,\"sequence\":2,\"type\":\"controller_action\",\"controller\":{\"origin\":\"replay\"},\"action\":{\"type\":\"screenshot\",\"path\":\"captures/frame.png\"}}\n",
                 "{\"version\":1,\"sequence\":3,\"type\":\"game_response\",\"request_sequence\":1,\"status\":\"completed\",\"result\":{\"artifact\":{\"type\":\"screenshot\",\"path\":\"captures/frame.png\",\"mime_type\":\"image/png\",\"width\":640,\"height\":360}}}\n",
                 "{\"version\":1,\"sequence\":4,\"type\":\"artifact\",\"request_sequence\":1,\"artifact\":{\"kind\":\"screenshot\",\"path\":\"captures/frame.png\",\"mime_type\":\"image/png\",\"width\":640,\"height\":360}}\n",

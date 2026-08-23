@@ -406,7 +406,7 @@ mod tests {
         write_status(&mut output, &status).unwrap();
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "instance=alpha mode=rendered paused=false\nlast action: click menu.tab.museum\n"
+            "instance=alpha paused=false\nlast action: click menu.tab.museum\n"
         );
     }
 }

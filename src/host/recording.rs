@@ -898,7 +898,7 @@ mod tests {
     #[test]
     fn parses_and_roundtrips_version_one_entries() {
         let source = concat!(
-            "{\"version\":1,\"sequence\":4,\"type\":\"session_started\",\"context\":{\"session_id\":\"alpha\",\"mode\":\"logical\",\"protocol_version\":2,\"configuration\":{}}}\n",
+            "{\"version\":1,\"sequence\":4,\"type\":\"session_started\",\"context\":{\"session_id\":\"alpha\",\"protocol_version\":2,\"configuration\":{}}}\n",
             "{\"version\":1,\"sequence\":5,\"type\":\"recording_stopped\"}\n"
         );
         let recording = Recording::parse_reader(Cursor::new(source)).unwrap();
@@ -919,7 +919,7 @@ mod tests {
         assert!(matches!(malformed, Error::Json(_)));
         let unknown_field = concat!(
             "{\"version\":1,\"sequence\":1,\"type\":\"session_started\",",
-            "\"context\":{\"session_id\":\"alpha\",\"mode\":\"logical\",",
+            "\"context\":{\"session_id\":\"alpha\",",
             "\"protocol_version\":2,\"configuration\":{}},\"secret\":true}\n"
         );
         assert!(matches!(

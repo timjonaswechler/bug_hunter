@@ -117,12 +117,12 @@ digits, punctuation, modifiers, navigation keys, and F1 through F12. Text comman
 16 KiB of UTF-8 and commit the whole string to the focused Bevy `EditableText`. A missing,
 stale, or non-editable focus returns `text_focus_unavailable`.
 
-`time.advance` runs between 1 and 10,000 complete application frames. `step_nanoseconds` must be an
+`time.step` runs between 1 and 10,000 complete application frames. `step_nanoseconds` must be an
 integer between 1 and 1,000,000,000. Invalid frame counts and steps return
 `invalid_time_frames`, `time_frames_too_large`, `invalid_time_step`, or `time_step_too_large`
 without changing the clock. Controlled Sessions do not run Bevy simulation schedules while no
-advance command is pending. Input commands update session-local Virtual Input immediately, while
-Bevy application systems consume the queued transitions on the next controlled frame.
+`step` command is pending. Input commands queue session-local Virtual Input until the next `step`, while
+Bevy application systems consume all queued transitions atomically on that controlled frame.
 
 A rendered composition opts into screenshots with `bug_hunter::screenshot::Plugin`. The
 plugin does not install a renderer, and `ready.controls` includes `screenshot` only when the
@@ -131,10 +131,10 @@ compositions return `screenshot_capability_unavailable`.
 
 `ready` is a control-plane signal. It reports that the protocol accepts commands and that the
 advertised services exist. It does not mean that Bevy has completed UI layout, render extraction,
-or its first presented frame. Controllers that need an image must advance separate controlled
-frames and wait for an application-specific visible condition, such as an expected tile color.
-Sending several frames in one `time.advance` request advances simulation schedules in one outer
-application update, so it is not a substitute for separate updates while the first rendered scene
+or its first presented frame. Controllers that need an image must `step` separate controlled
+frames and poll an application-specific visible condition with explicit `observe` + `step` loops, such as an expected tile color.
+Sending several frames in one `time.step` request steps simulation schedules in one outer
+application update, so it is not a substitute for separate `step` calls while the first rendered scene
 is being prepared.
 
 Screenshot paths must be normalized, relative `.png` paths beneath the host-provided session
@@ -184,7 +184,7 @@ Virtual keyboard commands write `KeyboardInput`, update Bevy's `ButtonInput<KeyC
 `ButtonInput<Key>` resources, and use Bevy's focused-input dispatch. Virtual text commands write
 `Ime::Commit`, which `EditableTextInputPlugin` routes to the focused `EditableText`. The plugin
 processes one request per event-loop update. Input responses acknowledge the queued session-local
-transition. An advance response is written only after every requested frame, including application
+transition. A `step` response is written only after every requested frame, including application
 observers and text-edit systems, has completed. `stdout` contains JSONL only. Diagnostics use
 `stderr`.
 
@@ -275,19 +275,24 @@ credentials and raw model prompts cannot enter the file. `recording::Recording::
 `parse_path` validate the version and strictly increasing
 sequences, returning an unsupported-version error for newer formats.
 
-Host waits compose existing observation and time commands. They do not add a wait command to the wire protocol. `FrameLimit` validates both the maximum frame count and each controlled time step against the protocol limits:
+Timing is explicit: there is no `wait` primitive. Controllers poll with `observe` + `step` loops. Batching is supported — multiple Virtual Inputs may be queued before one `step` and are consumed atomically in the next frame:
 
 ```rust
-use bug_hunter::driver::wait::FrameLimit;
-
-let response = session.wait_for_observation(
-    observation,
-    FrameLimit::new(120, 16_666_667)?,
-    |result| result["items"].as_array().is_some_and(|items| !items.is_empty()),
-)?;
+session.request(Command::Pointer(PointerCommand::Move { surface: None, position: [10.0, 20.0] }))?;
+session.request(Command::Keyboard(KeyboardCommand::Press { key: Key::A }))?;
+session.request(Command::Text(TextCommand::new("hi")))?;
+session.request(Command::Time(TimeCommand::step(1, 16_666_667)))?; // all three visible in this frame
 ```
 
-The predicate sees the current observation before any frame advances. After each miss, the driver advances one frame and observes again. Exhaustion returns `DriverError::WaitLimitReached` with the last observation.
+Polling example:
+
+```rust
+for _ in 0..120 {
+    let obs = session.request(Command::Observe(observation.clone()))?;
+    if obs.result["items"].as_array().is_some_and(|items| !items.is_empty()) { break; }
+    session.request(Command::Time(TimeCommand::step(1, 16_666_667)))?;
+}
+```
 
 ## Bevy application smoke tests
 

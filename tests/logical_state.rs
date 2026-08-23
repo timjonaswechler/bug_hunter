@@ -1,6 +1,6 @@
 use bug_hunter::{
     Command, Handle, Response, RunMode,
-    host::{DriverError, LaunchSpec, LaunchTargetKind, Session, SessionOptions, wait::FrameLimit},
+    host::{DriverError, LaunchSpec, LaunchTargetKind, Session, SessionOptions},
     keyboard::{Command as KeyboardCommand, Key},
     observation::{Projection, Request as ObservationRequest, Selector},
     pointer::{Button, Command as PointerCommand},
@@ -63,7 +63,7 @@ fn logical_state_schedules_advance_only_through_the_controlled_clock() {
     assert_eq!(initial["timer_finishes"], 0);
     assert_eq!(session_observation(&mut session, handle), initial);
 
-    advance(&mut session, TimeCommand::advance(2, 25_000_000));
+    advance(&mut session, TimeCommand::step(2, 25_000_000));
     let advanced = session_observation(&mut session, handle);
     assert_eq!(advanced["updates"], 2);
     assert_eq!(advanced["fixed_updates"], 5);
@@ -78,7 +78,7 @@ fn virtual_pointer_and_keyboard_change_state_through_application_systems() {
     let _guard = session_test_guard();
     let mut session = spawn_logical_state().unwrap();
     session.ready().unwrap();
-    advance(&mut session, TimeCommand::advance(1, 10_000_000));
+    advance(&mut session, TimeCommand::step(1, 10_000_000));
 
     let button = target_summary(&mut session, "logical-button");
     assert_eq!(button["bounds"]["x"], 220.0);
@@ -91,24 +91,24 @@ fn virtual_pointer_and_keyboard_change_state_through_application_systems() {
             position: [320.0, 180.0],
         }))
         .unwrap();
-    advance(&mut session, TimeCommand::advance(1, 10_000_000));
+    advance(&mut session, TimeCommand::step(1, 10_000_000));
     session
         .request(Command::Pointer(PointerCommand::Press {
             button: Button::Primary,
         }))
         .unwrap();
-    advance(&mut session, TimeCommand::advance(1, 10_000_000));
+    advance(&mut session, TimeCommand::step(1, 10_000_000));
     session
         .request(Command::Pointer(PointerCommand::Release {
             button: Button::Primary,
         }))
         .unwrap();
-    advance(&mut session, TimeCommand::advance(1, 10_000_000));
+    advance(&mut session, TimeCommand::step(1, 10_000_000));
 
     session
         .request(Command::Keyboard(KeyboardCommand::Press { key: Key::A }))
         .unwrap();
-    advance(&mut session, TimeCommand::advance(2, 10_000_000));
+    advance(&mut session, TimeCommand::step(2, 10_000_000));
     let handle = target_handle(&mut session, "logical-state");
     let pressed = session_observation(&mut session, handle);
     assert_eq!(pressed["pointer_presses"], 1);
@@ -119,7 +119,7 @@ fn virtual_pointer_and_keyboard_change_state_through_application_systems() {
     session
         .request(Command::Keyboard(KeyboardCommand::Release { key: Key::A }))
         .unwrap();
-    advance(&mut session, TimeCommand::advance(1, 10_000_000));
+    advance(&mut session, TimeCommand::step(1, 10_000_000));
     let released = session_observation(&mut session, handle);
     assert_eq!(released["key_a_held"], false);
     assert_eq!(released["key_a_presses"], 1);
@@ -129,46 +129,41 @@ fn virtual_pointer_and_keyboard_change_state_through_application_systems() {
 }
 
 #[test]
-fn host_waits_are_bounded_observe_and_advance_loops() {
+fn explicit_observe_and_step_loop_replaces_wait() {
     let _guard = session_test_guard();
     let mut session = spawn_logical_state().unwrap();
     session.ready().unwrap();
     let targets = ObservationRequest::new(Selector::Targets, Projection::Summary);
 
-    let ready = session
-        .wait_for_observation(
-            targets.clone(),
-            FrameLimit::new(2, 10_000_000).unwrap(),
-            |result| {
-                result["items"].as_array().is_some_and(|items| {
-                    items
-                        .iter()
-                        .any(|item| item["name"] == "logical-button" && !item["bounds"].is_null())
-                })
-            },
-        )
+    // Explicit polling replaces the former wait_for_observation helper.
+    let mut result = session
+        .request(Command::Observe(targets.clone()))
+        .unwrap()
+        .result
         .unwrap();
+    for _ in 0..2 {
+        let ready = result["items"].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item["name"] == "logical-button" && !item["bounds"].is_null())
+        });
+        if ready {
+            break;
+        }
+        advance(&mut session, TimeCommand::step(1, 10_000_000));
+        result = session
+            .request(Command::Observe(targets.clone()))
+            .unwrap()
+            .result
+            .unwrap();
+    }
     assert!(
-        ready.result.unwrap()["items"]
+        result["items"]
             .as_array()
             .unwrap()
             .iter()
             .any(|item| item["name"] == "logical-button")
     );
-
-    let error = session
-        .wait_for_observation(targets, FrameLimit::new(2, 10_000_000).unwrap(), |_| false)
-        .unwrap_err();
-    match error {
-        DriverError::WaitLimitReached {
-            frame_limit,
-            last_observation,
-        } => {
-            assert_eq!(frame_limit, 2);
-            assert!(last_observation["items"].is_array());
-        }
-        other => panic!("unexpected wait error: {other}"),
-    }
 
     session.shutdown().unwrap();
 }
@@ -186,11 +181,11 @@ fn deterministic_observation() -> Value {
     session
         .request(Command::Keyboard(KeyboardCommand::Press { key: Key::A }))
         .unwrap();
-    advance(&mut session, TimeCommand::advance(2, 25_000_000));
+    advance(&mut session, TimeCommand::step(2, 25_000_000));
     session
         .request(Command::Keyboard(KeyboardCommand::Release { key: Key::A }))
         .unwrap();
-    advance(&mut session, TimeCommand::advance(2, 25_000_000));
+    advance(&mut session, TimeCommand::step(2, 25_000_000));
     let observation = session_observation(&mut session, handle);
     session.shutdown().unwrap();
     observation

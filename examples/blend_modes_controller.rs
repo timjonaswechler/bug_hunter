@@ -219,7 +219,7 @@ fn tap(session: &mut Session, key: Key) -> Result<(), Box<dyn std::error::Error>
 }
 
 fn advance(session: &mut Session, frames: u64) -> Result<(), Box<dyn std::error::Error>> {
-    session.request(Command::Time(TimeCommand::advance(
+    session.request(Command::Time(TimeCommand::step(
         frames,
         STEP_NANOSECONDS,
     )))?;

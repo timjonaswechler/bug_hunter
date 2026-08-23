@@ -273,7 +273,7 @@ fn move_pointer(
 }
 
 fn advance(session: &mut Session, frames: u64) -> Result<(), Box<dyn std::error::Error>> {
-    session.request(Command::Time(TimeCommand::advance(frames, 16_666_667)))?;
+    session.request(Command::Time(TimeCommand::step(frames, 16_666_667)))?;
     Ok(())
 }
 

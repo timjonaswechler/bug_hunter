@@ -221,11 +221,6 @@ pub(crate) enum ControllerError {
         message: String,
     },
     Invalid(String),
-    PausedWait,
-    WaitLimitReached {
-        frames: u64,
-        last_observation: Value,
-    },
     Shutdown,
 }
 
@@ -242,15 +237,6 @@ impl fmt::Display for ControllerError {
             Self::Child(message) => write!(formatter, "Controlled Session ended: {message}"),
             Self::Request { code, message } => write!(formatter, "{code}: {message}"),
             Self::Invalid(message) => formatter.write_str(message),
-            Self::PausedWait => formatter.write_str(
-                "wait condition is not met and the session is paused; use step or resume",
-            ),
-            Self::WaitLimitReached { frames, .. } => {
-                write!(
-                    formatter,
-                    "wait condition was not met within {frames} controlled frames"
-                )
-            }
             Self::Shutdown => formatter.write_str("Controlled Session is already shut down"),
         }
     }
@@ -451,40 +437,6 @@ impl ControllerSession {
         Ok(value)
     }
 
-    pub(crate) fn wait_for<F>(
-        &mut self,
-        observation: Observation,
-        frame_limit: u64,
-        mut predicate: F,
-    ) -> Result<Value, ControllerError>
-    where
-        F: FnMut(&Value) -> bool,
-    {
-        if frame_limit > MAX_FRAMES {
-            return Err(ControllerError::Invalid(format!(
-                "wait frame limit must be at most {MAX_FRAMES}"
-            )));
-        }
-        let mut value = self.observe_raw(observation)?;
-        if predicate(&value) {
-            return Ok(value);
-        }
-        if self.paused {
-            return Err(ControllerError::PausedWait);
-        }
-        for _ in 0..frame_limit {
-            self.advance(1)?;
-            value = self.observe_raw(observation)?;
-            if predicate(&value) {
-                return Ok(value);
-            }
-        }
-        Err(ControllerError::WaitLimitReached {
-            frames: frame_limit,
-            last_observation: value,
-        })
-    }
-
     pub(crate) fn pause(&mut self) -> Result<(), ControllerError> {
         self.driver_mut()?
             .capture_controller_action(json!({"type": "pause"}))
@@ -566,14 +518,6 @@ impl ControllerSession {
             ControllerError::Invalid(_) => {
                 ("invalid_controller_action", "Controller action was invalid")
             }
-            ControllerError::PausedWait => (
-                "paused_wait",
-                "Observation wait was blocked while the session was paused",
-            ),
-            ControllerError::WaitLimitReached { .. } => (
-                "wait_limit_reached",
-                "Observation wait reached its frame limit",
-            ),
             ControllerError::Shutdown => (
                 "session_shutdown",
                 "Controlled Session was already shut down",
@@ -679,22 +623,20 @@ impl ControllerSession {
     }
 
     fn click(&mut self, button: Button) -> Result<Value, ControllerError> {
-        self.transition(PointerCommand::Press {
+        self.request(WireCommand::Pointer(PointerCommand::Press {
             button: button.wire(),
-        })?;
-        self.transition(PointerCommand::Release {
+        }))?;
+        self.request(WireCommand::Pointer(PointerCommand::Release {
             button: button.wire(),
-        })
+        }))
     }
 
     fn transition(&mut self, command: PointerCommand) -> Result<Value, ControllerError> {
-        self.settle(WireCommand::Pointer(command))
+        self.request(WireCommand::Pointer(command))
     }
 
     fn settle(&mut self, command: WireCommand) -> Result<Value, ControllerError> {
-        let result = self.request(command)?;
-        self.advance(1)?;
-        Ok(result)
+        self.request(command)
     }
 
     fn advance(&mut self, frames: u64) -> Result<Value, ControllerError> {
@@ -703,7 +645,7 @@ impl ControllerSession {
                 "step frames must be between 1 and {MAX_FRAMES}"
             )));
         }
-        self.request(WireCommand::Time(TimeCommand::advance(
+        self.request(WireCommand::Time(TimeCommand::step(
             frames,
             self.profile.session.frame_nanoseconds,
         )))
@@ -837,13 +779,6 @@ fn map_driver_error(error: DriverError) -> ControllerError {
         DriverError::Child(message) => ControllerError::Child(message),
         DriverError::Io(message) => ControllerError::Communication(message),
         DriverError::Protocol(message) => ControllerError::Communication(message),
-        DriverError::WaitLimitReached {
-            frame_limit,
-            last_observation,
-        } => ControllerError::WaitLimitReached {
-            frames: frame_limit,
-            last_observation,
-        },
     }
 }
 
@@ -911,19 +846,6 @@ mod tests {
         assert!(!message.contains("Response"));
         assert!(!message.contains("version"));
     }
-
-    #[test]
-    fn paused_wait_observes_once_without_advancing() {
-        let driver = shell_session(
-            r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":["time"],"observation_scopes":["clock"]}'; read line; printf '%s\n' '{"sequence":1,"status":"completed","result":{"items":[{"ready":false}]}}'; sleep 1"#,
-        );
-        let mut session = ControllerSession::from_driver(driver, Mode::Logical);
-        session.pause().unwrap();
-        let error = session
-            .wait_for(Observation::Clock, 4, |value| {
-                value["items"][0]["ready"] == true
-            })
-            .unwrap_err();
-        assert!(matches!(error, ControllerError::PausedWait));
-    }
 }
+
+

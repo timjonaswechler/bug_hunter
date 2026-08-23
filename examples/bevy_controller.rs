@@ -280,7 +280,7 @@ fn pointer(
 }
 
 fn advance(session: &mut Session) -> Result<(), Box<dyn std::error::Error>> {
-    session.request(Command::Time(TimeCommand::advance(1, 16_666_667)))?;
+    session.request(Command::Time(TimeCommand::step(1, 16_666_667)))?;
     Ok(())
 }
 

@@ -1,6 +1,6 @@
 //! Bevy integration for controlled schedules, Virtual Input isolation, and protocol transport.
 //!
-//! The plugin runs controlled schedules only for explicit time advances, queues Virtual Input for
+//! The plugin runs controlled schedules only for explicit time steps, queues Virtual Input for
 //! controlled frames, and discards native keyboard, pointer, text, and scroll input. [`RunMode`] is
 //! handshake metadata, not a request to install or remove a renderer or window. Screenshot
 //! capability remains conditional on the embedding composition.
@@ -629,28 +629,28 @@ fn dispatch_request(world: &mut World) {
 }
 
 fn run_controlled_frames(world: &mut World) {
-    let Some(advance) = world
+    let Some(step) = world
         .resource::<PendingRequests>()
         .0
         .last()
         .and_then(|pending| match pending {
-            PendingRequest::Time { command, .. } => Some(command.into_advance()),
+            PendingRequest::Time { command, .. } => Some(command.into_step()),
             _ => None,
         })
     else {
         return;
     };
     let schedules = world.resource::<SimulationScheduleOrder>().0.clone();
-    for _ in 0..advance.frames {
+    for _ in 0..step.frames {
         *world.resource_mut::<TimeUpdateStrategy>() =
-            TimeUpdateStrategy::ManualDuration(advance.step);
+            TimeUpdateStrategy::ManualDuration(step.step);
         for &schedule in &schedules {
             let _ = world.try_run_schedule(schedule);
             if (*schedule).eq(&First) {
                 flush_virtual_input(world);
             }
         }
-        world.resource_mut::<Clock>().complete_frame(advance.step);
+        world.resource_mut::<Clock>().complete_frame(step.step);
     }
     *world.resource_mut::<TimeUpdateStrategy>() =
         TimeUpdateStrategy::ManualDuration(std::time::Duration::ZERO);
@@ -1017,7 +1017,7 @@ mod tests {
             &mut app,
             &sender,
             2,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         let virtual_location = app
             .world_mut()
@@ -1103,7 +1103,7 @@ mod tests {
             &mut app,
             &sender,
             1,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":25000000}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":25000000}}"#,
         );
 
         assert_eq!(app.world().resource::<FrameCapture>().updates, 1);
@@ -1126,7 +1126,7 @@ mod tests {
             &mut app,
             &sender,
             1,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":1000000000}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":1000000000}}"#,
         );
 
         assert_eq!(
@@ -1183,15 +1183,15 @@ mod tests {
             .add_systems(Update, capture_update);
         app.update();
         for (sequence, action) in [
-            (1, r#"{"type":"advance","frames":0,"step_nanoseconds":1}"#),
+            (1, r#"{"type":"step","frames":0,"step_nanoseconds":1}"#),
             (
                 2,
-                r#"{"type":"advance","frames":10001,"step_nanoseconds":1}"#,
+                r#"{"type":"step","frames":10001,"step_nanoseconds":1}"#,
             ),
-            (3, r#"{"type":"advance","frames":1,"step_nanoseconds":0}"#),
+            (3, r#"{"type":"step","frames":1,"step_nanoseconds":0}"#),
             (
                 4,
-                r#"{"type":"advance","frames":1,"step_nanoseconds":1000000001}"#,
+                r#"{"type":"step","frames":1,"step_nanoseconds":1000000001}"#,
             ),
         ] {
             send_command(
@@ -1235,7 +1235,7 @@ mod tests {
             &mut first,
             &first_sender,
             1,
-            r#"{"type":"time","action":{"type":"advance","frames":2,"step_nanoseconds":500}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":2,"step_nanoseconds":500}}"#,
         );
 
         assert_eq!(first.world().resource::<Clock>().frame_index(), 2);
@@ -1267,7 +1267,7 @@ mod tests {
                     &sender,
                     index as u64 + 1,
                     &format!(
-                        r#"{{"type":"time","action":{{"type":"advance","frames":{frames},"step_nanoseconds":25000000}}}}"#
+                        r#"{{"type":"time","action":{{"type":"step","frames":{frames},"step_nanoseconds":25000000}}}}"#
                     ),
                 );
             }
@@ -1303,7 +1303,7 @@ mod tests {
             &mut app,
             &sender,
             2,
-            r#"{"type":"time","action":{"type":"advance","frames":3,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":3,"step_nanoseconds":16666667}}"#,
         );
         assert_eq!(app.world().resource::<FrameCapture>().held_updates, 3);
 
@@ -1317,10 +1317,96 @@ mod tests {
             &mut app,
             &sender,
             4,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         assert_eq!(app.world().resource::<FrameCapture>().updates, 4);
         assert_eq!(app.world().resource::<FrameCapture>().held_updates, 3);
+    }
+
+    #[test]
+    fn multiple_virtual_inputs_queue_until_next_step() {
+        // Paket D: Batching — mehrere Inputs vor einem step müssen im selben Frame sichtbar werden.
+        let (mut app, sender, _output, window) = controlled_app();
+        app.init_resource::<FrameCapture>()
+            .init_resource::<KeyboardCapture>()
+            .init_resource::<TextCapture>()
+            .add_systems(Update, (capture_update, capture_text));
+        let target = app
+            .world_mut()
+            .spawn(bevy::text::EditableText::default())
+            .id();
+        app.world_mut().insert_resource(InputFocus::from_entity(target));
+        app.update();
+        // 3 Inputs ohne step -> 0 Updates, alle queued in QueuedVirtualInput
+        send_command(
+            &mut app,
+            &sender,
+            1,
+            r#"{"type":"pointer","action":{"type":"move","surface":null,"position":[10.0,20.0]}}"#,
+        );
+        send_command(
+            &mut app,
+            &sender,
+            2,
+            r#"{"type":"keyboard","action":{"type":"press","key":"a"}}"#,
+        );
+        send_command(
+            &mut app,
+            &sender,
+            3,
+            r#"{"type":"text","text":"hi"}"#,
+        );
+        assert_eq!(app.world().resource::<FrameCapture>().updates, 0);
+        assert!(
+            app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::KeyA)
+                == false,
+            "key must not be visible before step"
+        );
+        assert!(app.world().resource::<TextCapture>().0.is_empty());
+        let loc_before = app
+            .world_mut()
+            .query::<&PointerLocation>()
+            .single(app.world())
+            .unwrap()
+            .location()
+            .is_none();
+        assert!(loc_before, "pointer must not be placed before step");
+        // Ein step -> alle 3 Inputs im selben Frame geflusht
+        send_command(
+            &mut app,
+            &sender,
+            4,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
+        );
+        assert_eq!(app.world().resource::<FrameCapture>().updates, 1);
+        assert_eq!(app.world().resource::<Clock>().frame_index(), 1);
+        assert!(
+            app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::KeyA)
+        );
+        assert_eq!(app.world().resource::<TextCapture>().0, vec!["hi".to_string()]);
+        let loc_after = app
+            .world_mut()
+            .query::<&PointerLocation>()
+            .single(app.world())
+            .unwrap()
+            .location()
+            .map(|l| l.position);
+        assert_eq!(loc_after, Some(Vec2::new(10.0, 20.0)));
+        // Zweiter step ohne neuen Input -> keine Duplikate
+        send_command(
+            &mut app,
+            &sender,
+            5,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
+        );
+        assert_eq!(app.world().resource::<FrameCapture>().updates, 2);
+        // Text darf nicht nochmal erscheinen, Key bleibt gehalten
+        assert_eq!(app.world().resource::<TextCapture>().0.len(), 1);
+        let _ = window; // keep window alive for borrow checker
     }
 
     fn capture_window(mut input: MessageReader<WindowEvent>, mut capture: ResMut<WindowCapture>) {
@@ -1409,7 +1495,7 @@ mod tests {
             &mut app,
             &sender,
             2,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         assert!(
             app.world()
@@ -1441,14 +1527,14 @@ mod tests {
             &mut app,
             &sender,
             5,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         send_command(&mut app, &sender, 6, r#"{"type":"text","text":"virtual"}"#);
         send_command(
             &mut app,
             &sender,
             7,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         send_command(
             &mut app,
@@ -1592,7 +1678,7 @@ mod tests {
                 &mut app,
                 &sender,
                 sequence + 1,
-                r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+                r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
             );
         }
 

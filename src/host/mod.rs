@@ -2,7 +2,7 @@
 //!
 //! This module is available with the `host` Cargo feature and is not part of a Player Run.
 //! [`LaunchSpec`] and [`Config`] describe child startup, while [`Session`] owns the JSONL protocol
-//! lifecycle (`spawn` → `ready` → requests/waits → `shutdown`). [`recording`] persists host-side
+//! lifecycle (`spawn` → `ready` → requests → `shutdown`). [`recording`] persists host-side
 //! Session Recordings; diagnostics and report helpers preserve failure artifacts; [`github`] can
 //! prepare or publish issue drafts.
 //!
@@ -25,7 +25,6 @@ mod report;
 mod runner;
 mod script;
 mod session;
-pub mod wait;
 
 pub use command_line::{
     CommandLine, CommandLineError, ReportOptions, RunOptions, USAGE as COMMAND_LINE_USAGE,
