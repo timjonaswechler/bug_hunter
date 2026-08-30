@@ -1,5 +1,8 @@
 # `bug_hunter`
 
+The API architecture documents live in [`docs/api/README.md`](docs/api/README.md). They separate
+the target API, the current working-tree inventory, migration steps, and architecture decisions.
+
 `bug_hunter` is inspired by ThePrimeagen's video about he's become a game developer ([Youtube](https://www.youtube.com/watch?v=tYQyh1tjSFc)).
 He had build a system that lets AI Agents control a game.
 
