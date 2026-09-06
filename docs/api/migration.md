@@ -48,7 +48,7 @@ Ein Status beschreibt den Übergang, nicht die Qualität des alten Codes.
 | [`protocol`](../../src/protocol.rs) und Wire-Abbildung in [`command`](../../src/command/mod.rs) | `session::protocol` | den doppelten v2-Vertrag durch einen zentralen v3-Codec mit qualifizierten Command-Namen und nicht fatalen Protokollfehlermeldungen ersetzen | `replace` | Wire-Fixtures für Ready, alle Commands, ungeordnet eintreffende Responses, Ablehnungen und Protokollfehler |
 | [`file_ref`](../../src/file_ref/*) | `-` | löschen | `delete` | ist zu wage  aufgebaut und vieles der aktuellen implementierung ist vermischt mit unterschiedlcihen Dateitypen. Wird während des generellen Refactoring festgestllt dass es mehrere Stellen gibt die die selben funktionallen gruppen hat kann man sich überlegen eine neue sinnvolle Struktur zu entwerfen. bis dahin wird `file_ref` entfernt. |
 | [`session::recording`](../../src/session/recording/mod.rs) und Recording-Zustand in [`session::driver`](../../src/session/driver.rs) | `command::recording` und sessionweite Recording-Ausführung | öffentliche Start-/Stop-Commands ergänzen und die Aufzeichnung aller ausgeführten Session-Commands an einem gemeinsamen Ausführungspunkt neu aufbauen | `rewrite` | vollständige und abschnittsweise Aufzeichnung, Command-Ausschlüsse, interne Request-Korrelation ohne persistierte IDs, Flush, Pfade und No-Tick-Verhalten |
-| [`session::replay`](../../src/session/replay/mod.rs) | `command::replay` und sessionweite Replay-Ausführung | Replay in der laufenden Controlled Session ausführen, Abweichungen sammeln und Commands mit ihrem gespeicherten Outcome statt mit benachbarten Recording-Einträgen verbinden | `rewrite` | wiederholtes Replay in derselben Session, Ausführung aus unterschiedlichen Ausgangszuständen, Stop, Blockierung, Command-Outcome-Zuordnung und No-Tick-Verhalten |
+| [`session::replay`](../../src/session/replay/mod.rs) | `command::replay` und sessionweite Replay-Ausführung | Replay in der laufenden Controlled Session ausführen und die Commands einer Recording ohne automatischen Vergleich ihrer Outcomes erneut senden | `rewrite` | wiederholtes Replay in derselben Session, Ausführung aus unterschiedlichen Ausgangszuständen, Stop, Blockierung und No-Tick-Verhalten |
 | [`failure`](../../src/failure/mod.rs) | `-` | `Detail`, `Kind` und das persistierte Zwischenformat `failure.json` entfernen; bestehende Nutzer verwenden die fachlichen Fehler- und Diagnosetypen ihrer jeweiligen Module | `delete` | keine `failure`-Exporte, `failure.json`-Zugriffe oder generischen `Detail`-Verwendungen verbleiben |
 | [`report`](../../src/report/mod.rs) und Fehleranteile aus [`session::diagnostics`](../../src/session/diagnostics.rs) | `report` | einen providerunabhängigen Report direkt aus dem beobachteten Fehler und der laufenden Session erzeugen; den reportspezifischen Diagnosekontext, Titel, Fehlersignatur, Provider-Ausführung und Duplikaterkennung dort besitzen | `rewrite` | Panic, Prozessabbruch, optionaler Tracing-Error, reportspezifischer Context und History-Auszug sowie lokale und GitHub-seitige Duplikaterkennung |
 | [`session::context`](../../src/session/context.rs) | `report::Context` und interner Zustand von `session::Session` | den eigenständigen Session-Context entfernen; `Report::create` stellt den benötigten Diagnosekontext bei der Report-Erzeugung direkt aus der Session zusammen | `replace` | kein `session::Context` oder doppelt gepflegter Session-Zustand; Report-Fixtures enthalten keine Wire-Request-IDs |
@@ -85,6 +85,10 @@ Ein Status beschreibt den Übergang, nicht die Qualität des alten Codes.
   ein festes Paar aus Beveys physischem `KeyCode` und logischem `Key` abgebildet. Bevy-Typen gehören
   weder zum öffentlichen Command noch zum Wire-Vertrag.
 - Pointer-Bewegungen werden als getrennte Varianten `MoveTo` und `MoveBy` modelliert.
+- Pointer-Commands gelten immer für das Spielfenster. Sie nehmen keine Surface entgegen und können
+  weder ein anderes Fenster noch den Desktop auswählen. `MoveTo` verwendet logische Pixel relativ
+  zur linken oberen Ecke des Spielfensters. `MoveBy` verschiebt den Pointer relativ zu seiner
+  bekannten Position.
 - `pointer::Command::Scroll` verwendet ein zweidimensionales `delta` in Bevy-Zeileneinheiten. Eine
   Pixel-Einheit gehört nicht zum Ziel-Interface.
 - Texteingabe verwendet immer das aktuell fokussierte editierbare Element. Der Text-Command nimmt
@@ -99,6 +103,8 @@ Ein Status beschreibt den Übergang, nicht die Qualität des alten Codes.
   die feste Bevy-Abbildung bleiben erhalten. Wie der v3-Codec ein unbekanntes Token intern bis zur
   Command-Ablehnung darstellt, ist kein Bestandteil des öffentlichen Key-Typs.
 - `pointer::Command::Move` wird durch getrennte absolute und relative Bewegungs-Commands ersetzt.
+- Das bisherige optionale `surface`-Argument von `pointer::Command::Move` entfällt. Die Controlled
+  Session löst das Spielfenster intern auf.
 - Die aktuelle Abbildung von Scroll-Commands auf Beveys `MouseScrollUnit::Line` bleibt erhalten; der
   Wire-Command erhält kein zusätzliches Einheitenfeld. Pointer- und Wire-Tests prüfen die
   Zeileneinheit.
@@ -135,10 +141,60 @@ Ein Status beschreibt den Übergang, nicht die Qualität des alten Codes.
   Lesbarkeitsstatus aus.
 - `Value` fordert den reflektierten Wert an. Jedes Ergebnis ist entweder `Readable { value }` oder
   `Unavailable { status }`; ein optionales JSON-Feld mit mehrfacher Bedeutung wird nicht verwendet.
+- `Readable` übernimmt für erfolgreich serialisierbare Werte die Ausgabe von Bevys
+  `TypedReflectSerializer`, umgewandelt in `serde_json::Value`. `bug_hunter` führt daneben keinen
+  eigenen typisierten Reflection-Baum ein. Schlägt diese Serialisierung fehl, bleibt das betroffene
+  Ergebnis mit `Unavailable::NotSerializable` sichtbar.
+- Ein kleiner `ReflectSerializerProcessor` prüft direkt reflektierte `f32`- und `f64`-Werte vor
+  Bevys normaler oder benutzerdefinierter Serialisierung mit `is_finite()`. `NaN` und positive oder
+  negative Unendlichkeit brechen die Serialisierung des betroffenen Component- oder Resource-Werts
+  ab und erzeugen `Unavailable::NotSerializable`, statt durch `serde_json::Value` zu `null` zu
+  werden. Von einem opaken benutzerdefinierten Serializer ausdrücklich erzeugtes `null` wird nicht
+  nachträglich umgedeutet.
+- Maps behalten die von Bevy und `serde_json` erzeugte JSON-Objektform. Als JSON-Objektschlüssel
+  unterstützte skalare Schlüssel werden dabei zu Strings. Kann `serde_json` einen Map-Schlüssel
+  nicht als Objektschlüssel serialisieren, schlägt die Serialisierung des betroffenen Component-
+  oder Resource-Werts fehl und erzeugt `Unavailable::NotSerializable`. `bug_hunter` führt keine
+  abweichende Liste aus Schlüssel-Wert-Paaren ein.
+- Sets behalten Bevys JSON-Arrayform, erhalten aber eine stabile Reihenfolge. Der
+  `ReflectSerializerProcessor` serialisiert jedes Element mit denselben Inspect-Regeln, ordnet
+  Objektschlüssel im daraus gebildeten kompakten JSON rekursiv alphabetisch und sortiert die
+  Elemente lexikografisch nach den Bytes dieser Darstellung. Der Sortierschlüssel erscheint nicht
+  zusätzlich im Output. Verschachtelte Sets werden auf dieselbe Weise sortiert. Kann ein Element
+  nicht serialisiert werden, wird der umgebende Component- oder Resource-Wert
+  `Unavailable::NotSerializable`.
+- Asset-Handles mit Pfad oder stabiler UUID folgen Bevys `HandleSerializeProcessor`. Ein flüchtiger
+  Handle ohne Pfad und UUID bleibt als `{"Ephemeral":{"id":"..."}}` lesbar. `id` ist die
+  16-stellige, kleingeschriebene Hex-Darstellung von `AssetIndex::to_bits()` und ausschließlich ein
+  opakes, sessionlokales Token. Bei einem `UntypedHandle` stehen wie bei Bevys
+  `TypedHandleReference` zusätzlich der Asset-Type-Path und die Referenz im Output. Innerhalb einer
+  Session kann ein Aufrufer damit gleiche Handles erkennen; zwischen Sessions darf sich das Token
+  ändern. Das Token ist deshalb nicht für einen automatischen Vergleich zwischen Recording und
+  Replay geeignet; Replay vergleicht Outcomes nicht. Fehlende notwendige Handle- oder
+  Asset-Typregistrierung erzeugt `Unavailable::NotSerializable`. Bevys `Silent`- und `Warn`-Verhalten
+  wird nicht verwendet, weil es einen flüchtigen Handle durch eine falsche Default-Identität ersetzt.
+- Repräsentative Wire-Fixtures für die unterstützten Reflection-Kategorien halten die erwartete
+  Bevy-0.19.1-Ausgabe fest. Ein Bevy-Upgrade darf diese erwartete Form nicht unbemerkt ändern. Eine
+  Abweichung erfordert entweder eine Anpassung hinter dem Inspect-Interface oder eine ausdrückliche
+  Änderung des Vertrags.
 - Vollständige kanonische Bevy-Type-Paths sind die Wire-Identität für Component- und
   Resource-Typen. Prozesslokale `TypeId`- und `ComponentId`-Werte werden nicht übertragen.
 - Eine Query liefert alle passenden Elemente gemeinsam in einer Response. Das Inspect-Interface
   besitzt weder Pagination noch Cursor oder fachliche Größenlimits und kürzt Ergebnisse nicht.
+- Ein unbekannter Handle in `entity::Query::entity` lehnt den Command ab. Eine nicht auf einen
+  Handle begrenzte Entity-Query ohne Treffer ist dagegen erfolgreich und liefert `items: []`.
+- `component::Selection::Listed` liefert für jeden angeforderten, registrierten Type Path einen
+  Eintrag in Eingabereihenfolge. Fehlt der Component an einer passenden Entity, enthält der Eintrag
+  `Unavailable::Missing`. `Selection::All` liefert nur vorhandene Components.
+- `resource::Selector::Type` mit einem registrierten, aber nicht vorhandenen Resource-Typ liefert
+  bei der Projektion `Value` einen Eintrag mit `Unavailable::Missing`. Bei `Metadata` entsteht kein
+  Eintrag, weil kein vorhandener Resource-Wert beschrieben werden kann. `Selector::All` liefert
+  weiterhin nur vorhandene Resources.
+- Entity-Items werden aufsteigend nach Handle, zuerst `index` und dann `generation`, sortiert.
+  Resource-Items werden nach `type_path` sortiert. Component-Metadaten und `Selection::All` werden
+  nach `type_path` und anschließend `name` sortiert; Einträge ohne Type Path werden über `name`
+  eingeordnet. `Selection::Listed` folgt der Eingabereihenfolge. Hierarchie-Kinder behalten Bevys
+  `Children`-Reihenfolge, weil diese fachlich relevant sein kann.
 - Nicht vorhandene, nicht registrierte, nicht reflektierbare oder nicht serialisierbare Werte
   brechen eine Value-Query nicht insgesamt ab. Das betroffene Element bleibt als `Unavailable` mit
   `Missing`, `NotRegistered`, `NotReflectable` oder `NotSerializable` sichtbar.
@@ -200,13 +256,81 @@ Die technische Bewertung und die Gründe gegen BRP als Session-Protokoll stehen 
   bereits gültige Identität adressiert wurden, deren benötigte Registrierung beim Zugriff aber
   fehlt. Der Status ist kein Ersatz für die Ablehnung eines unbekannten, vom Aufrufer gelieferten
   Type Paths.
-- Die genaue stabile Fehlercodierung und Wire-Darstellung der Command-Ablehnung wird zusammen mit
-  der vollständigen v3-Command-Abbildung festgelegt.
+- Ein unbekannter Type Path wird mit `unknown_type_path` abgelehnt. Ein ausdrücklich angegebener
+  Entity-Handle, der nicht mehr existiert, wird mit `entity_not_found` abgelehnt.
 
-### Offene Fragen
+### JSON- und Wire-Form
 
-- `OPEN`: Die kanonische JSON-Abbildung reflektierter Structs, Tupel, Enums, Maps, Sets, Handles und
-  numerischer Sonderwerte muss vor der Wire-Festlegung für alle Value-Queries beschrieben werden.
+Der Wire-Command heißt `inspect.query`. Die allgemeine v3-Hülle mit `request_id`, `command`,
+`arguments`, `status` und `output` gehört `session::protocol`; dieser Abschnitt legt die
+Inspect-spezifischen Inhalte von `arguments` und `output` fest.
+
+Eine Entity-Query hat diese Form:
+
+```json
+{"request_id":17,"command":"inspect.query","arguments":{"source":"entities","entity":null,"with":["game::Player"],"without":[],"projection":{"kind":"summary"}}}
+```
+
+Eine Resource-Query hat diese Form:
+
+```json
+{"request_id":18,"command":"inspect.query","arguments":{"source":"resources","selector":{"kind":"type","type_path":"game::GameState"},"projection":{"kind":"value"}}}
+```
+
+Für die Argumente gelten folgende Regeln:
+
+- `source` ist `entities` oder `resources`.
+- Verschachtelte Enums verwenden ein `kind`-Feld mit `snake_case`-Werten.
+- Optionale Felder werden mit `null` übertragen und nicht weggelassen. Listen sind auch dann als
+  Arrays vorhanden, wenn sie leer sind.
+- Entity-Projektionen sind `{"kind":"summary"}`, `{"kind":"component_names"}`,
+  `{"kind":"components","selection":{"kind":"all"}}`,
+  `{"kind":"components","selection":{"kind":"listed","type_paths":[...]}}` und
+  `{"kind":"hierarchy","depth":3}`.
+- Resource-Projektionen sind `{"kind":"metadata"}` und `{"kind":"value"}`.
+- Resource-Selektoren sind `{"kind":"all"}` und
+  `{"kind":"type","type_path":"vollständiger::TypePath"}`.
+- Ein `handle::Handle` wird als `{"index":7,"generation":1}` übertragen.
+- Die Felder der jeweils anderen Source-Kategorie und unbekannte zusätzliche Felder werden
+  abgelehnt.
+
+Ein Entity-Summary-Output sieht so aus:
+
+```json
+{"items":[{"kind":"entity","entity":{"index":7,"generation":1},"result":{"kind":"summary","name":"Player","component_count":8}}]}
+```
+
+Ein lesbarer Resource-Wert sieht so aus:
+
+```json
+{"items":[{"kind":"resource","result":{"kind":"value","type_path":"game::GameState","value":{"status":"readable","value":{"score":42}}}}]}
+```
+
+Entity-Resultate verwenden die Kinds `summary`, `component_names`, `components` und `hierarchy`.
+Resource-Resultate verwenden `metadata` und `value`. `query::Item` verwendet `kind: "entity"` oder
+`kind: "resource"`. Optionale Namen und Type Paths werden als `null` ausgegeben.
+
+Ein lesbarer Wert und ein nicht lesbarer Wert haben unterschiedliche Formen:
+
+```json
+{"status":"readable","value":{"score":42}}
+{"status":"unavailable","reason":"not_serializable"}
+```
+
+Die Werte für `reason` sind `missing`, `not_registered`, `not_reflectable` und `not_serializable`.
+Ein `unavailable`-Objekt besitzt kein `value`; ein `readable`-Objekt besitzt kein `reason`.
+
+Die Inspect-Fixtures decken mindestens Folgendes ab:
+
+- jede Entity-Projektion,
+- beide Resource-Projektionen und beide Resource-Selektoren,
+- `Readable` und alle vier `Unavailable`-Gründe,
+- unbekannte Type Paths und unbekannte explizite Entity-Handles,
+- leere Ergebnismengen sowie fehlende gelistete Components und Resources,
+- die festgelegte Reihenfolge von Entities, Components, Resources und Sets,
+- Structs, Tupel, Enums, Maps, Sets, pfadbasierte, UUID- und flüchtige Handles sowie nicht endliche
+  Fließkommazahlen,
+- Ablehnung unbekannter oder zur gewählten Source unpassender JSON-Felder.
 
 ### Auswirkungen auf den Ist-Stand
 
@@ -244,10 +368,9 @@ Die technische Grundlage und die Grenzen der Orientierung an `bevy_inspector_egu
   bleiben unverändert.
 - Für die Aufnahme läuft weiterhin mindestens ein Bevy-Renderdurchlauf. Die Response bleibt
   ausstehend, bis der asynchrone GPU-Readback abgeschlossen und die PNG-Datei geschrieben wurde.
-- `Capture { target: None, .. }` nimmt das einzige primäre gerenderte Fenster auf. Fehlt ein
-  primäres Fenster oder existieren mehrere, wird der Command abgelehnt.
-- `Capture { target: Some(handle), .. }` nimmt genau das durch den Handle bezeichnete Fenster auf.
-  Ein unbekannter Handle oder eine Entity, die kein gerendertes Fenster ist, wird abgelehnt.
+- `Capture` nimmt das einzige primäre gerenderte Spielfenster auf. Der Command besitzt kein
+  `target`-Argument und kann weder ein anderes Fenster noch den Desktop auswählen. Fehlt ein
+  primäres gerendertes Spielfenster oder existieren mehrere, wird der Command abgelehnt.
 - Eine bereits vorhandene Datei am gewählten Dateiziel wird ersetzt.
 - Der erfolgreiche Output wird erst zurückgegeben, nachdem die Aufnahme abgeschlossen und die
   PNG-Datei erfolgreich gespeichert wurde. Er enthält den relativen Pfad, Breite, Höhe und
@@ -259,7 +382,8 @@ Die technische Grundlage und die Grenzen der Orientierung an `bevy_inspector_egu
 - Der Controller gibt den vollständigen konkreten Dateipfad im `Capture`-Command an.
 - Der Pfad ist relativ zum konfigurierten Session-Artifact-Verzeichnis. Dieses Verzeichnis darf
   außerhalb des Git-Projekts liegen; der Command darf es jedoch nicht verlassen.
-- Der Debug Host oder die Einbettung bestimmt das Session-Artifact-Verzeichnis. Der Screenshot-
+- Der Debug Host oder die Einbettung bestimmt das gemeinsame Session-Artifact-Verzeichnis. Ein
+  relativer Root bezieht sich auf den Elternordner des konfigurierten Cargo-Manifests. Der Screenshot-
   Command bestimmt nur den Pfad darunter.
 - Der Pfad muss ein normalisierter UTF-8-Pfad mit Vorwärtsschrägstrichen und der Endung `.png` sein.
   Absolute Pfade, leere Komponenten, `.` und `..`, Backslashes sowie Ausbrüche über symbolische
@@ -346,7 +470,8 @@ tick warp stop
   spätere Response über die nur während der Transportverbindung verwendete Request-ID zu.
 - `SetPace` antwortet mit `PaceChanged { pace }`, nachdem die konfigurierte und gegebenenfalls
   aktive Pace übernommen wurde.
-- `Stop` antwortet mit `stopped: true`, wenn ein Warp beendet wurde, sonst mit `stopped: false`.
+- `Stop` antwortet mit `was_running: true`, wenn ein Warp beendet wurde, sonst mit
+  `was_running: false`.
 - Ein zweiter `Start` während eines laufenden Warp wird mit `warp_already_running` abgelehnt. Er
   ersetzt den laufenden Warp nicht implizit.
 
@@ -371,9 +496,9 @@ noch eine Pace-Einstellung.
   Requests noch nicht aus und muss bei der Session-Migration geprüft werden.
 - Wire-Format, Recordings, Replay, REPL, Beispiele und Tests müssen auf die neue Command-Form
   umgestellt werden.
-- Die Zielentscheidung weicht von ADR-0003 ab. Vor der Implementation muss eine neue ADR festhalten,
-  welche Teile von ADR-0003 ersetzt werden und welche Regeln, etwa keine versteckten Ticks, bestehen
-  bleiben.
+- [ADR-0005](../adr/0005-tick-warp-preserves-explicit-simulation-control.md) ersetzt die Step- und
+  Zeitdauerregeln aus ADR-0003. Das Verbot versteckter Ticks, gesammelter Virtual Input und der
+  Verzicht auf eingebaute Wait-Schleifen bleiben bestehen.
 
 
 ## Session Recording
@@ -432,43 +557,127 @@ noch eine Pace-Einstellung.
 - Replay startet keine neue Controlled Session, setzt keinen Zustand zurück und prüft vor dem Start
   nicht, ob der aktuelle Zustand dem ursprünglichen Ausgangszustand entspricht.
 - Jede gültige und unterstützte Session Recording kann als Replay gestartet werden. Ob ihre Commands
-  aus dem aktuellen Zustand dieselben Ergebnisse erzeugen, ist Gegenstand des Replays und keine
-  Vorbedingung.
+  aus dem aktuellen Zustand dieselben Ergebnisse erzeugen würden, ist keine Vorbedingung.
 - Dieselbe oder eine andere Aufzeichnung kann nach Abschluss erneut in derselben Controlled Session
   gestartet werden. Der Aufrufer besitzt die Verantwortung für den dabei vorhandenen Zustand.
-- Replay führt die aufgezeichneten Commands und ausschließlich deren explizite Ticks aus. Laden,
-  Vergleichen, Start, Stop und der Wechsel zwischen Recording-Einträgen erzeugen keine Ticks.
-- Ein Unterschied zwischen aufgezeichnetem und aktuellem Ergebnis stoppt das Replay nicht. Replay
-  versucht weitere Commands auszuführen, solange die Controlled Session weitere Commands annehmen
-  kann.
-- Replay endet mit `completed`, wenn das Ende der Aufzeichnung erreicht wurde. Erkannte
-  Abweichungen ändern dieses Ausführungs-Outcome nicht.
-- Replay endet mit `blocked`, wenn kein weiterer aufgezeichneter Command ausgeführt werden kann,
-  beispielsweise nach einem unerwarteten Session-Ende oder einem nicht fortsetzbaren
-  Kommunikationsfehler.
-- `Replay::Stop` beendet die weitere Replay-Ausführung. Es setzt den bereits veränderten Zustand
-  nicht zurück und führt keinen ausgleichenden Command aus.
+- Replay besitzt intern die Zustände `Idle`, `Preparing`, `Running` und `Stopping`. Ein angenommener
+  Start wechselt vor dem Laden von `Idle` nach `Preparing`. Nach erfolgreicher Vorbereitung folgt
+  `Running`; ein Stop wechselt aus `Preparing` oder `Running` nach `Stopping`. Jeder terminale
+  Abschluss führt zurück nach `Idle`.
+- `Replay::Start` ist nur in `Idle` zulässig. Ein weiterer Start in `Preparing`, `Running` oder
+  `Stopping` wird mit `replay_already_running` abgelehnt. Er ersetzt, verändert und reiht kein
+  Replay ein.
+- Der Replay-Adapter lädt die Recording vollständig und übersetzt sie vor der Ausführung in einen
+  internen Replay-Plan. Die Recording selbst bleibt unverändert und bewahrt die tatsächlich
+  ausgeführten Commands und ihre Outcomes.
+- Kann die Recording nicht gelesen werden, endet der Start mit `session::Error::Io`. Ein lesbares,
+  aber ungültiges Format wird mit `invalid_recording`, eine nicht unterstützte Formatversion mit
+  `unsupported_recording_version` abgelehnt. In allen drei Fällen wird kein Recording-Command
+  ausgeführt und Replay kehrt nach `Idle` zurück.
+- Der Replay-Plan übernimmt die übrigen aufgezeichneten Session-Commands und ersetzt die
+  aufgezeichneten Warp-Commands durch ihre effektive Form. Ausschließlich diese abgeleiteten Warps
+  führen Ticks aus. Laden, Replay-Start, Replay-Stop und der Wechsel zwischen Recording-Einträgen
+  erzeugen keine Ticks.
+- Die aufgezeichneten Outcomes bleiben Bestandteil der Session Recording, werden beim Replay aber
+  nicht automatisch mit den neuen Outcomes verglichen und bewerten den Replay-Abschluss nicht.
+  `executed_ticks` eines aufgezeichneten Warp-Outcomes darf ausschließlich zur Bildung des
+  effektiven Replay-Plans verwendet werden. Replay besitzt zunächst keine allgemeine Gleichheits-,
+  Toleranz- oder Abweichungsregel für Command-Ergebnisse.
+- Endete ein aufgezeichneter Warp nach weniger als den angeforderten Ticks durch `Warp::Stop`,
+  enthält der Replay-Plan stattdessen einen Warp über genau `executed_ticks`. Den dazugehörigen
+  aufgezeichneten Stop führt Replay nicht erneut aus. Bei `executed_ticks == 0` entfällt der Warp
+  vollständig.
+- Unmittelbar aufeinanderfolgende Warps darf der Replay-Plan zu einem Warp über die Summe ihrer
+  effektiven Ticks zusammenfassen. Dazwischen dürfen kein anderer Command und keine Pace-Änderung
+  liegen; beide Warps müssen dieselbe effektive Pace verwenden. Passt die Summe nicht in `u64`,
+  bleiben die Warps getrennt.
+- Nachfolgende Commands werden erst ausgeführt, nachdem der verkürzte, unveränderte oder
+  zusammengefasste Warp seine Abschlussresponse geliefert hat. Replay muss deshalb keinen
+  aufgezeichneten Warp-Stop an einer laufenden Tick-Grenze erneut terminieren.
+- Zwischen zwei Warps darf Replay mehrere Nicht-Tick-Commands in Recording-Reihenfolge senden, ohne
+  jede einzelne Response abzuwarten. Den nächsten Warp gibt es erst frei, nachdem alle zuvor
+  gesendeten Commands ein terminales Outcome geliefert haben.
+- `Completed` und `Rejected` erfüllen diese Antwortbarriere. Replay interpretiert einen stabilen
+  fachlichen Ablehnungscode nicht und setzt den Plan fort. `ProtocolFailed` und `Unanswered`
+  verhindern dagegen die weitere Ausführung und führen zu `Blocked`.
+- Welche fachlichen Ablehnungscodes ein Replay künftig ebenfalls blockieren sollen, benötigt eine
+  eigene anwendungsspezifische Policy. Diese konfigurierbare Bewertung gehört nicht zum aktuellen
+  Replay-Interface.
+- Replay endet mit `completed`, nachdem das Ende des Replay-Plans erreicht wurde und alle daraus
+  gesendeten Commands ein terminales Outcome geliefert haben.
+- `blocked` enthält einen stabilen technischen Code und eine menschenlesbare Meldung. Es wird
+  verwendet, wenn eine ungültige Command-Response, ein Session- oder Transportende oder ein
+  fehlgeschlagener Notaus die weitere geordnete Ausführung verhindert. Eine fachliche
+  Command-Ablehnung allein erzeugt kein `blocked`.
+
+Die technischen Blockierungsgründe sind:
+
+| Code | Bedeutung |
+| --- | --- |
+| `command_protocol_failed` | Für einen normalen Plan-Command kam keine gültige Command-Response zustande. |
+| `session_io_failed` | Ein I/O-Fehler der laufenden Session verhindert die weitere Replay-Ausführung. |
+| `session_ended` | Die Controlled Session oder ihr Transport endete; noch offene Plan-Commands bleiben unbeantwortet. |
+| `request_id_exhausted` | Für einen internen Plan-Command ist keine normale Request-ID mehr verfügbar. |
+| `stop_failed` | Der Notaus konnte einen aktiven Warp bei weiter bestehender Session nicht kontrolliert beenden. |
+
+Die lesbare Meldung erhält die konkrete technische Ursache. Diese Codes beschreiben ausschließlich
+die technische Replay-Blockierung und übernehmen keine wechselnden Fehlercodes anderer Module.
+
+- `Replay::Stop` ist ein kontrollierter Notaus. Replay gibt sofort keine weiteren Plan-Commands
+  frei. Läuft ein vom Replay gestarteter Warp, sendet der Replay-Adapter intern `Warp::Stop` und
+  verhindert damit weitere Ticks. Bereits ausgeführte Commands und Ticks werden nicht
+  zurückgenommen.
+- Bereits gesendete Input-, Inspect- oder Screenshot-Commands besitzen keinen allgemeinen
+  Abbruchmechanismus. Im Zustand `Stopping` wartet Replay auf deren terminale Outcomes sowie auf die
+  Stop- und Abschlussresponse eines zuvor aktiven Warps.
+- Erst danach antworten sowohl der ursprüngliche `Replay::Start` mit `stopped` als auch alle
+  wartenden `Replay::Stop`-Commands mit `was_running: true`. Ein weiterer Stop in `Stopping` wartet
+  idempotent auf denselben Abschluss. Ohne aktives Replay ist `Stop` ein sofort erfolgreicher No-op
+  mit `was_running: false`.
+- Scheitert das Anhalten technisch oder endet die Session beim Warten, hat `blocked` Vorrang vor
+  `stopped`. Der ursprüngliche Start erhält den Blockierungsgrund; wartende Stop-Commands liefern
+  in diesem Fall keinen erfolgreichen Stop-Output, sondern den jeweils auslösenden
+  `session::Error`.
 - Die Response von `Replay::Start` bleibt bis `completed`, `stopped` oder `blocked` ausstehend.
-  `Replay::Stop` ist währenddessen zulässig. Ohne laufendes Replay ist `Stop` ein erfolgreicher
-  No-op.
-- Replay-Commands werden vom Debug Host verarbeitet. Die darin enthaltenen aufgezeichneten
-  Session-Commands laufen über denselben Ausführungsweg wie Commands eines menschlichen, agentischen
-  oder geskripteten Controllers.
-- Die genaue Darstellung und Veröffentlichung erkannter Abweichungen bleibt bis zur Planung des
-  Reporting-Interfaces offen. Diese offene Darstellung ändert nicht die Regel, dass Replay nach
-  einer Abweichung soweit wie möglich fortfährt.
+  `Replay::Stop` ist währenddessen zulässig.
+- Während `Preparing`, `Running` und `Stopping` führt Replay die Session exklusiv. Von außen ist nur
+  `Replay::Stop` zulässig; einen anderen Command lehnt die Session mit `replay_in_progress` ab. Er
+  wird nicht in den Plan eingemischt. Die vom Replay-Plan abgeleiteten Session-Commands passieren
+  weiterhin den gemeinsamen Session-Ausführungsweg.
+- Replay-Commands werden vom Debug Host verarbeitet. Die aus der Recording abgeleiteten
+  Session-Commands laufen über denselben Ausführungsweg wie Commands eines menschlichen,
+  agentischen oder geskripteten Controllers.
+- Replay besitzt keinen `Deviation`-Typ, veröffentlicht keine Abweichungen und erzeugt daraus keinen
+  Report. `Completion` enthält keine Command-Zähler oder Vergleichsstatistik.
+- Panics, aktivierte Tracing-Errors und unerwartete Prozessenden bleiben unabhängig vom Replay
+  Report-Auslöser. Ein vollständig ausgeführtes Replay belegt ohne solche anwendungsseitig sichtbaren
+  Invarianten nur, dass die Command-Folge bis zum Ende verarbeitet werden konnte.
+- Spätere Zustandsvergleiche benötigen einen konkreten Anwendungsfall und ausdrückliche fachliche
+  Regeln, etwa passende Toleranzen. Sie werden nicht als exakter Vergleich beliebiger
+  `serde_json::Value` nachgerüstet.
 
 ### Auswirkungen auf den Ist-Stand
 
 - Replay erzeugt keine frische Controlled Session. Die bestehende Host-Orchestrierung wird so
   getrennt, dass der Aufrufer die aktuelle Session nach einem Replay weiter verwenden kann.
-- Die aktuelle Zuordnung erwarteter Ergebnisse anhand des jeweils nächsten `ControllerAction`-
-  Eintrags wird durch Recording-Einträge ersetzt, die Command und erwartetes Outcome gemeinsam
-  besitzen.
+- Die aktuelle Zuordnung erwarteter Ergebnisse und ihr exakter Vergleich mit Replay-Antworten
+  entfallen. Der Replay-Adapter erstellt vor der Ausführung einen internen Plan. Er verwendet
+  `executed_ticks` gestoppter Warps, um deren effektive Tickzahl zu bestimmen; andere
+  aufgezeichnete Outcomes und das beim Replay neu entstandene Outcome werden nicht verglichen.
+- Die bisherige laufende Wiederholung eines aufgezeichneten Warp-Starts und seines späteren Stops
+  entfällt. Tests prüfen die Verkürzung gestoppter Warps, das Entfernen eines Warps mit null
+  ausgeführten Ticks und das Zusammenfassen kompatibler benachbarter Warps. Die unveränderte
+  Recording bleibt dabei die Quelle für Diagnose und Nachvollziehbarkeit.
+- Die Replay-Ausführung erhält eine interne Zustandsmaschine für Vorbereitung, Ausführung und
+  kontrollierten Notaus. Tests prüfen Mehrfachstart, Stop in jedem Zustand, wiederholten Stop,
+  auslaufende Commands, einen aktiven Warp, technische Fehler beim Stoppen und die exklusive
+  Command-Annahme. Session- und Controller-Fixtures prüfen außerdem `replay_already_running`,
+  `replay_in_progress`, die vier stabilen Blockierungscodes und den Fehler wartender Stop-Commands
+  bei einem blockierten Notaus.
 - Persistierte Commands werden über einen versionsbewussten Recording-Adapter in die aktuelle
   Command-Form überführt. Das Recording-Format und das Wire-Format bleiben getrennte Verträge.
-- Die Ausführung muss Abweichungen von Fehlern unterscheiden, die eine weitere Command-Ausführung
-  technisch verhindern. Nur Letztere führen zu `blocked`.
+- Das aktuelle `replay-result.json` und sein Passed-/Failed-Ergebnis für Outcome-Abweichungen
+  entfallen. Der Aufrufer erhält den Replay-Abschluss direkt als Command-Output.
 
 ## Report
 
@@ -481,43 +690,81 @@ noch eine Pace-Einstellung.
 - Die Session liest stderr und beobachtet den Prozessstatus, interpretiert diese Daten aber nicht als
   fachliche Fehler. `report` erkennt daraus Panic, aktivierte Tracing-Errors oder ein unerwartetes
   Prozessende und besitzt die Vorrangregel zwischen ihnen.
+- Ein crate-interner `report::Observer` besitzt das Marker-Framing und den stderr-Puffer. Die
+  Session reicht ihm gelesene Bytes und den unerwarteten finalen Prozessstatus zu, ohne Marker selbst
+  fachlich zu deuten.
 - Normale Rust-Assertions und Panics können Logiklücken sichtbar machen. Schlägt beispielsweise
   `assert!` fehl, verwendet der Debug Host die daraus entstehende Panic-Ausgabe als Report-Auslöser.
   Assertions bleiben normale Anwendungslogik und kennen `bug_hunter` nicht.
-- Ein Report besitzt einen menschenlesbaren Titel, die unveränderte beobachtete Fehlermeldung, deren
-  Ursprung, eine normalisierte Fehlersignatur und einen reportspezifischen Diagnosekontext.
+- Ein Report besitzt einen menschenlesbaren Titel, die optional vorhandene unveränderte
+  Fehlermeldung, deren Ursprung, eine normalisierte Fehlersignatur und einen reportspezifischen
+  Diagnosekontext.
 - `Report::create` erhält den beobachteten Fehler und eine Referenz auf die laufende
   `session::Session`. Es leitet Titel und Fehlersignatur aus dem Fehler ab und stellt den
   reportspezifischen Diagnosekontext direkt aus der Session zusammen. Der Aufrufer liefert weder
   eine vorbereitete Signatur noch einen vorbereiteten Diagnosekontext.
+- Die Felder von `Report`, `Failure` und `Signature` sind privat. Lesende Methoden geben Titel,
+  Fehler, Signaturwert und Context frei. Dadurch kann ein Aufrufer die von `Report::create`
+  berechneten Werte weder unabhängig zusammensetzen noch nachträglich auseinanderlaufen lassen.
+- `Failure::panic`, `Failure::tracing_error` und `Failure::process_exit` sind die einzigen
+  öffentlichen Konstruktoren für einen fachlichen Fehler. `Failure::panic` akzeptiert eine optionale
+  Meldung, weil ein unbekannter `panic_any`-Payload keinen lesbaren Text liefern muss. Der Konstruktor
+  für ein Prozessende nimmt nur den Status entgegen und setzt die feste Meldung selbst.
 - Für einen Panic werden eine bekannte Code-Stelle und die beobachtete Backtrace-Ausgabe aufgenommen.
   Beide dürfen fehlen, ohne die Report-Erzeugung zu verhindern.
 - Der Kontext enthält höchstens die letzten 50 gesendeten Commands in Sendereihenfolge samt ihrem
   korrelierten Outcome. Wire-Request-IDs werden nicht in den Report übernommen. Ein Command ohne
   eingetroffene Response bleibt als unbeantwortet sichtbar.
+- Die Session hält dafür einen Ring der letzten 50 angenommenen Commands. `Report::create` kopiert
+  den aktuellen Ring beim Aufruf; spätere Outcomes verändern den erzeugten Context nicht.
 - Die Command-Historie dient als Reproduktionskontext. Sie garantiert nicht, dass sich der Fehler
   ohne passenden Ausgangszustand reproduzieren lässt.
 - Ein erkannter Panic oder ein unerwartetes Prozessende löst unabhängig von der
   Report-Konfiguration einen Report aus. Wird bei einem Prozessende bereits ein Panic erkannt,
   beschreibt der Report den Panic und nicht zusätzlich einen zweiten Prozessfehler.
+- Der gemeinsame private Ablauf unter `host::run` nimmt erkannte Fehler aus
+  `session::Event::Failure` entgegen. Er ruft `Report::create` und `report::submit` auf und behält den
+  Report zusammen mit dem Provider-Outcome oder Submit-Fehler. REPL, Agent und Script besitzen keine
+  eigene Report-Auslösung.
+- Ein unerwartetes Prozessende verwendet die feste Meldung `process exited unexpectedly`.
+  Der genaue Prozessstatus bleibt als Diagnose in `Origin::ProcessExit::status` und wird nicht in
+  die Meldung kopiert. stderr bestimmt die Meldung nicht.
 - Eine Command-Ablehnung löst nicht automatisch einen Report aus. Sie kann durch einen unpassenden
   Command oder Ausgangszustand des Controllers verursacht worden sein.
 - Die Session-Konfiguration besitzt die standardmäßig deaktivierte Einstellung
-  `report.tracing_errors`. Bei Aktivierung behandelt der Debug Host erkannte formatierte
-  `tracing`-Events auf Error-Level als Report-Auslöser.
+  `report.tracing_errors`. Bei Aktivierung behandelt der Debug Host die vom registrierten
+  `session::tracing_error_layer` beobachteten dispatchten `tracing`-Events auf Error-Level als
+  Report-Auslöser.
 - Eine beliebige Textausgabe auf `stderr`, die nur das Wort `error` enthält, gilt nicht als
   `tracing`-Event.
-- Die Session-Konfiguration legt ein relatives Report-Ausgabeverzeichnis innerhalb ihres
-  Session-Artifact-Verzeichnisses und genau einen Provider fest. Ein Report darf dieses
-  Ausgabeverzeichnis nicht verlassen.
+- Ein gefiltertes oder durch einen Compile-Time-Filter entferntes Error-Event ist nicht beobachtbar.
+  Die Report-Einstellung verändert die Logging-Filter der Anwendung nicht.
+- Die Session-Konfiguration legt mit `report.output: PathBuf` ein nicht leeres relatives
+  Report-Ausgabeverzeichnis innerhalb ihres Session-Artifact-Verzeichnisses und genau einen Provider
+  fest. Ein Report darf dieses Ausgabeverzeichnis nicht verlassen.
+- Jeder Bestandteil von `report.output` muss ein normaler Pfadbestandteil sein. Absolute Pfade sowie
+  `.` und `..` lehnt `Session::start` als `session::Error::InvalidConfig` ab.
 - Jeder Provider besitzt nur seine eigenen zusätzlichen Konfigurationswerte. Zunächst sind ein
   lokaler Markdown-Provider und ein GitHub-Provider vorgesehen.
-- `report::submit` übergibt einen bereits zusammengestellten Report an den konfigurierten Provider.
-  Der Provider arbeitet ausschließlich innerhalb des Session-Artifact-Verzeichnisses und gibt ein
-  gemeinsames `provider::Outcome` mit der erstellten oder bereits vorhandenen Referenz zurück.
+- `report::submit` übergibt einen bereits zusammengestellten Report direkt an den Provider, der in
+  der beim Session-Start wirksamen Report-Konfiguration festgelegt wurde. Es erhält ausschließlich
+  den Report und die laufende Session. Der Aufrufer kann Provider oder Ausgabeverzeichnis beim
+  Veröffentlichen nicht austauschen.
+- Die Session stellt dabei den wirksamen Artifact- und Projektordner bereit, ohne diese internen
+  Pfade in `report::Context` zu veröffentlichen. Statisch ungültige Report-Konfigurationen lehnt
+  `Session::start` als `session::Error::InvalidConfig` ab.
+- Das gemeinsame `provider::Outcome` enthält die erstellte oder bereits vorhandene Referenz.
 - Der lokale Provider schreibt jeden neuen Report in eine eigene Markdown-Datei. Der
-  GitHub-Provider kann unter demselben Ausgabeverzeichnis einen providerspezifischen Entwurf
-  ablegen.
+  GitHub-Provider veröffentlicht dagegen direkt und schreibt bei erfolgreicher Suche oder
+  Veröffentlichung keine lokale Datei.
+- Schlägt ein Remote-Provider fehl, führt `report::submit` den lokalen Markdown-Provider als
+  Rückfall aus. `provider::Outcome::Fallback` enthält den lokalen Pfad und den Remote-Fehler. Es
+  wechselt nicht zu einem anderen Remote-Provider und verbirgt den Fehler nicht als lokalen Erfolg.
+- `provider::FileReference` enthält den Pfad einer lokalen Report-Datei.
+  `provider::Reference::File` umschließt diesen Typ für `Created` und `Existing`.
+  `Fallback::reference` verwendet `FileReference` direkt und kann deshalb kein Issue enthalten.
+- Schlägt auch der lokale Rückfall fehl, gibt `report::submit` einen Fehler mit Remote- und
+  Persistenzursache zurück.
 - Provider verwenden die Fehlersignatur zur Duplikaterkennung. Ist derselbe Fehler bereits beim
   jeweiligen Provider dokumentiert, wird kein zweiter Bericht angelegt; das Outcome verweist auf
   die vorhandene Datei oder das vorhandene Issue.
@@ -526,19 +773,428 @@ noch eine Pace-Einstellung.
   Fehlercode.
 - Bildvergleiche und andere visuelle Abweichungen gehören zunächst nicht zum Reporting-Interface.
 
+### Grenze zur Session
+
+- `session` besitzt Kindprozess, Pipes und Prozesslebenszyklus. Sie liest stderr als geordnete
+  Bytefolgen und beobachtet den finalen Prozessstatus.
+- `session` weiß aus ihrem Lebenszyklus, ob ein erfolgreicher Shutdown oder ihr eigener Drop die
+  Beendigung ausgelöst hat. Solche absichtlichen Beendigungen leitet sie nicht als Report-Kandidaten
+  weiter.
+- Ein crate-interner `report::Observer` besitzt den privaten Zeilenpuffer für stderr. Er erkennt und
+  dekodiert darin Panic-, Tracing- und Layer-Statusmarker und erzeugt daraus `Failure::panic`,
+  `Failure::tracing_error` oder einen Beobachtungsfehler.
+- Gültige Marker werden nicht an die menschliche stderr-Ausgabe weitergereicht. Alle anderen Bytes
+  bleiben unverändert. Ungültige oder bei EOF unvollständige Marker bleiben sichtbar und erzeugen
+  `session::Event::ObservationError` mit dem stabilen Code `invalid_report_marker`.
+- Ein nicht absichtlich ausgelöstes Prozessende ohne vorrangigen Panic wird zu
+  `Failure::process_exit`.
+- Diese Beobachtungsgrenze kopiert weder Command-History noch Session-Metadaten. `Report::create`
+  liest den begrenzten History- und Metadaten-Snapshot weiterhin direkt aus der laufenden Session.
+- Beobachtungstypen, Zeilenpuffer und Markertransport bleiben crate-intern. Sie sind kein Teil des
+  öffentlichen Session- oder Report-Interfaces.
+- Marker verwenden ein versioniertes, zeilenbasiertes Chunk-Format mit Event-ID, Chunk-Index,
+  Chunk-Anzahl, Base64-kodiertem JSON-Payload und Prüfsumme. Ein begrenzter Chunk wird mit genau einem
+  Schreibaufruf ausgegeben. Event-IDs erlauben das Zusammensetzen gleichzeitig geschriebener Marker.
+- Ein eigener stderr-Leser läuft ab dem Prozessstart und leert die Pipe bis EOF, auch während der
+  Host einen Provider aufruft. Nach einem Prozessende verarbeitet die Session zuerst die
+  verbleibenden stdout- und stderr-Daten und bewertet erst danach den Prozessstatus.
+- Ein erkannter Panic unterdrückt einen zusätzlichen `ProcessExit`-Fehler derselben Session. Ein
+  beschädigter oder unvollständiger Panic-Marker beweist keinen Panic; bei einem unerwarteten
+  fehlgeschlagenen Prozessstatus bleibt `ProcessExit` der Rückfall.
+- `session::Event::Failure` transportiert erkannte Fehler zum gemeinsamen privaten Ablauf unter
+  `host::run`. Dieser ruft `Report::create` und `report::submit` auf und behält Report und
+  Submit-Ergebnis gemeinsam. Die konkrete Controller-Darstellung bleibt Teil des Host-Interfaces.
+- [ADR-0009](../adr/0009-session-transports-report-observations.md) hält Markertransport,
+  Vorrangregel und Report-Auslösung fest.
+
+### Report-Kontext
+
+- `report::Context` ist eine unveränderliche, reportspezifische Momentaufnahme der beim Session-Start
+  wirksamen Daten. `Report::create` erzeugt sie direkt aus `session::Session`. Der Aufrufer liefert
+  weder einen Context noch einzelne Metadaten.
+- `Context::application` enthält Package, Version, Target, Features, Anwendungsargumente und eine
+  optionale `SourceRevision`.
+- Package, Target, Features und Anwendungsargumente stammen aus der validierten und wirksamen
+  `session::launch::Config`. Die Reihenfolge der Anwendungsargumente bleibt erhalten.
+- Die Anwendungsversion ist `package.version` des ausgewählten Cargo-Packages. Die Session ermittelt
+  sie beim Start mit `cargo metadata --format-version 1 --no-deps`. Sie verwendet weder die
+  `bug_hunter`-Package-Version noch einen Git-Tag als Anwendungsversion. Kann Cargo das Package oder
+  seine Version nicht eindeutig auflösen, startet die Session nicht.
+- `SourceRevision` enthält den Commit aus `HEAD` und den Dirty-Status des Git-Repositorys, das das
+  Manifest des ausgewählten Packages enthält. Dirty umfasst vorgemerkte, geänderte und nicht
+  ignorierte unversionierte Dateien. Fehlt Git oder besitzt das Repository kein `HEAD`, ist
+  `Application::source` `None`.
+- `Context::bug_hunter_version` stammt aus dem Build der laufenden Host-Implementierung.
+- `protocol_version` und `capabilities` sind die durch den erfolgreichen `Ready`-Handshake
+  bestätigten Werte. `tick` ist die beim Start wirksame `command::tick::Config`.
+- `Platform` enthält ausschließlich OS und Architektur des laufenden Host-Builds.
+- `Toolchain` enthält die beim Session-Start im selben Arbeitsordner abgefragten und getrimmten
+  Cargo- und Rustc-Versionsausgaben. Beide Werte sind optional. Eine fehlgeschlagene Zusatzabfrage
+  verhindert weder Session-Start noch Report-Erzeugung.
+- Der Context enthält höchstens die letzten 50 gesendeten Commands samt korreliertem Outcome in
+  Sendereihenfolge. Wire-Request-IDs werden nicht übernommen. Ein noch ausstehender Command bleibt
+  als `history::Outcome::Unanswered` sichtbar.
+- Anwendungsargumente, Commands und Outcomes werden unverändert übernommen. Dazu gehören
+  Texteingaben und Inspect-Outcomes. Reports sind deshalb vertrauliche Artefakte. Ein externer
+  Provider darf sie nur nach einer ausdrücklichen Veröffentlichungsentscheidung senden. R6 muss
+  diese Regel in das GitHub-Provider-Interface aufnehmen.
+- Der Context enthält keine absoluten Projekt-, Manifest- oder Artifact-Pfade, Umgebungsvariablen,
+  Repository-URL, Branch, Quelltext-Diffs, Session-, Controller- oder Wire-Request-IDs,
+  Provider-Konfiguration, vollständigen Cargo-Abhängigkeitsgraphen oder Bevy-World-Snapshot.
+- Die Session nimmt die unveränderlichen Metadaten beim Start auf. Ein späterer Wechsel von Branch
+  oder Toolchain und spätere Änderungen an ursprünglichen Konfigurationsobjekten verändern den
+  Context der laufenden Session nicht.
+- Die genaue Auswahl und ihre Gründe stehen in
+  [`research/report-context-sources.md`](research/report-context-sources.md).
+  [ADR-0007](../adr/0007-report-context-is-a-session-snapshot.md) hält die Entscheidung fest.
+
+#### Prüfung des Report-Kontexts
+
+- Workspace-Fixtures decken direkte und geerbte Package-Versionen sowie die Auswahl des
+  konfigurierten Packages und Targets ab.
+- Git-Fixtures decken saubere und geänderte Worktrees, unversionierte Dateien, fehlendes Git und ein
+  Repository ohne `HEAD` ab.
+- Context-Fixtures decken null, genau 50 und mehr als 50 Commands, ihre Sendereihenfolge,
+  korrelierte Outcomes, `Unanswered` und das Fehlen von Wire-Request-IDs ab.
+- Weitere Fixtures prüfen die unveränderte Übernahme von Anwendungsargumenten, Commands und Outcomes
+  sowie den Ausschluss von Umgebung, absoluten Pfaden, Provider-Konfiguration und Quelltext-Diffs.
+- Fehlschlagende optionale Git-, Cargo-Versions- und Rustc-Versionsabfragen verhindern die
+  Report-Erzeugung nicht.
+
+### Provider-Ausführung
+
+- `provider::Config::Local(local::Config {})` schreibt ausschließlich einen lokalen
+  Markdown-Report unter dem konfigurierten relativen Ausgabeverzeichnis.
+- `provider::Config::Github(github::Config {})` ist die ausdrückliche Entscheidung für eine direkte
+  GitHub-Veröffentlichung. `github::Config` besitzt keine Felder.
+- `report::submit` liest Provider und Ausgabeverzeichnis aus dem unveränderlichen Session-Zustand.
+  Es nimmt keine zweite `report::Config` entgegen. Eine lokal gestartete Session kann deshalb nicht
+  erst beim Submit-Aufruf auf GitHub-Veröffentlichung umgestellt werden.
+- Der GitHub-Provider führt `gh` im kanonischen Elternordner des konfigurierten Cargo-Manifests aus.
+  Er übergibt kein `--repo` und setzt keine eigenen Repository-, Host- oder
+  Authentifizierungswerte. Lokaler Git-Kontext und die von `gh` unterstützte Umgebung bestimmen
+  Repository, Host und Anmeldung.
+- Die Issue-Erstellung verwendet `Report::title` unverändert. Der Provider fügt weder einen
+  GitHub-spezifischen Titelpräfix noch Labels, Assignees oder Milestones hinzu.
+- Der Provider übergibt den Markdown-Body nicht interaktiv über stdin. Bei erfolgreicher Suche oder
+  Erstellung entsteht keine lokale Zwischendatei.
+- Der Body enthält eine eigene Zeile in dieser Form:
+
+```markdown
+<!-- bug_hunter-signature: v1:sha256:<64 kleingeschriebene Hex-Zeichen> -->
+```
+
+- Die Duplikatsuche vergleicht ausschließlich den vollständigen Marker. Titel, Zeitangaben und
+  übriger Body-Inhalt bestimmen die Identität nicht.
+- Die Suche umfasst alle paginierten offenen und geschlossenen Issues. Ein Treffer erzeugt
+  `provider::Outcome::Existing` mit Issue-Nummer und URL. Der Provider kommentiert oder verändert
+  das Issue nicht und öffnet ein geschlossenes Issue nicht erneut.
+- Ohne Treffer erstellt der Provider das Issue und gibt `provider::Outcome::Created` mit der
+  zurückgegebenen URL aus.
+- GitHub besitzt keine atomare Eindeutigkeitsbedingung für den Marker. Zwei gleichzeitige
+  Veröffentlichungen können deshalb trotz vorheriger Suche zwei Issues erstellen. Die
+  Duplikatsuche garantiert die Wiederverwendung bei sequenziellen Aufrufen.
+- Fehlendes `gh`, fehlende Anmeldung, ein nicht auflösbares Repository, Netzwerkfehler und Fehler
+  bei Suche oder Erstellung lösen den lokalen Rückfall aus.
+- Eigene Repository-, Host-, Authentifizierungs- oder Token-Felder und weitere Issue-Metadaten
+  bleiben außerhalb dieses Umbaus. Eine spätere Erweiterung benötigt eine getrennte Entscheidung
+  und eigene Tests.
+
+#### Lokaler Zielpfad
+
+- `provider::FileReference::path` ist ein `PathBuf` relativ zum Session-Artifact-Verzeichnis.
+- Der lokale Provider bildet den endgültigen Pfad als
+  `<report.output>/v1-sha256-<digest>.md`. Version, Algorithmus und Digest stammen aus der
+  vollständigen Signatur. Der Titel gehört nicht zum Dateinamen.
+- Bereits vorhandene Verzeichniskomponenten unterhalb des Artifact-Verzeichnisses und eine
+  vorhandene Zieldatei dürfen keine Symlinks sein. Ein solcher Pfad ergibt
+  `local::Error::InvalidPath`.
+- Fehlt die Zieldatei, schreibt der Provider den vollständigen Markdown-Report zunächst in eine neue
+  temporäre Datei in demselben Verzeichnis. Danach setzt er sie ohne Überschreiben am endgültigen
+  Pfad ein.
+- Enthält eine vorhandene Zieldatei denselben vollständigen Signatur-Marker, ergibt der Aufruf
+  `provider::Outcome::Existing`.
+- Fehlt der Marker oder enthält die Datei eine andere Signatur, ergibt der Aufruf
+  `local::Error::Conflict`. Der Provider überschreibt die Datei nicht.
+- Gewinnt ein paralleler Aufruf das Rennen um denselben endgültigen Pfad, liest der unterlegene
+  Aufruf die eingesetzte Datei erneut. Dieselbe Signatur ergibt `Existing`, ein fehlender oder
+  anderer Marker `Conflict`.
+- Der direkt konfigurierte lokale Provider und der lokale Rückfall nach einem Remote-Fehler
+  verwenden dieselbe Pfadbildung und Duplikatregel.
+- Technische Quellen, der genaue Ablauf und die Abweichungen vom aktuellen Code stehen in
+  [`research/native-gh-provider.md`](research/native-gh-provider.md).
+  [ADR-0008](../adr/0008-configured-provider-with-local-fallback.md) hält die Entscheidung fest.
+
+#### Prüfung der Provider-Ausführung
+
+- Lokale Fixtures prüfen neue und bereits vorhandene Signaturen sowie sichere relative Pfade.
+- Config-Fixtures lehnen einen leeren oder absoluten `report.output` und die Bestandteile `.` und
+  `..` beim Session-Start ab.
+- Pfad-Fixtures lehnen Symlinks in vorhandenen Verzeichniskomponenten und als Zieldatei ab.
+- Eine Parallelitäts-Fixture prüft zwei gleichzeitige Veröffentlichungen derselben Signatur. Sie
+  erzeugen genau eine Datei und liefern `Created` sowie `Existing`.
+- Ein Compile-Fail-Test belegt, dass `report::submit` keine zweite Report-Konfiguration annimmt.
+- Eine mit lokalem Provider gestartete Session bleibt bei lokaler Speicherung. Eine mit
+  GitHub-Provider gestartete Session verwendet GitHub und bei dessen Fehler den lokalen Rückfall.
+- GitHub-Command-Fixtures prüfen den Projektordner, das fehlende `--repo`, stdin als Body-Quelle und
+  den unveränderten Report-Titel.
+- GitHub-Antwort-Fixtures prüfen exakte Marker in offenen und geschlossenen Issues, Pagination,
+  abweichende Titel und veränderten übrigen Body-Inhalt.
+- Fehler-Fixtures prüfen jeden Remote-Fehler mit erfolgreichem lokalem Rückfall sowie einen
+  zusätzlichen Fehler beim lokalen Schreiben.
+
+### Report- und Provider-Fehler
+
+- `Report::create` bleibt unfehlbar. `report::Error` beschreibt ausschließlich Fehler von
+  `report::submit` beim Provider-Aufruf oder lokalen Speichern. Beobachtete Panics, Tracing-Errors
+  und Prozessenden bleiben `report::Failure`.
+- `report::Error::Local(local::Error)` bedeutet, dass der direkt konfigurierte lokale Provider den
+  Report nicht speichern konnte.
+- `report::Error::FallbackFailed { provider, local }` bedeutet, dass zuerst der konfigurierte
+  Remote-Provider und danach der lokale Rückfall fehlgeschlagen sind. Beide typisierten Ursachen
+  bleiben erhalten.
+- Ein Remote-Fehler mit erfolgreichem lokalem Rückfall ist kein `report::Error`.
+  `report::submit` gibt `Ok(provider::Outcome::Fallback { reference, provider_error })` zurück. Die
+  Referenz hat den Typ `provider::FileReference`.
+- `provider::Error` besitzt für jeden Remote-Provider eine eigene Variante. In diesem Umbau ist nur
+  `provider::Error::Github(github::Error)` vorgesehen.
+
+#### GitHub-Fehler
+
+- `github::Error` unterscheidet `Unavailable`, `CommandFailed` und `InvalidResponse`.
+- Jede Variante enthält `operation: github::Operation` mit `Search` oder `Publish`.
+- `Unavailable` bedeutet, dass der `gh`-Prozess für die Operation nicht gestartet werden konnte.
+- `CommandFailed` bedeutet, dass `gh` gestartet wurde, die Operation aber mit einem Fehler beendete.
+- `InvalidResponse` bedeutet, dass `gh` einen erfolgreichen Status, aber keine gültige erwartete
+  Such- oder Veröffentlichungsantwort lieferte.
+- Jede Variante enthält eine menschenlesbare `message`. Ihr genauer Text ist nicht stabil und darf
+  keine Controller-Logik steuern.
+- `bug_hunter` errät aus stderr keine Kategorien für Anmeldung, Netzwerk, Repository-Auflösung oder
+  Berechtigung. Diese Ursachen bleiben `CommandFailed` bei der jeweiligen Operation.
+
+#### Lokale Speicherfehler
+
+- `local::Error::InvalidPath { path }` meldet einen zur Veröffentlichungszeit unsicheren Pfad, etwa
+  einen Symlink unterhalb des Session-Artifact-Verzeichnisses. Statisch ungültige Bestandteile von
+  `report.output` lehnt bereits `Session::start` als `session::Error::InvalidConfig` ab.
+- `local::Error::Conflict { path }` meldet, dass am signaturbasierten Zielpfad bereits eine Datei mit
+  anderer oder ungültiger Signatur liegt. Der Provider überschreibt sie nicht.
+- `local::Error::Filesystem { operation, path, message }` meldet einen Dateisystemfehler.
+  `local::Operation::Read` umfasst das Lesen einer vorhandenen Datei zur Duplikatprüfung.
+  `local::Operation::Write` umfasst Verzeichniserzeugung, temporäres Schreiben und das Einsetzen der
+  endgültigen Datei.
+- Alle `path`-Felder von `local::Error` verwenden `PathBuf`. Sie bewahren dadurch auch Pfade, die
+  nicht als UTF-8 darstellbar sind. `Display` verwendet die menschenlesbare Darstellung des Pfads.
+- `message` ist eine Diagnose für Menschen und kein stabiler maschinenlesbarer Fehlercode.
+  Betriebssystemspezifische Systemaufrufe erhalten keine eigenen öffentlichen Varianten.
+- Alle öffentlichen Fehlertypen implementieren `Display` und `std::error::Error`.
+
+#### Prüfung der Fehler
+
+- Ein ungültiger Ausgabepfad, eine kollidierende vorhandene Datei sowie Fehler beim Lesen und
+  Schreiben erzeugen die jeweilige `local::Error`-Variante.
+- Pfad-Fixtures mit nicht als UTF-8 darstellbaren Bestandteilen bleiben in `local::Error` verlustfrei
+  erhalten, soweit die jeweilige Testplattform solche Pfade unterstützt.
+- Fehlender oder nicht startbarer `gh`, ein fehlgeschlagener Such- oder Veröffentlichungsbefehl und
+  eine ungültige Erfolgsantwort erzeugen die jeweilige `github::Error`-Variante samt Operation.
+- Ein erfolgreicher lokaler Rückfall liefert `Ok(Fallback)` und erhält den vollständigen
+  `provider::Error`. Seine Referenz ist bereits durch den Typ auf eine lokale Datei begrenzt.
+- Ein fehlgeschlagener lokaler Rückfall liefert `Err(FallbackFailed)` und erhält Provider- und
+  lokalen Fehler.
+- Tests prüfen `Display` und `Error::source`, ohne den genauen Text einer
+  Betriebssystemfehlermeldung als stabilen Vertrag festzuschreiben.
+
+#### Prüfung der Report-Konstruktion
+
+- Compile-Fail-Tests belegen, dass Aufrufer `Report`, `Failure` und `Signature` nicht über ihre
+  Felder konstruieren oder verändern können.
+- Konstruktor-Fixtures prüfen die Zuordnung von Panic, Tracing-Error und Prozessende zu `Origin` und
+  `message`.
+- Nur `Report::create` berechnet Titel, Signatur und Context. Fixtures vergleichen seine
+  Zugriffsmethoden mit den gemeinsam erzeugten Werten.
+
+### Report-Titel
+
+`Report::create` leitet den Titel aus dem Wert von `Failure::message` ab, sofern er vorhanden ist:
+
+1. CRLF und alleinstehendes CR werden zu LF.
+2. Ein ANSI-Parser entfernt vollständige Escape-Sequenzen.
+3. Der Titel verwendet die erste Zeile, die nach dem Entfernen von führendem und abschließendem
+   ASCII-Whitespace nicht leer ist.
+4. Großschreibung, Unicode und interner Whitespace dieser Zeile bleiben erhalten.
+5. Der Titel enthält höchstens 120 Unicode-Skalarwerte. Eine längere Zeile wird nach 117
+   Unicode-Skalarwerten abgeschnitten und um `...` ergänzt.
+6. Fehlt die Meldung oder besitzt sie keine verwendbare Zeile, lautet der Titel abhängig von der
+   Fehlerart `panic`, `tracing error` oder `process exited unexpectedly`.
+
+Der Titel erhält keinen `bug_hunter`- oder providerspezifischen Präfix. Die Titelbereinigung verändert
+weder `Failure::message` noch die für die Signatur getrennt bereinigte Kopie. Der GitHub-Provider
+übernimmt den so erzeugten Titel unverändert.
+
+#### Prüfung des Report-Titels
+
+- Fixtures prüfen LF, CRLF, alleinstehendes CR, ANSI-Sequenzen und leere Anfangszeilen.
+- Titel mit genau 120 und mehr als 120 Unicode-Skalarwerten prüfen die Grenze, die
+  UTF-8-Zeichengrenze und das abschließende `...`.
+- Eine fehlende Meldung, leere Meldungen und Meldungen aus ausschließlich ASCII-Whitespace prüfen
+  die drei festen Fallback-Titel.
+- Mehrzeilige Meldungen bleiben vollständig in `Failure::message`; nur der Titel verwendet ihre
+  erste nicht leere Zeile.
+
+### Markdown-Darstellung
+
+`Report::to_markdown` erzeugt die einzige Markdown-Darstellung eines Reports. Der lokale Provider
+schreibt diesen String unverändert in die Report-Datei. Der GitHub-Provider verwendet denselben
+String unverändert als Issue-Body und übergibt `Report::title` zusätzlich als Issue-Titel.
+
+Der Markdown-Report enthält diese Abschnitte in fester Reihenfolge:
+
+1. `Report::title` als Überschrift erster Ebene,
+2. den vollständigen Signatur-Marker
+   `<!-- bug_hunter-signature: v1:sha256:<digest> -->`,
+3. `Failure` mit Fehlerart, vorhandener Meldung und den zur Fehlerart gehörenden Diagnosen,
+4. `Application` mit Package, Version, Target, Features, Argumenten und optionaler Git-Revision,
+5. `Environment` mit `bug_hunter`-Version, Protokollversion, Capabilities, Tick-Konfiguration,
+   Plattform und Toolchain,
+6. `Commands` mit dem begrenzten History-Snapshot und seinen Outcomes.
+
+`Failure` zeigt für einen Panic Code-Stelle und Backtrace, für einen Tracing-Error Target und
+Code-Stelle und für ein Prozessende den Status. Eine fehlende Meldung oder optionale Diagnose wird
+ausdrücklich als nicht verfügbar dargestellt. Der Renderer erfindet keinen Ersatzwert.
+
+Meldung und Backtrace stehen in Text-Codeblöcken. Strukturierte Anwendungs-, Umgebungs- und
+Command-Daten stehen als eingerücktes JSON in Codeblöcken. Der Renderer verwendet für jeden
+Codeblock eine Begrenzung aus mindestens drei Backticks, die länger als jede zusammenhängende Folge
+von Backticks in den enthaltenen Nutzdaten ist. Dadurch können Meldungen, Argumente und Outcomes
+keinen Codeblock vorzeitig schließen.
+
+Die Darstellung verwendet LF und endet mit genau einem LF. Sie enthält keinen
+Erzeugungszeitpunkt und keine Provider-Konfiguration oder Provider-Fehler. Sie kürzt Meldung,
+Backtrace, Argumente, Commands und Outcomes nicht. Lehnt GitHub einen zu großen Body ab, entsteht ein
+Provider-Fehler und `report::submit` führt den lokalen Rückfall mit dem vollständigen Markdown aus.
+
+#### Prüfung der Markdown-Darstellung
+
+- Eine Golden Fixture schreibt Überschriften, Abschnittsreihenfolge, Signatur-Marker und
+  abschließendes LF fest.
+- Je eine Fixture für Panic, Tracing-Error und Prozessende prüft die zugehörigen Diagnosefelder.
+- Fehlende Meldung, Code-Stelle, Backtrace, Target und Toolchain-Werte bleiben ausdrücklich als
+  nicht verfügbar sichtbar.
+- Nutzdaten mit Backticks, Markdown, ANSI-Sequenzen, Unicode und mehreren Zeilen schließen keinen
+  Codeblock und verschwinden nicht aus dem Report.
+- Fixtures mit null und 50 History-Einträgen prüfen die vollständige eingerückte JSON-Darstellung.
+- Lokaler Provider und GitHub-Command-Fixture erhalten bytegleiches Markdown.
+- Eine simulierte Ablehnung wegen der Body-Größe führt zum lokalen Rückfall, dessen Datei weiterhin
+  den vollständigen Report enthält.
+
 ### Fehlersignatur
 
 - Die Fehlersignatur wird vom Debug Host aus den beobachteten Fehlerdaten abgeleitet. Der Nutzer
   konfiguriert weder Fehlercodes noch Regeln für einzelne Fehlermeldungen.
-- Bei einem Panic berücksichtigt sie die Panic-Meldung, die bekannte Code-Stelle und stabile Teile
-  des Backtraces.
-- Bei einem aktivierten `tracing`-Error berücksichtigt sie mindestens das Tracing-Target und die
-  Meldung. Bei einem unerwarteten Prozessende ohne erkannten Panic berücksichtigt sie den
-  Prozessstatus und die verfügbare Fehlerausgabe.
-- Flüchtige Speicheradressen, absolute Projektpräfixe, Session, Controller und Command-Verlauf
-  dürfen die Signatur desselben wiederholt auftretenden Fehlers nicht verändern.
-- Der Report bewahrt die ursprüngliche Meldung und Backtrace-Ausgabe unabhängig von dieser
-  Normalisierung als Diagnose auf.
+- `Signature::value` besitzt die Form `v1:sha256:<digest>`. Der Digest besteht aus genau 64
+  kleingeschriebenen Hex-Zeichen.
+- Der Titel wird aus der Fehlermeldung für Menschen erzeugt. Er ist weder Eingabe noch
+  persistierte Ersatzdarstellung der Signatur.
+- Der Report bewahrt eine vorhandene ursprüngliche Meldung und die Backtrace-Ausgabe unabhängig von
+  dieser Normalisierung als Diagnose auf.
+- Provider speichern und vergleichen die vollständige Signatur einschließlich Version und
+  Algorithmus. Ändert sich die Normalisierung oder Feldbelegung, erhält der Vertrag eine neue
+  Signaturversion. Bereits persistierte Reports werden nicht mit einer neueren Version
+  nachberechnet.
+
+#### Meldungsnormalisierung
+
+`Report::create` normalisiert eine Kopie der vorhandenen `Failure::message` ausschließlich für die
+Signatur. Fehlt die Meldung bei einem Panic mit unbekanntem Payload, verwendet das weiterhin
+vorhandene Signaturfeld `message` den leeren String:
+
+1. CRLF und alleinstehendes CR werden zu LF.
+2. Ein ANSI-Parser entfernt vollständige Escape-Sequenzen. Eine reguläre Expression, die nur CSI-
+   Farbcodes kennt, reicht dafür nicht.
+3. Der absolute Projektwurzelpfad der gestarteten Cargo-Session wird in beiden
+   Verzeichnistrenner-Schreibweisen durch `<project>` ersetzt.
+4. Eigenständige ASCII-Tokens der Form `0[xX][0-9a-fA-F]{8,16}` werden durch `<address>` ersetzt.
+   Vor und nach dem Token darf kein ASCII-Buchstabe, keine Ziffer und kein Unterstrich stehen. Das
+   schließt übliche 32- und 64-Bit-Adressen ein. Andere Hexwerte und Dezimalzahlen bleiben erhalten.
+5. Klar erkennbare ISO-Datums- und Uhrzeitangaben werden durch `<timestamp>` ersetzt. Erkannt werden
+   gültige eigenständige ASCII-Werte in den Formen `YYYY-MM-DD`, `HH:MM:SS` mit optionalem
+   Sekundenbruchteil und Zeitzone sowie die Kombination beider Werte mit `T` oder einem Leerzeichen.
+   Kalenderdatum, Uhrzeit und numerischer UTC-Offset müssen gültig sein. Vor und nach dem Wert darf
+   kein ASCII-Buchstabe, keine Ziffer und kein Unterstrich stehen. Die längste kombinierte Form wird
+   zuerst ersetzt.
+6. Führender und abschließender ASCII-Whitespace wird entfernt. Interner Whitespace, Großschreibung,
+   Unicode und übrige Zahlen bleiben unverändert.
+
+Diese Regeln entfernen nur bekannte technische Schwankungen. Unix-Zeitstempel, Entity-IDs oder
+andere anwendungsspezifische Werte werden nicht anhand allgemeiner Zahlenmuster geraten. Wenn eine
+Anwendung solche Werte in ihre Fehlermeldung schreibt, bleiben sie Teil der Identität.
+
+Ein unerwartetes Prozessende verwendet vor der Normalisierung immer die feste Meldung
+`process exited unexpectedly`. Der beobachtete Status bleibt in `Origin::ProcessExit::status`.
+Dadurch verändern unterschiedliche Exit-Codes oder Signale die Signatur nicht.
+
+Ein Tracing-Event verwendet den Wert seines konventionellen Feldes `message`. Fehlt dieses Feld,
+entsteht die Report-Meldung aus den beobachteten übrigen Feldern in Deklarationsreihenfolge als
+`name=value`, getrennt durch `, `. Primitive Werte verwenden ihre kanonische Marker-Darstellung,
+andere Werte die von `Visit::record_debug` beobachtete Darstellung. Besitzt das Event keine Felder,
+wird sein Metadatenname verwendet. Diese Meldung durchläuft danach dieselbe Normalisierung.
+
+Die Projektwurzel ist der normalisierte Arbeitsordner, in dem `Session::start` den Cargo-Prozess
+startet. Sie ist internes Session-Wissen und kein Teil von `report::Context`.
+
+#### Signaturfelder
+
+Version 1 besitzt für jede Fehlerart genau zwei geordnete Felder:
+
+| Feld | Panic | Tracing-Error | Prozessende |
+| --- | --- | --- | --- |
+| `kind` | `panic` | `tracing_error` | `process_exit` |
+| `message` | bereinigte Report-Meldung | bereinigte Report-Meldung | bereinigte Report-Meldung |
+
+Code-Stelle, Tracing-Target, Prozessstatus, Backtrace, Session, Controller, Command-Verlauf und
+Report-Kontext sind ausdrücklich ausgeschlossen. Sie bleiben im Report als Diagnose erhalten.
+
+#### Binärkodierung und Hash
+
+Der SHA-256-Preimage beginnt mit den ASCII-Bytes `bug_hunter.signature`, gefolgt von einem Nullbyte.
+Danach folgen die Signaturversion als Big-Endian-`u32`, die Anzahl der Felder als Big-Endian-`u32`
+und die beiden Felder in der Reihenfolge `kind`, `message`.
+
+Jedes Feld wird folgendermaßen kodiert:
+
+1. Länge des UTF-8-Feldnamens als Big-Endian-`u32`,
+2. Bytes des Feldnamens,
+3. UTF-8-Bytelänge des Werts als Big-Endian-`u64`,
+4. Bytes des Werts.
+
+Längenpräfixe verhindern Mehrdeutigkeiten durch Trennzeichen in der Meldung. Rusts `DefaultHasher`
+wird nicht verwendet, weil sein Algorithmus und Seed kein persistierter Vertrag sind.
+
+Der Digest wird mit SHA-256 berechnet und als kleingeschriebener Hexwert hinter `v1:sha256:`
+gespeichert.
+
+#### Golden Vectors
+
+Die Werte in dieser Tabelle sind verbindliche Fixtures. Die Meldungen sind bereits normalisiert:
+
+| Fehlerart | Eingabefelder | `Signature::value` |
+| --- | --- | --- |
+| Panic | `kind = "panic"`, `message = "stellar catalog invariant violated"` | `v1:sha256:e539c36fcbeb8357ba855f705c08274f29e82d866288dffaa1406607eba9302c` |
+| Panic ohne lesbare Payload | `kind = "panic"`, `message = ""` | `v1:sha256:f7ad1a8211ca86c794de8c16b456c16006393c974b89e5aa11908ff1f35336a6` |
+| Tracing-Error | `kind = "tracing_error"`, `message = "stellar catalog invariant violated"` | `v1:sha256:86a70a6857c6f193019c24bf0d04b01bde9f127e28b5c45c8f021de0c9165e46` |
+| Prozessende | `kind = "process_exit"`, `message = "process exited unexpectedly"` | `v1:sha256:7ca80a848b0913a8eb5ab37f815efe34cd2c4bcdc46ad2fd1870c08902c3f240` |
+
+Die Fixture-Matrix prüft zusätzlich:
+
+- unterschiedliche Projektwurzelpfade, ANSI-Sequenzen, Speicheradressen und klar erkennbare
+  Zeitangaben ergeben nach der Normalisierung dieselbe Signatur,
+- eine andere bereinigte Meldung oder Fehlerart ergibt eine andere Signatur,
+- Code-Stelle, Tracing-Target, Prozessstatus, Backtrace, Session, Controller und Command-Verlauf
+  ändern die Signatur nicht,
+- ein unbekannter Panic-Payload und eine ausdrücklich leere Panic-Meldung ergeben dieselbe Signatur,
+- verschiedene Exit-Codes und Signale ergeben für ein unerwartetes Prozessende dieselbe Signatur,
+- andere Zahlen wie `HTTP 404` und `HTTP 500` bleiben verschieden,
+- dieselben Panic-Daten ergeben mit `panic = "unwind"` und `panic = "abort"` dieselbe Signatur.
 
 ### Grenzen der nicht invasiven Erkennung
 
@@ -555,22 +1211,44 @@ noch eine Pace-Einstellung.
 
 ### Offene Fragen und technische Prüfungen
 
-- `OPEN`: Die genaue Normalisierung, Berechnung und persistierte Darstellung der Fehlersignatur ist
-  festzulegen.
-- `OPEN`: Die für Diagnose und Reproduktion gespeicherten Anwendungs- und Session-Angaben von
-  `report::Context` sind festzulegen.
-- `OPEN`: Die notwendigen GitHub-spezifischen Repository- und Veröffentlichungseinstellungen sowie
-  das genaue Interface für Duplikatsuche, Entwurf und Veröffentlichung sind festzulegen.
-- `OPEN`: Die genaue Liste der Provider- und Persistenzfehler von `report::Error` ist mit der
-  Implementation festzulegen.
-- Vor der Implementation ist zu untersuchen, wie sich Panics in Bevy-Systemen, asynchronen Tasks und
-  Worker-Threads mit den unterstützten Panic-Strategien verhalten und welche Meldung der Debug Host
-  zuverlässig beobachten kann.
-- Ebenfalls zu untersuchen ist, wie der Debug Host beim Start der Controlled Session einen Backtrace
-  anfordert und welche Teile davon zwischen Builds stabil normalisiert werden können.
-- Für `report.tracing_errors` ist zu untersuchen, welche Bevy-`tracing`-Ausgabe der Debug Host ohne
-  Änderungen an der Spielanwendung zuverlässig als Error-Level-Event erkennen kann. Dazu gehören
-  benutzerdefinierte Formatter, ANSI-Ausgabe und mehrzeilige Meldungen.
+- R1 zeigt, dass der Prozessstatus allein Panics in detached Bevy-Tasks und nicht gejointen
+  Worker-Threads unter `panic = "unwind"` nicht erkennt. Rusts prozessweiter Panic-Hook läuft dagegen
+  für Systeme, Tasks und Worker vor dem Fangen oder Abbrechen sowohl mit `unwind` als auch `abort`.
+  `session::Plugin` muss deshalb den vorhandenen Hook verketten und synchron einen
+  maschinenlesbaren Panic-Marker auf stderr schreiben. Der Marker darf nicht erst über einen
+  Hintergrundthread ausgegeben werden. Die technische Prüfung und Fixture-Matrix stehen in
+  [`research/bevy-panic-observability.md`](research/bevy-panic-observability.md).
+- R2 legt fest, dass der Debug Host vor jedem Cargo-Start `RUST_BACKTRACE=1` setzt und
+  `session::Plugin` im Panic-Hook zusätzlich `Backtrace::force_capture` verwendet. Der
+  maschinenlesbare Marker enthält den Erfassungsstatus und bei Erfolg die unveränderte
+  `Display`-Ausgabe. Payload und Panic-Stelle bleiben getrennte strukturierte Felder. Stabiles Rust
+  garantiert weder genaue oder buildübergreifend stabile Frames noch einen strukturierten
+  Frame-Zugriff. R4 schließt den Backtrace deshalb aus der Signatur aus. Er bleibt als Diagnose im
+  Report erhalten. Quellen und Fixtures stehen in
+  [`research/rust-backtrace-capture.md`](research/rust-backtrace-capture.md).
+- R3 zeigt, dass formatierter stderr-Text keine verlässliche Event-Grenze besitzt. Die Erkennung
+  erfolgt deshalb durch `session::tracing_error_layer` vor dem Formatter. Der Layer verarbeitet nur
+  dispatchte Events mit `Level::ERROR` und übermittelt normalisierte Metadaten sowie strukturierte
+  Felder in einem internen Marker. Direkte stderr-Ausgabe, Error-Spans ohne Event und gefilterte
+  Events lösen keinen Tracing-Report aus. Eigene Formatter einschließlich ANSI-Ausgabe bleiben
+  möglich. Bei aktiviertem `report.tracing_errors` muss der Debug Host die Layer-Registrierung beim
+  Session-Start bestätigen. Quellen und Fixtures stehen in
+  [`research/bevy-tracing-error-observability.md`](research/bevy-tracing-error-observability.md).
+- R4 legt `v1:sha256:<digest>` als persistierte Signatur fest. SHA-256 verarbeitet die oben
+  beschriebene versionierte Binärkodierung aus Fehlerart und bereinigter Meldung. Alle zusätzlichen
+  Diagnosewerte bleiben ausgeschlossen.
+  [ADR-0006](../adr/0006-versioned-failure-signatures.md) hält die Entscheidung fest.
+- R5 legt `report::Context` als unveränderliche Momentaufnahme der beim Session-Start wirksamen
+  Anwendungs-, Quell-, Toolchain-, Handshake- und Verlaufsdaten fest. Die Anwendungsversion stammt
+  aus Cargo-Metadaten. Reports übernehmen Anwendungsargumente und Diagnosewerte unverändert und
+  gelten als vertrauliche Artefakte.
+- R6 legt die direkte Ausführung des konfigurierten Providers fest. Der GitHub-Provider verwendet
+  natives `gh`, findet offene und geschlossene Issues über den Signatur-Marker und verändert Treffer
+  nicht. Jeder Remote-Fehler löst den lokalen Markdown-Rückfall aus und bleibt im Outcome sichtbar.
+  [ADR-0008](../adr/0008-configured-provider-with-local-fallback.md) hält die Entscheidung fest.
+- R7 trennt lokale Speicherfehler, GitHub-Provider-Fehler und den doppelten Fehlschlag von
+  Remote-Provider und lokalem Rückfall. Ein erfolgreicher Rückfall bleibt ein `Outcome` und enthält
+  den typisierten Remote-Fehler.
 
 ### Auswirkungen auf den Ist-Stand
 
@@ -585,6 +1263,9 @@ noch eine Pace-Einstellung.
 - `session::diagnostics` entfällt als Zielmodul. `FailureHeadline`, `FailureReport`,
   `DiagnosticArtifacts`, `DiagnosticsError` und das eigenständige öffentliche Konzept `RecentLogs`
   werden nicht übernommen.
+- Die heutigen getrennten Fehler aus `session::diagnostics`, `host::issue_report` und `host::github`
+  werden durch die nach Provider und Phase typisierten `report`-Fehler ersetzt. Öffentliche
+  Betriebssystem- und JSON-Bibliothekstypen bestimmen die Varianten nicht mehr.
 - Das Lesen und Weiterleiten von stderr sowie die Beobachtung des Kindprozesses wechseln in die
   interne Prozessverwaltung von `session::Session`. Ein für Panic- und Backtrace-Erkennung nötiger
   Zeilenpuffer bleibt ein privates Implementierungsdetail von `report`; `recent.log` wird nicht als
@@ -592,8 +1273,12 @@ noch eine Pace-Einstellung.
 - Die fortlaufende korrelierte Command-Historie bleibt Eigentum der Session. `report` erhält davon
   nur den für den Report begrenzten Snapshot.
 - Die bestehende GitHub-Duplikatsuche vergleicht exakte Titel. Im Ziel verwendet sie die
-  normalisierte Fehlersignatur, damit Titeländerungen und gleiche Titel verschiedener Fehler die
-  Zuordnung nicht bestimmen.
+  normalisierte Fehlersignatur im Issue-Body, damit Titeländerungen und gleiche Titel verschiedener
+  Fehler die Zuordnung nicht bestimmen. Die feste Grenze von 1.000 gelisteten Issues entfällt.
+- Der aktuelle GitHub-Ablauf schreibt vor jedem Veröffentlichungsversuch einen lokalen Entwurf. Im
+  Ziel entsteht die lokale Markdown-Datei nur bei lokalem Provider oder nach einem Remote-Fehler.
+- `ReportOptions::create` und der zweistufige aktuelle `github::Report` entfallen. Die Auswahl des
+  GitHub-Providers führt bei `report::submit` direkt zur Veröffentlichung.
 - Das aktuelle Diagnoseformat besitzt keinen normalisierten Panic-Backtrace als fachlichen Teil der
   Fehlerbeschreibung. Die neue Report-Erzeugung muss Panic-Ausgabe, Code-Stelle und Backtrace
   gemeinsam erfassen, ohne flüchtige Backtrace-Daten zur Duplikatidentität zu machen.
@@ -612,8 +1297,8 @@ noch eine Pace-Einstellung.
   BRP-IDs oder numerische BRP-Fehlercodes. `session::protocol` bleibt der einzige Owner der
   transportierten Request-ID, Command-Namen, Outputs und Fehlerformen.
 - Das Ziel ist Protokollversion 3 und nicht kompatibel mit dem aktuellen Protokoll v2. Der Debug Host
-  sendet keine Requests, bevor er genau eine `Ready`-Nachricht mit der erwarteten Version erhalten
-  hat.
+  sendet keine Requests, bevor er genau eine `Ready`-Nachricht mit der erwarteten Version und die für
+  die Report-Konfiguration nötige Layer-Bestätigung erhalten hat.
 - Input, Tick und Inspect gehören fest zur Protokollversion. `Ready` meldet nur Funktionen, deren
   Unterstützung von der konkreten Bevy-Zusammensetzung der Controlled Session abhängt. Zunächst ist
   das die Screenshot-Unterstützung.
@@ -627,11 +1312,37 @@ noch eine Pace-Einstellung.
 - Pointer, Keyboard und Text benötigen keinen Renderer und werden nicht als optionale Capabilities
   gemeldet. Fehlende Fenster, Pointer-Positionen oder Eingabefokusse führen zu fachlichen Command-
   Ablehnungen.
+- Die internen Panic-, Tracing- und Layer-Registrierungsmarker werden ausschließlich über stderr
+  beobachtet. Sie sind keine v3-Protokollnachrichten und ergänzen weder `Ready` noch
+  `session::Capabilities`. Wenn `report.tracing_errors` aktiviert ist, gehört die Bestätigung des
+  Error-Layers zur hostseitigen Startprüfung und nicht zum stdout-JSONL-Codec.
+- `session::Plugin` schreibt vor Abschluss des Ready-Handshakes immer einen internen
+  Layer-Statusmarker. `Session::start` verarbeitet Statusmarker und stdout-`Ready` unabhängig von
+  ihrer beobachteten Reihenfolge. Eine negative Bestätigung ergibt bei aktiviertem
+  `report.tracing_errors` einen `session::Error::Launch`; bei deaktivierter Beobachtung verhindert
+  ein fehlender Layer den Start nicht.
 - Nur Input, Tick, Inspect, Screenshot und Shutdown überschreiten den Transport zur Controlled
   Session. Recording und Replay werden vom Debug Host ausgeführt und sind keine Wire-Commands.
 - Rust verwendet typisierte Command-Enums. Der Protokoll-Codec bildet jeden konkreten Command auf
   einen vollständig qualifizierten Namen wie `input.keyboard.press`, `tick.warp.stop` oder
   `inspect.query` und ein immer vorhandenes `arguments`-Objekt ab.
+- Protokollversion 3 besitzt genau diese Wire-Command-Namen:
+  - `input.keyboard.press`
+  - `input.keyboard.release`
+  - `input.pointer.press`
+  - `input.pointer.release`
+  - `input.pointer.move_to`
+  - `input.pointer.move_by`
+  - `input.pointer.scroll`
+  - `input.text.input`
+  - `tick.warp.start`
+  - `tick.warp.set_pace`
+  - `tick.warp.stop`
+  - `inspect.query`
+  - `screenshot.capture`
+  - `shutdown`
+- Recording und Replay verwenden als hostseitige Commands dieselbe äußere Command-Form, gehören
+  aber nicht zu diesen Wire-Commands.
 - `Session` vergibt für jeden angenommenen Command eine numerische Request-ID. Ein Controller
   liefert keine eigene ID. Für einen Wire-Command verwendet das Protokoll dieselbe ID; für einen
   hostseitigen Recording- oder Replay-Command bleibt sie innerhalb des Debug Hosts.
@@ -651,6 +1362,12 @@ noch eine Pace-Einstellung.
 - Eine erfolgreiche Response enthält immer `output`; für `Output = ()` ist der Wert `null`. Eine
   abgelehnte Response enthält stattdessen einen stabilen Fehlercode und eine menschenlesbare
   Meldung. Die Rust-Varianten schließen eine gleichzeitige Erfolgs- und Fehlernutzlast aus.
+- Zwei fachliche Ablehnungen verwenden denselben stabilen Fehlercode, wenn ein maschineller
+  Aufrufer auf beide gleich reagieren kann. Der Code beschreibt die notwendige Reaktion, nicht jede
+  interne Bevy-Ursache. Die konkrete Ursache bleibt in `message`. Dadurch erhalten unterscheidbare
+  Zustandsfehler wie `key_already_pressed` und `key_not_pressed` getrennte Codes, während etwa ein
+  fehlendes und ein mehrdeutiges primäres Keyboard-Fenster gemeinsam
+  `keyboard_window_unavailable` verwenden.
 - Eine nicht angenommene oder nicht zuordenbare Protokollnachricht erzeugt eine
   `protocol_error`-Nachricht. Wenn eine gültige Request-ID gelesen werden konnte, enthält die
   Meldung diese ID, andernfalls `null`. Die Controlled Session verarbeitet danach weitere
@@ -663,18 +1380,20 @@ noch eine Pace-Einstellung.
   eine Protokollmeldung geheilt werden und beendet die Verbindung weiterhin.
 - `stdout` enthält ausschließlich UTF-8-JSONL-Protokollnachrichten. Diagnoseausgaben der Controlled
   Session werden getrennt über `stderr` beobachtet.
+- Wire-Fixtures prüfen, dass Reporting-Marker auf stderr weder als Protokollnachricht dekodiert noch
+  als zusätzliches Ready-Feld oder Capability ausgegeben werden.
 
 Die Wire-Form folgt diesem Muster:
 
 ```json
-{"request_id":17,"command":"tick.warp.stop","arguments":{}}
-{"request_id":17,"command":"tick.warp.stop","status":"completed","output":null}
+{"request_id":17,"command":"input.keyboard.press","arguments":{"key":"a"}}
+{"request_id":17,"command":"input.keyboard.press","status":"completed","output":null}
 ```
 
 Eine Command-Ablehnung verwendet dieselbe Request-ID:
 
 ```json
-{"request_id":17,"command":"tick.warp.stop","status":"rejected","error":{"code":"warp_not_running","message":"no tick warp is running"}}
+{"request_id":17,"command":"input.keyboard.press","status":"rejected","error":{"code":"key_already_pressed","message":"keyboard key \"a\" is already pressed"}}
 ```
 
 Eine nicht zuordenbare Nachricht wird getrennt gemeldet:
@@ -682,6 +1401,303 @@ Eine nicht zuordenbare Nachricht wird getrennt gemeldet:
 ```json
 {"request_id":null,"status":"protocol_error","error":{"code":"malformed_request","message":"request ID is missing"}}
 ```
+
+### Ready-Handshake
+
+Die erste Protokollnachricht der Controlled Session ist:
+
+```json
+{"status":"ready","version":3,"capabilities":{"screenshot":true}}
+```
+
+Ready besitzt weder `request_id` noch `command`. `version` muss genau `3` sein.
+`capabilities.screenshot` ist immer als Boolean vorhanden. `false` bedeutet, dass
+`screenshot.capture` in dieser Controlled Session nicht ausführbar ist. Unbekannte zusätzliche
+Felder gehören nicht zu Protokollversion 3.
+
+Ein ungültiger erster Handshake lässt `Session::start` mit `session::Error::Protocol` fehlschlagen
+und räumt den gestarteten Prozess auf. Dabei gelten diese stabilen Codes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_ready` | Ein Feld fehlt, besitzt den falschen JSON-Typ oder die Nachricht enthält ein zusätzliches Feld. |
+| `unsupported_protocol_version` | `version` ist nicht `3`. |
+
+Eine weitere Ready-Nachricht nach dem erfolgreichen Handshake ist der nicht fatale Protokollfehler
+`unexpected_ready`. Die Session läuft weiter und behält den Capability-Snapshot des ersten
+Handshakes.
+
+### Command-Abbildungen
+
+#### Keyboard
+
+`input.keyboard.press` und `input.keyboard.release` besitzen jeweils genau ein String-Argument
+`key`:
+
+```json
+{"request_id":17,"command":"input.keyboard.press","arguments":{"key":"a"}}
+{"request_id":18,"command":"input.keyboard.release","arguments":{"key":"a"}}
+```
+
+Die bestehenden stabilen Tokens aus `keyboard::Key` bleiben der vollständige unterstützte
+Wertebereich. Die Wire-Fixtures decken jedes Token mindestens einmal ab. Beide Commands liefern bei
+Erfolg `output: null`.
+
+Für Keyboard gelten diese Ablehnungscodes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_arguments` | `key` fehlt, ist kein String oder `arguments` enthält ein zusätzliches Feld. |
+| `invalid_key` | `key` ist ein String, aber kein unterstütztes stabiles Keyboard-Token. |
+| `keyboard_window_unavailable` | Es gibt kein oder mehr als ein primäres Fenster. |
+| `key_already_pressed` | Der angegebene Key ist bereits durch Virtual Input gedrückt. |
+| `key_not_pressed` | Der angegebene Key ist nicht durch Virtual Input gedrückt. |
+
+#### Pointer-Bewegung
+
+`input.pointer.move_to` setzt die Position innerhalb des Spielfensters. `input.pointer.move_by`
+verschiebt den Pointer ausgehend von seiner aktuellen Position:
+
+```json
+{"request_id":19,"command":"input.pointer.move_to","arguments":{"position":[320.0,240.0]}}
+{"request_id":20,"command":"input.pointer.move_by","arguments":{"delta":[10.0,-5.0]}}
+```
+
+`position` und `delta` verwenden logische Pixel. Der Ursprung von `position` liegt links oben im
+Spielfenster. Beide Commands liefern bei Erfolg `output: null`. Sie besitzen kein `surface`-Argument.
+
+Eine gültige Zielposition erfüllt `0 <= x < width` und `0 <= y < height` für die logische Größe des
+Spielfensters. `move_to` lehnt eine Position außerhalb dieser Grenzen ab. `move_by` berechnet zuerst
+die Zielposition und lehnt den Command ab, wenn das Ergebnis außerhalb liegt. Eine Ablehnung
+verändert die bisherige Pointer-Position nicht. Positionen werden nicht still auf den Fensterrand
+begrenzt.
+
+Für Pointer-Bewegungen gelten diese Ablehnungscodes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_arguments` | `position` beziehungsweise `delta` fehlt, ist kein Paar endlicher Zahlen oder `arguments` enthält ein zusätzliches Feld. |
+| `pointer_window_unavailable` | Es gibt kein oder mehr als ein Spielfenster. |
+| `pointer_location_unavailable` | `move_by` wurde vor einer bekannten Pointer-Position aufgerufen. |
+| `pointer_position_out_of_bounds` | Die absolute oder berechnete Zielposition liegt außerhalb des Spielfensters. |
+
+#### Pointer-Buttons
+
+`input.pointer.press` und `input.pointer.release` besitzen jeweils genau ein String-Argument
+`button`:
+
+```json
+{"request_id":21,"command":"input.pointer.press","arguments":{"button":"left"}}
+{"request_id":22,"command":"input.pointer.release","arguments":{"button":"left"}}
+```
+
+Die unterstützten Tokens sind `left`, `right` und `middle`. Beide Commands verwenden die aktuelle
+Pointer-Position im Spielfenster und liefern bei Erfolg `output: null`.
+
+Für Pointer-Buttons gelten diese Ablehnungscodes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_arguments` | `button` fehlt, ist kein String oder `arguments` enthält ein zusätzliches Feld. |
+| `invalid_pointer_button` | `button` ist ein String, aber kein unterstütztes Pointer-Button-Token. |
+| `pointer_location_unavailable` | Es ist noch keine Pointer-Position im Spielfenster bekannt. |
+| `pointer_button_already_pressed` | Der angegebene Button ist bereits durch Virtual Input gedrückt. |
+| `pointer_button_not_pressed` | Der angegebene Button ist nicht durch Virtual Input gedrückt. |
+
+#### Pointer-Scroll
+
+`input.pointer.scroll` besitzt genau ein zweidimensionales Argument `delta`:
+
+```json
+{"request_id":23,"command":"input.pointer.scroll","arguments":{"delta":[0.0,-2.0]}}
+```
+
+`delta[0]` ist die horizontale und `delta[1]` die vertikale Bewegung. Beide Werte stehen in
+Bevy-Zeileneinheiten und werden einschließlich ihres Vorzeichens unverändert an Bevy weitergegeben.
+Der Command verwendet die aktuelle Pointer-Position und liefert bei Erfolg `output: null`.
+`[0.0,0.0]` ist als wirkungsloser Command zulässig.
+
+Für Pointer-Scroll gelten diese Ablehnungscodes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_arguments` | `delta` fehlt, ist kein Paar endlicher Zahlen oder `arguments` enthält ein zusätzliches Feld. |
+| `pointer_window_unavailable` | Es gibt kein oder mehr als ein Spielfenster. |
+| `pointer_location_unavailable` | Es ist noch keine Pointer-Position im Spielfenster bekannt. |
+
+#### Text
+
+`input.text.input` besitzt genau ein String-Argument `text`:
+
+```json
+{"request_id":24,"command":"input.text.input","arguments":{"text":"Hello world"}}
+```
+
+Der Command liefert bei Erfolg `output: null`. Ein Text darf höchstens 16.384 UTF-8-Bytes
+enthalten. Die Grenze zählt Bytes, nicht Unicode-Zeichen. Genau 16.384 Bytes werden angenommen,
+16.385 Bytes abgelehnt.
+
+Für Text gelten diese Ablehnungscodes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_arguments` | `text` fehlt, ist kein String oder `arguments` enthält ein zusätzliches Feld. |
+| `text_too_large` | `text` überschreitet 16.384 UTF-8-Bytes. |
+| `text_window_unavailable` | Es gibt kein oder mehr als ein primäres Fenster. |
+| `text_focus_unavailable` | Bevy besitzt keinen eindeutigen lebenden Fokus auf eine mit `EditableText` beschreibbare Entity. |
+
+#### Tick-Warp starten
+
+`tick.warp.start` besitzt das ganzzahlige Argument `ticks` und ein optionales Argument `pace`.
+Ohne `pace` verwendet der Warp die konfigurierte Standard-Pace:
+
+```json
+{"request_id":25,"command":"tick.warp.start","arguments":{"ticks":600}}
+{"request_id":26,"command":"tick.warp.start","arguments":{"ticks":600,"pace":{"kind":"as_fast_as_possible"}}}
+{"request_id":27,"command":"tick.warp.start","arguments":{"ticks":600,"pace":{"kind":"ticks_per_second","target":60.0}}}
+```
+
+Die Response bleibt ausstehend, bis der Warp alle angeforderten Ticks ausgeführt hat oder durch
+`tick.warp.stop` beendet wurde. Der erfolgreiche Output unterscheidet beide Fälle mit `outcome`:
+
+```json
+{"requested_ticks":600,"executed_ticks":600,"outcome":"completed"}
+{"requested_ticks":600,"executed_ticks":42,"outcome":"stopped"}
+```
+
+`ticks` muss größer als null sein. `ticks_per_second.target` muss endlich und größer als null sein.
+
+Für den Warp-Start gelten diese Ablehnungscodes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_arguments` | `ticks` fehlt, ein vorhandenes `pace` besitzt den falschen JSON-Typ oder `arguments` enthält ein zusätzliches Feld. |
+| `invalid_tick_count` | `ticks` hat den Wert `0`. |
+| `invalid_pace` | Die Pace-Variante ist unbekannt oder `target` ist nicht endlich und größer als null. |
+| `warp_already_running` | Es läuft bereits ein Warp. |
+
+#### Tick-Warp-Pace ändern
+
+`tick.warp.set_pace` besitzt genau ein Argument `pace` und verwendet dieselben beiden Pace-Formen wie
+`tick.warp.start`:
+
+```json
+{"request_id":28,"command":"tick.warp.set_pace","arguments":{"pace":{"kind":"as_fast_as_possible"}}}
+{"request_id":29,"command":"tick.warp.set_pace","arguments":{"pace":{"kind":"ticks_per_second","target":60.0}}}
+```
+
+Der Command ändert die konfigurierte Standard-Pace. Während eines laufenden Warp übernimmt er die
+neue Pace sofort für die noch ausstehenden Ticks. Ohne laufenden Warp ändert er nur die
+Standard-Pace. Beide Fälle sind erfolgreich. Die Response wird gesendet, sobald die Pace übernommen
+wurde, und gibt sie im Output zurück:
+
+```json
+{"pace":{"kind":"ticks_per_second","target":60.0}}
+```
+
+Für die Pace-Änderung gelten diese Ablehnungscodes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_arguments` | `pace` fehlt, besitzt den falschen JSON-Typ oder `arguments` enthält ein zusätzliches Feld. |
+| `invalid_pace` | Die Pace-Variante ist unbekannt oder `target` ist nicht endlich und größer als null. |
+
+`warp_not_running` ist kein Fehlercode. Eine Pace-Änderung setzt keinen laufenden Warp voraus.
+
+#### Tick-Warp stoppen
+
+`tick.warp.stop` besitzt ein leeres `arguments`-Objekt:
+
+```json
+{"request_id":30,"command":"tick.warp.stop","arguments":{}}
+```
+
+Wenn ein Warp lief, beendet der Command ihn und liefert:
+
+```json
+{"was_running":true}
+```
+
+Der ursprüngliche `tick.warp.start` erhält danach seinen terminalen Output mit `outcome: "stopped"`.
+Ohne laufenden Warp ist `stop` ein erfolgreicher No-op:
+
+```json
+{"was_running":false}
+```
+
+Der einzige fachliche Ablehnungscode ist `invalid_arguments`, wenn `arguments` nicht leer ist.
+`warp_not_running` ist kein Fehlercode.
+
+#### Inspect-Query
+
+`inspect.query` verwendet die unter "JSON- und Wire-Form" festgelegten Entity- und
+Resource-Argumente. Für Inspect gelten diese fachlichen Ablehnungscodes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_arguments` | Die JSON-Struktur ist ungültig oder ein Feld passt nicht zur gewählten `source`. |
+| `unknown_type_path` | Mindestens ein vom Aufrufer angegebener Type Path lässt sich nicht exakt über Bevys `TypeRegistry` auflösen. |
+| `entity_not_found` | Ein ausdrücklich angegebener Entity-Handle existiert nicht. |
+
+Die Validierung aller Type Paths erfolgt vor dem Lesen der World. Ein Fehler lehnt deshalb die
+gesamte Query ohne Teilergebnis ab. Fehlende Components und Resources sowie nicht registrierte,
+nicht reflektierbare oder nicht serialisierbare Werte bleiben dagegen Teil eines erfolgreichen
+Outputs mit dem passenden `Unavailable`-Grund. Eine Query ohne Treffer ist ebenfalls erfolgreich
+und liefert `{"items":[]}`.
+
+#### Screenshot aufnehmen
+
+`screenshot.capture` besitzt genau ein String-Argument `path`:
+
+```json
+{"request_id":31,"command":"screenshot.capture","arguments":{"path":"screenshots/current.png"}}
+```
+
+Der Command nimmt immer das intern aufgelöste primäre gerenderte Spielfenster auf. Er besitzt kein
+`target`-Argument und kann kein anderes Fenster auswählen.
+
+Die Response wird erst gesendet, nachdem der GPU-Readback abgeschlossen und die PNG-Datei
+vollständig geschrieben wurde:
+
+```json
+{"path":"screenshots/current.png","width":1280,"height":720,"overwritten":false}
+```
+
+`path` bleibt relativ zum Session-Artifact-Verzeichnis. Eine vorhandene Datei wird ersetzt;
+`overwritten` meldet, ob dies geschehen ist. Die Aufnahme führt keinen kontrollierten
+Simulationstick aus.
+
+Für Screenshots gelten diese Ablehnungscodes:
+
+| Code | Bedeutung |
+| --- | --- |
+| `invalid_arguments` | `path` fehlt, ist kein String oder `arguments` enthält ein zusätzliches Feld. |
+| `invalid_screenshot_path` | Der Pfad ist absolut, nicht normalisiert, keine `.png`-Datei oder verlässt einschließlich symbolischer Links das Session-Artifact-Verzeichnis. |
+| `screenshot_window_unavailable` | Es gibt kein oder mehr als ein primäres gerendertes Spielfenster. |
+| `screenshot_unavailable` | Die Screenshot-Capability ist in der Controlled Session nicht installiert. |
+| `screenshot_failed` | GPU-Readback, PNG-Erzeugung oder Schreiben der Datei ist fehlgeschlagen. |
+
+Die konkrete technische Ursache eines `screenshot_failed` steht in `message`. Diese Ursachen
+erhalten keine getrennten stabilen Codes, weil ein Aufrufer auf sie gleich mit Wiederholen oder
+Fehlermeldung reagiert.
+
+#### Shutdown
+
+`shutdown` besitzt ein leeres `arguments`-Objekt:
+
+```json
+{"request_id":32,"command":"shutdown","arguments":{}}
+```
+
+Der erfolgreiche Output ist `null`. Die Controlled Session schreibt und leert die Response, bevor
+sie ihren Prozess beendet. Der einzige fachliche Ablehnungscode auf dem Wire ist
+`invalid_arguments`, wenn `arguments` nicht leer ist.
+
+Die hostseitige Prüfung findet vor dem Wire-Command statt. Solange Requests ausstehen oder ein
+Recording aktiv ist, sendet `Session::shutdown` keinen Shutdown-Request und gibt stattdessen
+`session::Error::ShutdownBlocked` mit `shutdown_commands_pending` oder
+`shutdown_recording_active` zurück. Ein laufender Warp muss vorher beendet oder vollständig
+abgewartet werden. Shutdown stoppt keine Arbeit implizit.
 
 ### Auswirkungen auf den Ist-Stand
 
@@ -733,24 +1749,50 @@ Daraus folgen diese Anforderungen:
   Session über dasselbe Interface an. Es vergibt für jeden angenommenen Command eine
   sessionlokale Request-ID. Bei Wire-Commands wird diese ID in den Protokoll-Request übernommen;
   hostseitige Commands werden unter derselben ID lokal ausgeführt.
+- `send` wartet nur auf die Annahme durch den Koordinator. Eine beendete oder technisch nicht mehr
+  erreichbare Session und erschöpfte Request-IDs verhindern die Annahme; es entstehen weder
+  `Pending` noch ID oder History-Eintrag. Commandspezifische Zustands- und Argumentfehler erhalten
+  dagegen zuerst ein `Pending` und werden später terminal.
+- `RequestId` ist ein opaker, kopierbarer `u64` mit `as_u64` und `Display`. Die Vergabe beginnt bei 1,
+  steigt innerhalb einer Session monoton und verwendet keinen Wert erneut. Interne Replay-Commands
+  verwenden denselben Nummernraum; der Zahlenwert besitzt keine fachliche Reihenfolgesemantik.
+- `u64::MAX` bleibt für den Wire-Shutdown reserviert. Sind die normalen IDs verbraucht, gibt `send`
+  `RequestIdExhausted` zurück. Bereits angenommene Commands laufen weiter und die Session kann den
+  reservierten Wert für einen sauberen Shutdown verwenden.
+- Nach erfolgreichem Start besitzt ein privater Session-Koordinator Kindprozess, Pipes und
+  veränderlichen Session-Zustand. Der synchrone, nicht klonbare `Session`-Handle übergibt ihm
+  Commands und empfängt Ergebnisse und Events über interne Kanäle.
 - `Session::send` wartet nicht auf den Abschluss, sondern liefert eine nach dem erwarteten Output
   typisierte `Pending`-Referenz. Sie stellt die von der Session vergebene Request-ID und den
   zugehörigen Command nur lesend bereit. `try_receive` und `receive` holen das Ergebnis später ab;
   bereits eingetroffene Responses anderer Requests bleiben bis zu deren Abholung erhalten.
-- Controller dürfen beliebig viele Commands einreichen, ohne auf terminale Outcomes früherer
-  Commands zu warten. Die gemeinsame Schicht meldet für jeden gültigen JSON-Command zuerst
-  `pending` mit Request-ID und qualifiziertem Command-Namen. Später folgt genau ein terminales
-  `completed`, `rejected` oder `failed`, ebenfalls mit Request-ID und Command-Namen. Pending-
-  Meldungen folgen der Eingangsreihenfolge; terminale Meldungen dürfen ungeordnet eintreffen.
+- Angenommene Commands und hostseitige Arbeit laufen unabhängig von weiteren Session-Aufrufen. Ein
+  Replay benötigt keine Poll-Schleife des Controllers, um seinen Plan weiter auszuführen.
+- Außerhalb eines exklusiv laufenden Replays dürfen Controller beliebig viele Commands einreichen,
+  ohne auf terminale Outcomes früherer Commands zu warten. Die gemeinsame Schicht meldet für jeden
+  gültigen JSON-Command zuerst `pending` mit Request-ID und qualifiziertem Command-Namen. Später
+  folgt genau ein terminales `completed`, `rejected` oder `failed`, ebenfalls mit Request-ID und
+  Command-Namen. Pending-Meldungen folgen der Eingangsreihenfolge; terminale Meldungen dürfen
+  ungeordnet eintreffen.
+- Auch ein commandspezifisch unzulässiger Command, etwa während eines exklusiven Replays, ist bereits
+  angenommen. Er erhält `pending` und danach ein terminales `rejected` mit dem zutreffenden stabilen
+  Code.
+- Während eines Replays nimmt das öffentliche Session-Interface von einem Controller nur
+  `Replay::Stop` an. Die interne Replay-Ausführung reicht ihre Plan-Commands weiterhin durch
+  denselben gemeinsamen Ausführungspunkt und erhält für jeden davon ein normales `Pending`.
 - `try_receive` blockiert nicht und liefert `Ok(None)`, solange genau dieses `Pending` noch kein
-  Ergebnis besitzt. `receive` wartet auf genau dieses `Pending`. Beide Methoden verarbeiten
-  währenddessen auch andere eintreffende Responses und bewahren deren Ergebnisse für die
-  zugehörigen `Pending`-Referenzen auf.
+  Ergebnis besitzt. Die Methode prüft nur bereits verfügbare interne Nachrichten und führt keine
+  blockierende Datei-, Prozess- oder Netzwerkoperation aus. `receive` wartet auf genau dieses
+  `Pending`, während der Koordinator andere Responses, Events und hostseitige Arbeit weiter
+  verarbeitet. Ergebnisse anderer Requests bleiben für ihre `Pending`-Referenzen erhalten.
 - Wird ein `Pending` fallengelassen, verliert der Aufrufer ausschließlich den späteren Zugriff auf
   dessen Ergebnis. Der bereits gestartete Command wird nicht abgebrochen und erhält keinen
   versteckten Stop- oder Ausgleichs-Command. Die Session korreliert eine spätere Response weiterhin,
-  schließt den History-Eintrag ab und darf den nicht mehr abrufbaren Output danach verwerfen.
-- Nach `try_receive` mit `Some(output)` ist das geliehene `Pending` terminal ausgelesen. Eine weitere
+  schließt den History- und einen aktiven Recording-Eintrag ab und darf den nicht mehr abrufbaren
+  Output danach verwerfen. Bis zum terminalen Ergebnis bleibt der Command auch für Shutdown
+  ausstehend.
+- Nach `try_receive` mit `Some(output)` oder einem terminalen `Rejected`-, `Protocol`- oder
+  commandbezogenen `Io`-Fehler ist das geliehene `Pending` terminal ausgelesen. Eine weitere
   Verwendung dieses `Pending` oder die Verwendung eines `Pending` mit einer anderen Session ergibt
   `session::Error::InvalidPending`. `receive` konsumiert das `Pending`, sodass eine erneute
   Verwendung bereits durch Rust ausgeschlossen ist.
@@ -765,18 +1807,55 @@ Daraus folgen diese Anforderungen:
   späteren Report in dessen Kontext übernommen und beendet die Session nicht.
 - Fehlt einer Protokollfehlermeldung eine bekannte Request-ID, bleiben alle ausstehenden Requests
   offen. Die Session erhält die Meldung unabhängig von der Command-Historie.
-- Endet der Transport oder die Controlled Session, werden alle noch ausstehenden Commands in der
-  History als `Unanswered` markiert. Wartende Aufrufer erhalten `session::Error::Ended`.
-- `session::history::Outcome` unterscheidet deshalb `Completed`, `Rejected`, `ProtocolFailed` und
-  `Unanswered`. Keines dieser Outcomes speichert die Wire-Request-ID.
+- Die Session hält die letzten 50 angenommenen Commands in einem Ring. Jeder Eintrag entsteht bei
+  der Annahme als `Unanswered` und wird an derselben Position terminal ergänzt. Später eintreffende
+  Responses verändern die Annahmereihenfolge nicht.
+- Wire-Commands, Recording- und Replay-Steuerung, intern vom Replay ausgeführte Plan-Commands und der
+  angenommene Shutdown gehören in die History. Vor der Annahme fehlgeschlagene Aufrufe, Events,
+  Reports und interne Koordinatornachrichten gehören nicht hinein.
+- Die aktive Command-Tabelle bleibt vom History-Ring getrennt. Ein älterer laufender Command kann aus
+  dem Ring fallen, bleibt aber bis zur Korrelation empfangbar, für Shutdown ausstehend und für ein
+  aktives Recording verfügbar.
+- Endet der Transport oder die Controlled Session, bleiben alle noch nicht terminalen Commands in
+  der History `Unanswered`. Wartende Aufrufer erhalten `session::Error::Ended`.
+- `session::history::Outcome` unterscheidet `Completed`, `Rejected`, `ProtocolFailed`, `IoFailed` und
+  `Unanswered`. `IoFailed` erhält die Meldung eines bekannten commandbezogenen Datei- oder
+  Flush-Fehlers. Keines dieser Outcomes speichert die Wire-Request-ID.
+- `Session` gibt die laufende History nicht über einen öffentlichen Accessor frei. Die öffentlichen
+  Typen `history::Entry` und `history::Outcome` erscheinen ausschließlich im begrenzten
+  `report::Context`; eine vollständige dauerhafte Aufzeichnung bleibt Aufgabe des Recordings.
+- [ADR-0013](../adr/0013-session-history-is-a-bounded-report-window.md) hält Aufbewahrung,
+  Reihenfolge und Sichtbarkeit der History fest.
 - Sessionweite Ereignisse werden ohne Callbacks in einer internen Queue gepuffert.
   `Session::try_receive_event` fragt sie nicht blockierend ab; `Session::receive_event` wartet auf
-  das nächste Ereignis. `session::Event` unterscheidet `ProtocolError { code, message }` und
-  `Ended`.
+  das nächste Ereignis. `session::Event` unterscheidet `ProtocolError { code, message }`,
+  `RecordingFailed { path, message }`, `Failure { failure }`,
+  `ObservationError { code, message }` und `Ended { reason }`.
+- `EndReason` unterscheidet `ProcessExit { status }`, `TransportClosed { channel }`,
+  `TransportFailed { channel, message }` und
+  `EventQueueOverflow { capacity, dropped_events }`. `TransportChannel` unterscheidet stdin, stdout
+  und stderr.
 - Eine Protokollfehlermeldung ohne bekannte Request-ID erzeugt `Event::ProtocolError`, ohne offene
   Requests zu schließen. Ein unerwartetes Prozess- oder Transportende erzeugt genau einmal
-  `Event::Ended` und schließt alle offenen `Pending` mit `Error::Ended`. Nach Entnahme des
-  terminalen Events ergeben weitere Empfangsoperationen `Error::Ended`.
+  `Event::Ended` und schließt alle offenen `Pending` mit `Error::Ended`. Zuvor leert die Session
+  stdout und stderr vollständig und reiht daraus entstehende `Failure`- oder `ObservationError`-
+  Events vor `Ended` ein. Nach Entnahme des terminalen Events ergeben weitere Empfangsoperationen
+  `Error::Ended`.
+- Ein unerwarteter Prozessstatus erzeugt auch bei Status 0 `EndReason::ProcessExit`. Schließt ein
+  benötigter Transportkanal bei noch laufendem Prozess, bleibt der Transportgrund primär; der
+  Koordinator beendet und sammelt den Prozess, ohne aus diesem eigenen Abbruch einen
+  `ProcessExit`-Report zu erzeugen.
+- Bereits vor dem Session-Ende terminal eingetroffene Command-Ergebnisse bleiben einmal über ihr
+  `Pending` abrufbar. Nur noch offene Commands liefern `Error::Ended` und bleiben in der History
+  `Unanswered`.
+- Die Queue fasst 256 normale Events und reserviert einen zusätzlichen Platz für `Ended`. Bei
+  Überlauf nimmt der Koordinator keine Commands mehr an, beendet den Prozess und zählt weitere
+  verlorene Events. Nach den gespeicherten Events folgt `EventQueueOverflow`; dieser Host-Abbruch
+  erzeugt keinen Report. Die Kapazität ist nicht konfigurierbar.
+- Erfolgreicher `Session::shutdown` und Drop erzeugen kein `Ended`-Event. Nach erfolgreichem Shutdown
+  ergeben alle weiteren Session-Operationen einschließlich eines zweiten Shutdowns `Error::Ended`.
+- [ADR-0014](../adr/0014-session-end-is-a-terminal-typed-event.md) hält Endgründe, Event-Reihenfolge
+  und Überlastungsverhalten fest.
 - `ProtocolFailed` löst allein keinen Report aus. Der wartende Aufrufer erhält
   `session::Error::Protocol`, und die History bewahrt das Command-Outcome. Entsteht später durch
   einen Panic, einen aktivierten Tracing-Error oder ein unerwartetes Prozessende ein Report, wird
@@ -786,7 +1865,9 @@ Daraus folgen diese Anforderungen:
 
 - Das Ziel besitzt kein `session::controller`-Modul, keinen `ControllerSession`-Wrapper und kein
   allgemeines `Controller`-Trait. `session::Session` ist der gemeinsame Command-Ausführungsweg und
-  kennt nicht, ob ein Mensch, Script oder Replay die Commands sendet.
+  kennt keine menschliche, agentische oder geskriptete Controller-Identität. Es unterscheidet nur
+  die intern freigegebenen Plan-Commands eines exklusiven Replays von weiteren öffentlichen
+  `send`-Aufrufen.
 - `session::Session` übernimmt aus dem bisherigen Controller nur allgemeine Session-Verantwortung:
   Start und Handshake, Command-Ausführung, Request-Korrelation, History, Recording, Capabilities,
   Session-Events, Shutdown und Prozesslebenszyklus.
@@ -799,8 +1880,8 @@ Daraus folgen diese Anforderungen:
   ursprünglichen Array-Positionen. Es verwendet `session::Session` direkt und erhält keinen
   gemeinsamen Wrapper mit der REPL.
 - `command::replay` besitzt das Lesen der Recording-Einträge, deren Ausführung über die bestehende
-  Session, Outcome-Vergleiche, Stop und Abschlussstatus. Replay startet keine eigene Controlled
-  Session mehr.
+  Session, Stop und Abschlussstatus. Replay startet keine eigene Controlled Session mehr und
+  vergleicht aufgezeichnete Outcomes nicht mit den neu entstandenen Outcomes.
 - Die bisherigen gemeinsamen Typen `ControllerError`, `Action`, `PointerAction`, `KeyboardAction`,
   `Observation`, `Status` und `SurfaceSize` werden nicht als Session-Typen übernommen. Jeder
   konkrete Controller besitzt nur die Darstellung und Fehler, die sein Interface benötigt.
@@ -817,10 +1898,13 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
 
 - `session::Session` besitzt genau eine laufende Controlled Session, deren Transport, ausstehende
   Commands und Prozesslebenszyklus.
+- `Session` ist der synchrone, nicht klonbare Handle zu einem privaten Koordinator. Das öffentliche
+  Interface setzt keine Async-Runtime und keinen bestimmten Executor voraus.
 - `Session::start(config)` validiert die Session- und Launch-Konfiguration, startet den Cargo-
-  Prozess, bindet stdin, stdout und stderr an und wartet auf den Ready-Handshake. Eine nutzbare
-  `Session` wird erst zurückgegeben, nachdem eine gültige `Ready`-Nachricht mit der erwarteten
-  Protokollversion als erste Protokollnachricht verarbeitet wurde.
+  Prozess sowie den Koordinator, bindet stdin, stdout und stderr an und wartet auf den
+  Ready-Handshake. Eine nutzbare `Session` wird erst zurückgegeben, nachdem eine gültige
+  `Ready`-Nachricht mit der erwarteten Protokollversion als erste Protokollnachricht verarbeitet
+  wurde.
 - Der Session-Start besitzt keinen eingebauten Timeout. Insbesondere darf eine erstmalige Cargo-
   Kompilierung beliebig lange dauern, solange der Prozess weder endet noch eine ungültige erste
   Protokollnachricht sendet.
@@ -833,17 +1917,18 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
   Session unverändert; eine spätere Änderung des World-Zustands verändert ihn nicht.
 - `session::Capabilities` besitzt zunächst nur `screenshot: bool`. Weitere Felder entstehen erst für
   eine weitere konkrete optionale Funktion.
-- `session::Error` unterscheidet `InvalidConfig`, `Launch`, `Io`, `InvalidPending`, `Rejected`,
-  `Protocol` und `Ended`. Die Varianten sind die öffentlichen Fehlergruppen; genauere
-  Betriebssystemfehler und
-  Prozessdiagnosen bleiben Implementierungs- beziehungsweise Beobachtungsdaten.
+- `session::Error` unterscheidet `InvalidConfig`, `Launch`, `Io`, `InvalidPending`,
+  `RequestIdExhausted`, `ShutdownBlocked`, `Rejected`, `Protocol` und `Ended`. Die Varianten sind die
+  öffentlichen Fehlergruppen; genauere Betriebssystemfehler und Prozessdiagnosen bleiben
+  Implementierungs- beziehungsweise Beobachtungsdaten.
 - `InvalidConfig` wird vor dem Prozessstart für ungültige Session- oder Launch-Konfigurationen
   zurückgegeben. `Launch` bedeutet, dass Cargo nicht gestartet werden konnte oder der gestartete
   Prozess ohne Protokollverletzung keinen gültigen Ready-Handshake erreichte. Ein ungültiger
   Handshake oder eine falsche Protokollversion ist stattdessen `Protocol`.
-- `Io` bezeichnet eine fehlgeschlagene Betriebssystemoperation bei Prozess- oder Transportzugriff.
-  Ein Transportende ist davon getrennt: vor dem Ready-Handshake verhindert es den Launch, nach dem
-  Handshake beendet es die Session mit `Ended`.
+- `Io` bezeichnet eine fehlgeschlagene Betriebssystemoperation beim Start oder bei einer
+  commandbezogenen hostseitigen Dateioperation. Ein Fehler oder EOF auf einem benötigten
+  Transportkanal ist davon getrennt: vor dem Ready-Handshake verhindert er den Launch, nach dem
+  Handshake beendet er die Session mit `Ended`.
 - `Rejected { code, message }` erhält eine fachliche Command-Ablehnung. `Protocol { code, message }`
   erhält einen einem Aufruf zugeordneten Protokollfehler einschließlich einer nicht als erwarteter
   Output dekodierbaren erfolgreichen Response.
@@ -854,23 +1939,35 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
 - Eine weitere `Ready`-Nachricht nach erfolgreichem Start ist ein nicht fataler Session-
   Protokollfehler. Sie erzeugt `Event::ProtocolError` mit dem stabilen Code `unexpected_ready` und
   verändert die beim ersten Handshake gespeicherten Capabilities nicht.
-- `Session::shutdown(&mut self)` beginnt nur, wenn keine Requests mehr ausstehen und kein Recording
-  aktiv ist. Andernfalls wird der Shutdown abgelehnt, ohne die Session zu verändern. Ein laufender
-  Warp oder ein laufendes Replay muss ausdrücklich gestoppt oder vollständig empfangen und ein
-  aktives Recording ausdrücklich mit `recording::Stop` beendet werden; Shutdown sendet keine versteckten Stop-
-  Commands.
+- `Session::shutdown(&mut self)` beginnt nur, wenn keine Requests mehr ausstehen und der Recorder
+  `Idle` ist. Andernfalls liefert es `ShutdownBlocked` mit `shutdown_commands_pending` oder
+  `shutdown_recording_active`, ohne die Session zu verändern. Ein laufender Warp oder ein laufendes
+  Replay muss ausdrücklich gestoppt oder vollständig empfangen und ein aktives Recording
+  ausdrücklich mit `recording::Stop` beendet werden; Shutdown sendet keine versteckten
+  Stop-Commands.
+- Ein blockierter Shutdown sendet keinen Wire-Request, verbraucht die reservierte Shutdown-ID nicht
+  und erzeugt keinen History-Eintrag. Nicht abgeholte Events, vorhandene History und erschöpfte
+  normale Request-IDs blockieren ihn nicht.
+- Nach Annahme des Wire-Shutdowns ist jeder Ausgang terminal. Nur eine gültige
+  `completed`-Response mit `output: null` und ein anschließend erfolgreicher Prozessstatus ergeben
+  `Ok(())`. Ablehnung und Protokollfehler werden direkt zurückgegeben; ein selbstständiges Prozess-
+  oder Transportende ergibt `Ended`. Die Session räumt den Kindprozess in jedem Fall auf und erlaubt
+  keinen zweiten Versuch mit der reservierten ID.
 - Nach erfolgreichem Shutdown ist die Session beendet und weitere Operationen ergeben
   `Error::Ended`. Die Verwendung von `&mut self` statt eines konsumierenden Shutdowns verhindert,
-  dass eine Ablehnung durch anschließenden Drop trotzdem einen harten Abbruch verursacht.
+  dass eine Blockierung durch anschließenden Drop trotzdem einen harten Abbruch verursacht.
+- Shutdown besitzt keinen eingebauten Timeout. Ein später benötigtes Zeitlimit bleibt eine
+  ausdrückliche Host-Policy.
 - Wird `Session` ohne erfolgreichen `shutdown` fallengelassen, führt Drop keinen fachlich sauberen
-  Abschluss aus.
-  Drop schließt die Pipes, beendet die Prozessgruppe und sammelt den Kindprozess ein, damit keine
-  Prozesse zurückbleiben. Es sendet keinen Shutdown- oder Stop-Command, wartet
-  nicht auf ausstehende Commands und garantiert weder vollständige Outcomes noch Recording-
-  Abschluss, Report-Erzeugung oder Provider-Ausführung.
+  Abschluss aus. Drop fordert den Koordinator zum Abbruch auf. Dieser schließt die Pipes, beendet die
+  Prozessgruppe und sammelt den Kindprozess ein, damit keine Prozesse zurückbleiben. Er sendet keinen
+  Shutdown- oder Stop-Command, wartet nicht auf ausstehende Commands und garantiert weder
+  vollständige Outcomes noch Recording-Abschluss, Report-Erzeugung oder Provider-Ausführung.
 - Eine durch Session-Drop veranlasste Prozessbeendigung ist kein unerwarteter Anwendungsfehler und
   löst keinen Report aus. Wer einen sauberen Session-Abschluss benötigt, muss ausdrücklich
   `shutdown` aufrufen.
+- [ADR-0017](../adr/0017-session-errors-have-local-or-terminal-scope.md) hält den lokalen oder
+  terminalen Geltungsbereich jeder Fehlergruppe, die Shutdown-Grenze und die Drop-Folgen fest.
 - Der aktuelle `DriverError::RequestFailed(Response)` wird zu `Rejected { code, message }`.
   `DriverError::Child` entfällt: Vor einem gültigen Ready wird ein entsprechendes Prozessende zu
   `Launch`, danach zu `Ended`. Die bisherigen freien `Launch`, `Io` und `Protocol`-Meldungen werden
@@ -885,6 +1982,12 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
 - `session::launch` besitzt die Cargo-Konfiguration zum Start genau einer Controlled Session.
   `session::Config` verwendet sie über das Feld `launch: launch::Config`; die Launch-Felder werden
   nicht direkt in die übrige Session-Konfiguration verteilt.
+- `launch::Config::manifest_path` nennt verpflichtend ein Cargo-Package- oder Workspace-Manifest.
+  `Session::start` löst einen relativen Wert gegen das aktuelle Arbeitsverzeichnis des aufrufenden
+  Prozesses auf, verlangt eine vorhandene reguläre Datei und speichert den kanonischen Pfad.
+- Der kanonische Elternordner des konfigurierten Manifests ist der unveränderliche `project_dir` der
+  Session. `cargo metadata` und `cargo run` erhalten `--manifest-path`; `cargo run` verwendet
+  `project_dir` als Arbeitsverzeichnis.
 - Eine Controlled Session wird ausschließlich mit `cargo run` gestartet. Beliebige Executables,
   Shell-Kommandos und andere Cargo-Unterkommandos wie `build`, `test` oder `bench` gehören nicht zum
   Ziel-Interface.
@@ -896,12 +1999,14 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
   `default-run` noch das einzige vorhandene Binary implizit aus.
 - `features` aktiviert die angegebenen Cargo-Features für den Launch. `arguments` enthält
   ausschließlich Argumente für die gestartete Anwendung und wird hinter `--` an sie übergeben.
-- `session::launch` validiert Package und Target, bevor ein Prozess gestartet wird. Das Erzeugen des
-  konkreten `std::process::Command` bleibt Implementierung und ist kein öffentliches Interface.
+- `session::launch` validiert Manifest, Package und Target, bevor ein Prozess gestartet wird. Das
+  Erzeugen des konkreten `std::process::Command` bleibt Implementierung und ist kein öffentliches
+  Interface.
 
 #### Auswirkungen auf den Ist-Stand
 
 - `session::launch::Spec` wird zu `session::launch::Config`.
+- Der bisher implizite Projektbezug über das Arbeitsverzeichnis wird durch `manifest_path` ersetzt.
 - Die getrennten Felder `kind` und `target` werden durch `launch::Target::{Binary, Example}` mit dem
   jeweils zugehörigen Namen ersetzt.
 - `Spec::command` entfällt aus dem öffentlichen Interface. Die interne Session-Prozessverwaltung
@@ -916,6 +2021,12 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
   Das Ziel besitzt kein zusätzliches öffentliches Host-Konfigurationsmodell.
 - `session::Config` enthält genau `launch: launch::Config`, ein konkretes
   `artifact_dir: PathBuf`, `tick: command::tick::Config` und `report: report::Config`.
+- `artifact_dir` bezeichnet das einzige Artifact-Root für Screenshot, Recording und Report. Ein
+  relativer Wert wird gegen `project_dir` aufgelöst. Ein absoluter Root und ein Root außerhalb des
+  Projekts bleiben erlaubt.
+- `Session::start` lehnt einen leeren Root und einen Root, der selbst ein Symlink ist, als
+  `InvalidConfig` ab. Es legt einen fehlenden Root an, kanonisiert ihn und hält den absoluten Pfad
+  während der Session unverändert. Fehler beim Anlegen oder Kanonisieren ergeben `Io`.
 - `command::tick::Config` besitzt ausschließlich die Standard-Pace für Warps. Die Zeitkonfiguration
   der Anwendung gehört nicht zur Session-Konfiguration.
 - Der private Host-Config-Parser liest diese vollständige `session::Config` aus dem Feld `session`
@@ -923,6 +2034,7 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
   ersetzt ihn vor `Session::start`. Danach besitzt nur die gestartete Session den wirksamen Pfad.
 - Screenshot-, Recording- und Report-Pfade sind relativ zu diesem Session-Artifact-Verzeichnis und
   dürfen es nicht verlassen.
+- Der absolute Projekt-, Manifest- und Artifact-Pfad bleibt aus `report::Context` ausgeschlossen.
 - Recording wird über die öffentlichen Recording-Commands gesteuert und besitzt kein Feld in
   `session::Config`.
 - Das Ziel besitzt keinen eigenständigen `session::Context`. `Session` hält ihren Zustand nur einmal
@@ -933,8 +2045,13 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
 - Session Recordings verwenden keinen gemeinsamen `session::Context`. Falls das Recording-Format
   später eigene Anwendungs- oder Session-Metadaten benötigt, werden sie anhand seiner konkreten
   Format- und Diagnoseanforderungen geplant.
-- `OPEN`: Die Anwendungs- und Session-Angaben in `report::Context` sowie die Ermittlung der
-  Anwendungsversion festlegen.
+- Die Session hält intern die wirksame Launch- und Tick-Konfiguration, die durch Cargo aufgelöste
+  Package-Version, optionale Git- und Toolchain-Angaben, Plattformdaten, die bestätigten
+  Handshake-Werte und die korrelierte Command-Historie. Diese Daten werden nicht als zweites
+  öffentliches Session-Modell abgebildet.
+- `Report::create` kopiert daraus die unter "Report-Kontext" festgelegte Auswahl. Die
+  Context-Momentaufnahme enthält höchstens 50 History-Einträge und keine absoluten Pfade,
+  Umgebungsvariablen oder Wire-Request-IDs.
 
 ### Controlled-Session-Integration
 
@@ -947,6 +2064,12 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
 - Nach Abschluss der Bevy-Plugin-Initialisierung prüft die Controlled-Session-Integration die
   tatsächlich installierten optionalen Funktionen und sendet das Ergebnis mit `Ready`. Sie meldet
   fachliche Capabilities und legt weder Bevy-Plugin-Namen noch ihre Erkennungslogik offen.
+- Die Host-Seite überschreibt für den Kindprozess die reservierte interne Umgebungsvariable
+  `BUG_HUNTER_ARTIFACT_DIR` mit dem kanonischen Artifact-Root. `session::Plugin` liest sie einmal vor
+  dem Ready-Handshake. Ein fehlender oder ungültiger Wert verhindert Ready und ergibt hostseitig
+  `session::Error::Launch`.
+- Die Artifact-Umgebungsvariable ist kein öffentliches Konfigurationsinterface, keine Capability und
+  kein Feld des v3-Protokolls.
 - Die Controlled-Session-Integration startet keinen Renderer und führt keinen öffentlichen Modus
   für rendererfreie oder gerenderte Sessions ein. Rendererabhängige Prüfungen bleiben bei den
   betroffenen Funktionen. Ein späterer rendererfreier Anwendungsfall kann deshalb dieselbe Session-
@@ -957,8 +2080,16 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
 - Die Controlled-Session-Seite liest intern stdin und schreibt stdout. Die Debug-Host-Seite besitzt
   intern die entsprechenden Pipes des Kindprozesses. Beide Seiten teilen nur den Codec und die
   Nachrichtentypen aus `session::protocol`, nicht eine gemeinsame Ein-/Ausgabeabstraktion.
+- Ein privater Leser nimmt stdin-Nachrichten entgegen, ohne den Bevy-Event-Loop zu blockieren, und
+  übergibt dekodierte Requests an die Bevy-Seite. Ausschließlich Systeme im Bevy-Event-Loop greifen
+  auf den `World` zu.
+- Lang laufende Arbeit erhält pro Event-Loop-Durchlauf ein begrenztes Budget. Ein einzelner interner
+  stdout-Writer serialisiert Ready, Responses und Protokollfehler als vollständige
+  JSONL-Nachrichten.
 - In-Memory-Ein-/Ausgabe bleibt als private oder crate-interne Test-Seam zulässig. Ein Testadapter
   allein begründet kein öffentliches Transport-Interface.
+- [ADR-0011](../adr/0011-session-progresses-on-a-private-coordinator.md) hält das Fortschritts- und
+  Nebenläufigkeitsmodell fest.
 - Die aktuellen öffentlichen Typen `client::transport::{Input, JsonLinesInput, Output,
   StdoutOutput}`, `InputFactory` und die öffentliche Plugin-Konfiguration `with_io` entfallen. Falls
   später eine echte Einbettung ohne Prozessgrenze hinzukommt, wird deren Interface anhand dieses
@@ -967,6 +2098,11 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
   Die bisherigen Konstruktoren `rendered_stdio` und `logical_stdio` entfallen zusammen mit dem
   öffentlichen Session-Modus. Der bisherige Top-Level-Re-Export `AutomationControlPlugin` wird
   nicht als Kompatibilitätsalias fortgeführt.
+- `session::tracing_error_layer` liefert einen `bevy::log::BoxedLayer` für
+  `LogPlugin::custom_layer`. Bevy baut ihn damit vor der einmaligen globalen
+  Subscriber-Installation ein, sodass er Error-Events unabhängig vom gewählten Formatter
+  beobachtet. Verwendet die Anwendung bereits einen eigenen Custom Layer oder Subscriber, muss sie
+  beide Layer vor dieser Installation ausdrücklich zusammensetzen.
 - Die interne Verwaltung mehrerer laufender Commands im Bevy-Event-Loop wird während der
   Implementation entworfen. Sie muss neue Requests zwischen begrenzten Arbeitsabschnitten
   verarbeiten und darf den Bevy World nicht von einem unkontrollierten Hintergrundthread aus
@@ -1052,6 +2188,9 @@ Die folgenden Punkte legen die Host-Fassade und ihre interne Aufgabenverteilung 
   darf weitere Eingabezeilen lesen und einreichen, während beliebig viele frühere Commands noch
   ausstehen. Ein laufender Warp blockiert daher weder weitere Agent-Eingaben noch Outcomes anderer
   Commands.
+- Während eines exklusiven Replays bleibt der Agent lesebereit, kann über `Session::send` aber nur
+  `Replay::Stop` einreichen. Andere Commands werden nicht zwischen Replay-Plan und Tick-Grenzen
+  eingefügt.
 - Für jeden angenommenen Command gibt stdout zuerst eine `pending`-Meldung mit der von `Session`
   vergebenen Request-ID und dem qualifizierten Command-Namen aus. Später folgt genau eine
   `completed`-, `rejected`- oder `failed`-Meldung mit derselben ID und demselben Command-Namen.
@@ -1091,6 +2230,9 @@ Die Agent-Form folgt diesem Muster:
 - Die REPL sendet Session-Commands grundsätzlich nicht blockierend und bleibt bei ausstehenden
   Commands ansprechbar. Insbesondere kann sie die Pace eines laufenden Warp ändern, ihn stoppen
   sowie Recording und Replay innerhalb derselben Session starten und stoppen.
+- Während eines exklusiven Replays bleibt die REPL ansprechbar, lässt als Session-Command jedoch nur
+  `replay stop` zu. Erst nach `completed`, `stopped` oder `blocked` kann sie wieder andere Commands
+  einreichen.
 - Die REPL übersetzt jede gültige menschliche Eingabe in denselben qualifizierten Command-Namen und
   dasselbe `arguments`-Objekt, die Agent und Script verwenden. Sie erzeugt keine eigene
   Command-Darstellung und vergibt keine eigene Anzeigenummer.

@@ -54,12 +54,10 @@ mod command {
                     button: PointerButton,
                 },
                 MoveTo {
-                    surface: Option<Handle>,
-                    motion: [f32; 2],
+                    position: [f32; 2],
                 },
                 MoveBy {
-                    surface: Option<Handle>,
-                    motion: [f32; 2],
+                    delta: [f32; 2],
                 },
                 Scroll {
                     delta: [f32; 2],
@@ -282,8 +280,6 @@ mod command {
     pub mod screenshot {
         pub enum Command {
             Capture {
-                target: Option<Handle>,
-
                 path: String,
             },
         }
@@ -323,23 +319,25 @@ mod command {
     }
 
     pub mod replay {
+        // Start lädt die Recording vollständig und bildet daraus einen internen Replay-Plan.
+        // Gestoppte Warps werden auf ihre tatsächlich ausgeführten Ticks verkürzt; unmittelbar
+        // aufeinanderfolgende kompatible Warps dürfen zusammengefasst werden.
+        // Während Preparing, Running und Stopping ist von außen nur Stop zulässig.
         pub enum Command {
             Start { path: String },
             Stop,
         }
 
         pub enum Output {
+            // Antwort auf Start, nachdem der Plan vollständig beendet wurde.
             Finished(Completion),
 
+            // Antwort auf Stop, nachdem alle bereits gesendeten Commands terminal sind.
             Stopped { was_running: bool },
         }
 
         pub struct Completion {
-            pub recorded_commands: u64,
-            pub attempted_commands: u64,
             pub outcome: Outcome,
-            // OPEN: Festlegen, wie Replay-Abweichungen nach Planung des Reporting-Interfaces
-            // zugänglich gemacht werden.
         }
 
         pub enum Outcome {
@@ -347,7 +345,9 @@ mod command {
 
             Stopped,
 
-            Blocked,
+            // Stabile Codes: command_protocol_failed, session_io_failed, session_ended,
+            // request_id_exhausted, stop_failed.
+            Blocked { code: String, message: String },
         }
 
         impl Request for Command {
@@ -358,15 +358,15 @@ mod command {
 
 mod report {
     pub struct Report {
-        pub title: String,
-        pub failure: Failure,
-        pub signature: Signature,
-        pub context: Context,
+        title: String,
+        failure: Failure,
+        signature: Signature,
+        context: Context,
     }
 
     pub struct Failure {
-        pub origin: Origin,
-        pub message: String,
+        origin: Origin,
+        message: Option<String>,
     }
 
     pub enum Origin {
@@ -379,11 +379,12 @@ mod report {
         },
         TracingError {
             target: Option<String>,
+            location: Option<Location>,
         },
     }
 
     pub struct Signature {
-        pub value: String,
+        value: String,
     }
 
     pub struct Location {
@@ -393,62 +394,172 @@ mod report {
     }
 
     pub struct Context {
-        // OPEN: Die für Diagnose und Reproduktion notwendigen Anwendungs- und
-        // Session-Angaben festlegen. Dieser Typ gehört ausschließlich zum Report und wird
-        // bei dessen Erzeugung aus der laufenden Session zusammengestellt.
+        pub application: Application,
+        pub bug_hunter_version: String,
+        pub protocol_version: u32,
+        pub capabilities: crate::session::Capabilities,
+        pub tick: crate::command::tick::Config,
+        pub platform: Platform,
+        pub toolchain: Toolchain,
         pub commands: Vec<crate::session::history::Entry>,
+    }
+
+    pub struct Application {
+        pub package: String,
+        pub version: String,
+        pub target: crate::session::launch::Target,
+        pub features: Vec<String>,
+        pub arguments: Vec<String>,
+        pub source: Option<SourceRevision>,
+    }
+
+    pub struct SourceRevision {
+        pub commit: String,
+        pub dirty: bool,
+    }
+
+    pub struct Platform {
+        pub os: String,
+        pub arch: String,
+    }
+
+    pub struct Toolchain {
+        pub cargo: Option<String>,
+        pub rustc: Option<String>,
     }
 
     pub struct Config {
         pub tracing_errors: bool,
-        pub output: String,
+        pub output: std::path::PathBuf,
         pub provider: provider::Config,
     }
 
     impl Report {
         pub fn create(failure: Failure, session: &crate::session::Session) -> Self;
+
+        pub fn title(&self) -> &str;
+
+        pub fn failure(&self) -> &Failure;
+
+        pub fn signature(&self) -> &Signature;
+
+        pub fn context(&self) -> &Context;
+
+        pub fn to_markdown(&self) -> String;
+    }
+
+    impl Failure {
+        pub fn panic(
+            message: Option<String>,
+            location: Option<Location>,
+            backtrace: Option<String>,
+        ) -> Self;
+
+        pub fn process_exit(status: String) -> Self;
+
+        pub fn tracing_error(
+            message: String,
+            target: Option<String>,
+            location: Option<Location>,
+        ) -> Self;
+
+        pub fn origin(&self) -> &Origin;
+
+        pub fn message(&self) -> Option<&str>;
+    }
+
+    impl Signature {
+        pub fn as_str(&self) -> &str;
     }
 
     pub fn submit(
         report: &Report,
-        config: &Config,
-        session_artifact_dir: &str,
+        session: &crate::session::Session,
     ) -> Result<provider::Outcome, Error>;
 
     pub enum Error {
-        // OPEN: Die genaue Liste der Provider- und Persistenzfehler mit der Implementation planen.
+        Local(provider::local::Error),
+        FallbackFailed {
+            provider: provider::Error,
+            local: provider::local::Error,
+        },
     }
 
     pub mod provider {
+        pub enum Error {
+            Github(github::Error),
+        }
+
         pub enum Config {
             Local(local::Config),
             Github(github::Config),
         }
 
+        pub struct FileReference {
+            pub path: std::path::PathBuf,
+        }
+
         pub enum Reference {
-            File { path: String },
+            File(FileReference),
             Issue { identifier: String, url: String },
         }
 
         pub enum Outcome {
             Created { reference: Reference },
             Existing { reference: Reference },
+            Fallback {
+                reference: FileReference,
+                provider_error: Error,
+            },
         }
 
         pub mod local {
             pub struct Config {}
+
+            pub enum Error {
+                InvalidPath {
+                    path: std::path::PathBuf,
+                },
+                Conflict {
+                    path: std::path::PathBuf,
+                },
+                Filesystem {
+                    operation: Operation,
+                    path: std::path::PathBuf,
+                    message: String,
+                },
+            }
+
+            pub enum Operation {
+                Read,
+                Write,
+            }
         }
 
         pub mod github {
-            pub struct Config {
-                // OPEN: Notwendige Repository- und Veröffentlichungseinstellungen festlegen.
+            pub struct Config {}
+
+            pub enum Error {
+                Unavailable {
+                    operation: Operation,
+                    message: String,
+                },
+                CommandFailed {
+                    operation: Operation,
+                    message: String,
+                },
+                InvalidResponse {
+                    operation: Operation,
+                    message: String,
+                },
+            }
+
+            pub enum Operation {
+                Search,
+                Publish,
             }
         }
     }
-
-    // OPEN: Normalisierung und persistierte Darstellung der Fehlersignatur festlegen. Flüchtige
-    // Speicheradressen und absolute Projektpräfixe dürfen dieselbe Assertion zwischen Ausführungen
-    // nicht zu unterschiedlichen Signaturen machen.
 }
 
 mod session {
@@ -456,6 +567,8 @@ mod session {
 
     impl Default for Plugin {}
     impl bevy::app::Plugin for Plugin {}
+
+    pub fn tracing_error_layer(app: &mut bevy::app::App) -> Option<bevy::log::BoxedLayer>;
 
     pub struct Capabilities {
         pub screenshot: bool,
@@ -469,10 +582,18 @@ mod session {
     }
 
     // Wird ausschließlich von Session vergeben und niemals vom Controller gewählt.
+    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct RequestId(u64);
+
+    impl RequestId {
+        pub fn as_u64(self) -> u64;
+    }
+
+    impl std::fmt::Display for RequestId {}
 
     pub mod launch {
         pub struct Config {
+            pub manifest_path: std::path::PathBuf,
             pub package: String,
             pub target: Target,
             pub features: Vec<String>,
@@ -496,6 +617,8 @@ mod session {
             Rejected { code: String, message: String },
 
             ProtocolFailed { code: String, message: String },
+
+            IoFailed { message: String },
 
             Unanswered,
         }
@@ -552,18 +675,66 @@ mod session {
         }
     }
 
+    // Nicht klonbar und genau einer Session sowie einem angenommenen Command zugeordnet.
     pub struct Pending<Output> {}
 
     impl<Output> Pending<Output> {
-        pub fn request_id(&self) -> &RequestId;
+        pub fn request_id(&self) -> RequestId;
         pub fn command(&self) -> &crate::command::Command;
     }
 
     pub enum Event {
         ProtocolError { code: String, message: String },
-        Ended,
+
+        RecordingFailed {
+            path: String,
+            message: String,
+        },
+
+        Failure {
+            failure: crate::report::Failure,
+        },
+
+        ObservationError {
+            // Stabiler Code für ungültige oder bei EOF unvollständige Marker:
+            // invalid_report_marker.
+            code: String,
+            message: String,
+        },
+
+        Ended {
+            reason: EndReason,
+        },
     }
 
+    pub enum EndReason {
+        ProcessExit {
+            status: String,
+        },
+
+        TransportClosed {
+            channel: TransportChannel,
+        },
+
+        TransportFailed {
+            channel: TransportChannel,
+            message: String,
+        },
+
+        EventQueueOverflow {
+            capacity: u32,
+            dropped_events: u64,
+        },
+    }
+
+    pub enum TransportChannel {
+        Stdin,
+        Stdout,
+        Stderr,
+    }
+
+    // Synchroner, nicht klonbarer Handle zu einem privaten Session-Koordinator. Angenommene
+    // Commands und hostseitige Arbeit laufen unabhängig von receive-Aufrufen weiter.
     pub struct Session {}
 
     impl Session {
@@ -593,6 +764,8 @@ mod session {
         Launch { message: String },
         Io { message: String },
         InvalidPending { message: String },
+        RequestIdExhausted,
+        ShutdownBlocked { code: String, message: String },
 
         Rejected { code: String, message: String },
         Protocol { code: String, message: String },
