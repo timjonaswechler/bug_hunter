@@ -29,7 +29,11 @@
 
    Noch zu planen:
 
-   - die übrige Session- und Host-Struktur
+   - Lebensdauer und Discovery eines persistenten lokalen Session-Hosts
+   - lokaler Client-Transport und Zugriffsschutz
+   - gemeinsamer Activity-Stream mit wiederaufnehmbarem Cursor
+   - Client-Zugriff für REPL, Script und MCP-Agent
+   - die übrige Host-Struktur
 
    "Ausreichend skizziert" bedeutet nicht endgültig abgeschlossen. Neue Erkenntnisse dürfen einen
    Bereich wieder öffnen.

@@ -52,19 +52,20 @@ Ein Status beschreibt den Übergang, nicht die Qualität des alten Codes.
 | [`failure`](../../src/failure/mod.rs) | `-` | `Detail`, `Kind` und das persistierte Zwischenformat `failure.json` entfernen; bestehende Nutzer verwenden die fachlichen Fehler- und Diagnosetypen ihrer jeweiligen Module | `delete` | keine `failure`-Exporte, `failure.json`-Zugriffe oder generischen `Detail`-Verwendungen verbleiben |
 | [`report`](../../src/report/mod.rs) und Fehleranteile aus [`session::diagnostics`](../../src/session/diagnostics.rs) | `report` | einen providerunabhängigen Report direkt aus dem beobachteten Fehler und der laufenden Session erzeugen; den reportspezifischen Diagnosekontext, Titel, Fehlersignatur, Provider-Ausführung und Duplikaterkennung dort besitzen | `rewrite` | Panic, Prozessabbruch, optionaler Tracing-Error, reportspezifischer Context und History-Auszug sowie lokale und GitHub-seitige Duplikaterkennung |
 | [`session::context`](../../src/session/context.rs) | `report::Context` und interner Zustand von `session::Session` | den eigenständigen Session-Context entfernen; `Report::create` stellt den benötigten Diagnosekontext bei der Report-Erzeugung direkt aus der Session zusammen | `replace` | kein `session::Context` oder doppelt gepflegter Session-Zustand; Report-Fixtures enthalten keine Wire-Request-IDs |
-| [`session::controller`](../../src/session/controller.rs) | `session::Session`, `host::repl`, `host::agent`, `host::script` und `command::replay` | gemischte Controller-Orchestrierung nach allgemeiner Session-Ausführung und die konkreten Controller aufteilen; kein allgemeines Controller-Trait einführen | `replace` | REPL, Agent-Controller, Session Script und Replay verwenden denselben Session-Ausführungsweg |
+| [`session::controller`](../../src/session/controller.rs) | `session::Session`, `host::server`, `host::client`, `host::repl`, `host::mcp`, `host::script` und `command::replay` | Session-Ausführung von der lokalen Client-Anbindung trennen; ein persistenter Host besitzt die Session und eine gemeinsame Client-Seam verbindet die konkreten Fassaden | `replace` | Client-Trennung ohne Session-Ende, gemeinsame Request-IDs, wiederaufnehmbare Activity sowie REPL, Script und MCP gegen dieselbe Session |
 | [`session::diagnostics`](../../src/session/diagnostics.rs) | interne Prozessbeobachtung von `session`, `session::history` und `report` | das Modul auflösen: Session liest stderr und beobachtet den Prozesslebenszyklus, die History behält Command-Outcomes und `report` erkennt und dokumentiert Laufzeit- und Logikfehler | `replace` | stderr-Weiterleitung, History-Grenze, Panic-Erkennung samt Backtrace, Vorrang vor Prozessabbruch und optionaler Tracing-Error |
 | übrige Verantwortung aus [`session::driver`](../../src/session/driver.rs) | `session::Session` und interne Prozessverwaltung | Prozesslebenszyklus, Transport und ausstehende Commands hinter dem Session-Interface neu aufbauen | `rewrite` | Start, Ready, parallele Requests, Shutdown, Drop und unerwartetes Ende |
 | [`session::launch`](../../src/session/launch.rs) | `session::launch` und `session::Config::launch` | Cargo-only-Launch als `launch::Config` behalten, ein Package und ein Binary oder Example ausdrücklich verlangen und die Prozess-Command-Erzeugung intern halten | `rewrite` | Binary und Example, leere Package- und Target-Namen, Features, Anwendungsargumente und exakt erzeugter Cargo-Aufruf |
 | übrige Bevy-seitige Verantwortung aus [`client::plugin`](../../src/client/plugin.rs) | Controlled-Session-Integration unter `session` | Plugin, Command-Dispatcher und laufende Command-Arbeit aus dem irreführenden Modul `client` verschieben | `rewrite` | Bevy-Plugin, mehrere Requests, Render- und No-Tick-Verhalten |
 | [`client::transport`](../../src/client/transport.rs) | interne Session-Ein-/Ausgabe | öffentliche Transporttypen entfernen; JSONL über stdin/stdout auf beiden Prozessseiten intern implementieren und In-Memory-Ein-/Ausgabe nur als interne Test-Seam behalten | `rewrite` | JSONL-Framing, Flush, Transportende sowie Controlled-Session- und Host-Tests mit interner In-Memory-Ein-/Ausgabe |
-| [`host::command_line`](../../src/host/command_line.rs) | private CLI-Verarbeitung in `host::run` | das öffentliche Modul und seine CLI-Typen entfernen; Prozessargumente ausschließlich intern in den gewählten Host-Ablauf übersetzen | `replace` | REPL-, Agent-, Script- und Report-Aufrufe, Parsefehler sowie keine öffentlichen CLI-Exporte |
+| [`host::command_line`](../../src/host/command_line.rs) | private CLI-Verarbeitung in `host` | das öffentliche Modul und seine CLI-Typen entfernen; Prozessargumente intern in Serverstart, Discovery oder einen konkreten Client-Aufruf übersetzen | `replace` | Server-, REPL-, Script-, MCP- und Report-Aufrufe, Parsefehler sowie keine öffentlichen CLI-Exporte |
 | [`host::config`](../../src/host/config.rs) | private Konfigurationsverarbeitung in `host::run` | öffentliche Config-Typen entfernen und den übergebenen versionierten TOML-Inhalt intern in `session::Config` übersetzen | `replace` | Version, unbekannte Felder, Session-Validierung, Artifact-Override und keine öffentlichen Config-Exporte |
-| [`host::repl`](../../src/host/repl.rs) | `host::repl` | menschliche Eingaben in die gemeinsame JSON-Command-Form übersetzen und Session-Outcomes mit den von `Session` vergebenen Request-IDs anzeigen | `rewrite` | ungeordnet eintreffende Ergebnisse, Request-IDs, Pending-Liste, Recording und Replay innerhalb derselben Session, Quit, EOF und Ctrl-C |
-| `-` | `host::agent` | einen interaktiven maschinenlesbaren Controller ergänzen, über den ein KI-Agent dieselbe laufende Session adaptiv steuert | `add` | JSONL-Fixtures, parallele Commands, ungeordnet eintreffende Ergebnisse, Recording und Replay innerhalb derselben Session, Session-Events und kontrollierter Abschluss |
-| [`host::runner`](../../src/host/runner.rs) | `host::run` | das eigenständige Runner-Konzept durch einen direkten Host-Einstiegspunkt ersetzen; Konfiguration, CLI-Auswahl, Session-Lebenszyklus und gewählten Ablauf intern zusammensetzen | `replace` | REPL-, Agent-, Script- und Report-Aufruf, Capability-Prüfung, sauberer Shutdown und Exit-Codes ohne `process::exit` |
-| [`host::script`](../../src/host/script.rs) | `host::script` | eine versionierte Liste derselben JSON-Command-Einträge vollständig validieren, in Dateireihenfolge asynchron einreichen und ihre Outcomes einsammeln | `rewrite` | Parse- und Validierungs-Fixtures, Eingangsreihenfolge, parallele Pending-Commands, ungeordnete Outcomes und Fehlerpositionen |
-| [`host::mod`](../../src/host/mod.rs) | kleine `host`-Fassade | ausschließlich `host::run` unter dem Feature `host` exportieren; Config-, CLI-, Controller- und Report-Typen nicht re-exportieren | `rewrite` | Exporte mit und ohne Feature `host`; kein Feature-Alias `driver` |
+| [`host::repl`](../../src/host/repl.rs) | `host::repl` über `host::client` | menschliche Eingaben in gemeinsame Commands übersetzen und den Activity-Stream einer verbundenen Session darstellen | `rewrite` | Wiederverbindung, Cursor, gemeinsame Request-IDs, parallele Clients sowie Trennung ohne Session-Ende |
+| `-` | `host::server` und `host::client` | pro Session einen persistenten lokalen Host und eine gemeinsame versionierte Client-Seam ergänzen | `add` | Discovery, Zugriffsschutz, mehrere Clients, Cursor-Gaps, Client-Trennung und ausdrücklicher Shutdown |
+| `-` | `host::mcp` | begrenzte Agent-Tool-Aufrufe über `host::client` ergänzen, ohne ein dauerhaft stdout lesendes Sprachmodell vorauszusetzen | `add` | Command-Send, Activity-Poll und -Wait, Wiederaufnahme per Cursor und unabhängige Session-Lebensdauer |
+| [`host::runner`](../../src/host/runner.rs) | private Server- und Client-Orchestrierung in `host` | das eigenständige Runner-Konzept durch Session-Host, Discovery und konkrete Client-Aufrufe ersetzen | `replace` | Serverstart, REPL-, MCP-, Script- und Report-Client, Capability-Prüfung, ausdrücklicher Shutdown und Exit-Codes ohne `process::exit` |
+| [`host::script`](../../src/host/script.rs) | `host::script` über `host::client` | eine versionierte Liste gemeinsamer Commands vollständig validieren, über eine verbundene Session einreichen und ihre Outcomes einsammeln | `rewrite` | Parse- und Validierungs-Fixtures, gemeinsame Request-IDs, Wiederaufnahme, Shutdown und Fehlerpositionen |
+| [`host::mod`](../../src/host/mod.rs) | kleine `host`-Fassade | öffentliche Host-Einstiege nach HS1 bis HS4 und H7 auf Serverstart sowie notwendige Client-Aufrufe begrenzen | `rewrite` | Exporte mit und ohne Feature `host`; kein Feature-Alias `driver` |
 | [`observe`](../../src/observe/mod.rs) | `command::inspect` | markergebundene und fachlich spezielle Beobachtungen durch allgemeine read-only Queries ersetzen | `replace` | Query-, Reflection-, Wire- und No-Tick-Tests |
 | [`target.rs`](../../src/target.rs) | `-` | `AutomationTarget` und das öffentliche Target-Modul ersatzlos entfernen | `delete` | Inspektion findet Entities ohne Marker; keine Target-Referenzen verbleiben |
 
@@ -1742,13 +1743,28 @@ Daraus folgen diese Anforderungen:
   ihrem Abschluss gelesen werden.
 - Die konkrete Ausführung darf Bevy World nicht unkontrolliert von einem Hintergrundthread aus
   verändern.
-- REPL, Agent und Script erzeugen dieselbe Command-Darstellung aus qualifiziertem Command-Namen und
-  `arguments`. Die REPL übersetzt menschliche Eingaben in diese Form, der Agent reicht einzelne
-  JSONL-Einträge durch und ein Script enthält eine versionierte Liste derselben Einträge.
+- REPL, MCP-Agent und Script erzeugen dieselbe Command-Darstellung aus qualifiziertem Command-Namen
+  und `arguments`. Die REPL übersetzt menschliche Eingaben in diese Form, MCP übergibt strukturierte
+  Tool-Argumente und ein Script enthält eine versionierte Liste derselben Einträge.
 - `Session::send` nimmt hostseitig ausgeführte Commands sowie Wire-Commands für die Controlled
   Session über dasselbe Interface an. Es vergibt für jeden angenommenen Command eine
   sessionlokale Request-ID. Bei Wire-Commands wird diese ID in den Protokoll-Request übernommen;
   hostseitige Commands werden unter derselben ID lokal ausgeführt.
+- `command::Request` ist versiegelt. Nur die von `bug_hunter` definierten konkreten Command-Typen
+  können es implementieren und dadurch einen Command mit seinem erwarteten Output-Typ verbinden.
+  Eine externe Crate kann keinen abweichenden Output-Typ für einen vorhandenen Command behaupten.
+- Die gemeinsame typgelöschte Darstellung `command::Command` implementiert nicht `Request`. Sie
+  enthält Commands mit unterschiedlichen Outputs und dient Parsing, History, Recording sowie der
+  internen Ausführung. Insbesondere ist ihre Variante `Shutdown` nicht über das allgemeine
+  `Session::send` ausführbar; Shutdown beginnt ausschließlich mit `Session::shutdown`.
+- `session` besitzt für den Session-Host einen crate-internen Adapter, der bereits validierte
+  `command::Command`-Werte über denselben Koordinator annimmt und ihre Outcomes typgelöscht
+  bereitstellt. Der Adapter dupliziert keine Annahme-, Korrelations-, History-, Recording- oder
+  Fehlerregel. Seine Variante `Shutdown` routet ausschließlich zu `Session::shutdown`.
+- Eine crate-interne Aktivitätsbenachrichtigung weckt den Session-Host, wenn ein Command-Ergebnis
+  oder Session-Event verfügbar ist. Der Host überführt die Meldung in den gemeinsamen
+  Activity-Stream. Das öffentliche Session-Interface erhält kein zweites dynamisches `send`, kein
+  `receive_any` und keinen öffentlichen Aktivitätskanal.
 - `send` wartet nur auf die Annahme durch den Koordinator. Eine beendete oder technisch nicht mehr
   erreichbare Session und erschöpfte Request-IDs verhindern die Annahme; es entstehen weder
   `Pending` noch ID oder History-Eintrag. Commandspezifische Zustands- und Argumentfehler erhalten
@@ -1824,6 +1840,8 @@ Daraus folgen diese Anforderungen:
 - `Session` gibt die laufende History nicht über einen öffentlichen Accessor frei. Die öffentlichen
   Typen `history::Entry` und `history::Outcome` erscheinen ausschließlich im begrenzten
   `report::Context`; eine vollständige dauerhafte Aufzeichnung bleibt Aufgabe des Recordings.
+- [ADR-0018](../adr/0018-public-requests-are-typed-and-sealed.md) hält die Trennung zwischen dem
+  typisierten öffentlichen Request-Interface und der privaten typgelöschten Host-Ausführung fest.
 - [ADR-0013](../adr/0013-session-history-is-a-bounded-report-window.md) hält Aufbewahrung,
   Reihenfolge und Sichtbarkeit der History fest.
 - Sessionweite Ereignisse werden ohne Callbacks in einer internen Queue gepuffert.
@@ -1872,13 +1890,14 @@ Daraus folgen diese Anforderungen:
   Start und Handshake, Command-Ausführung, Request-Korrelation, History, Recording, Capabilities,
   Session-Events, Shutdown und Prozesslebenszyklus.
 - `host::repl` besitzt Parsing und Darstellung menschlicher Eingaben, Terminal-Ein-/Ausgabe,
-  REPL-spezifische Komfortbefehle und die Anzeige ausstehender Commands. Ob normalisierte
+  REPL-spezifische Komfortbefehle und die Anzeige des gemeinsamen Activity-Streams. Ob normalisierte
   Pointer-Koordinaten oder vergleichbare Hilfen erhalten bleiben, wird ausschließlich mit der REPL
   entschieden.
 - `host::script` besitzt nur die versionierte Dateihülle, das Parsing der gemeinsamen
   Command-Einträge, deren asynchrone Einreichung und die Zuordnung der Outcomes zu den
-  ursprünglichen Array-Positionen. Es verwendet `session::Session` direkt und erhält keinen
-  gemeinsamen Wrapper mit der REPL.
+  ursprünglichen Array-Positionen. Es verwendet dieselbe `host::client`-Seam wie REPL und MCP.
+- `host::mcp` besitzt ausschließlich die agentengerechte Abbildung begrenzter Tool-Aufrufe auf
+  `host::client`. Das Modul besitzt weder Session, Pending-Arbeit noch Activity-Aufbewahrung.
 - `command::replay` besitzt das Lesen der Recording-Einträge, deren Ausführung über die bestehende
   Session, Stop und Abschlussstatus. Replay startet keine eigene Controlled Session mehr und
   vergleicht aufgezeichnete Outcomes nicht mit den neu entstandenen Outcomes.
@@ -1894,7 +1913,7 @@ Daraus folgen diese Anforderungen:
 
 ### Session-Lebenszyklus
 
-Die grobe Richtung steht, das öffentliche Interface ist noch offen:
+Das öffentliche Session-Interface ist nach S2 abgeschlossen:
 
 - `session::Session` besitzt genau eine laufende Controlled Session, deren Transport, ausstehende
   Commands und Prozesslebenszyklus.
@@ -2110,59 +2129,49 @@ Die grobe Richtung steht, das öffentliche Interface ist noch offen:
 
 ## Debug Host
 
-Die folgenden Punkte legen die Host-Fassade und ihre interne Aufgabenverteilung fest:
+[`ADR-0022`](../adr/0022-session-host-outlives-clients.md) ersetzt die bisherige unmittelbare
+Kopplung eines ausgewählten Controllers an `&mut session::Session`:
 
-- `host` ist die Entwickleranwendung um `session::Session`. Es besitzt Konfigurationsladen,
-  Controller-Auswahl, CLI, REPL, Session Scripts und die Zusammensetzung des Gesamtablaufs.
-- Das Ziel besitzt kein öffentliches `host::config`-Modul, kein `host::Config`, keinen
-  `ConfigError` und keine öffentliche Konfigurationsversionskonstante. Die private
-  Konfigurationsverarbeitung in `host::run` übersetzt den übergebenen Inhalt in genau eine
-  `session::Config`, statt Session-Regeln zu duplizieren.
-- Das Ziel besitzt kein `host::command_line`-Modul und keine öffentlichen CLI-Typen. Die private
-  CLI-Verarbeitung in `host::run` parst die Prozessargumente und übersetzt sie in den gewählten
-  Host-Ablauf. Der Parser lädt keine Konfiguration, startet keine Session, führt keinen Controller
-  aus und bestimmt keine Exit-Codes.
-- `host::repl` ist der menschliche Controller einer laufenden Session.
-- `host::agent` ist der interaktive maschinenlesbare Controller für einen KI-Agenten. Der Agent
-  startet den Debug Host, sendet Commands, wertet strukturierte Ergebnisse aus und entscheidet
-  innerhalb derselben laufenden Session adaptiv über den nächsten Command.
-- `host::agent` verwendet JSONL über stdin/stdout. stdout enthält in diesem Modus ausschließlich
-  JSONL-Nachrichten; Logs und menschliche Diagnoseausgaben gehen an stderr. Der Agent sendet keine
-  Request-ID, sondern reicht einzelne Einträge der gemeinsamen Command-Darstellung ein. `Session`
-  vergibt die IDs und der Agent-Adapter gibt Pending- und Outcome-Meldungen zurück.
-- `host::script` bleibt zusätzlich bestehen. Es liest ein versioniertes JSON-Dokument, das eine
-  Liste derselben Command-Einträge enthält, und reicht sie in Dateireihenfolge asynchron an
-  `Session` weiter. Das Format besitzt keine eigenen Send-, Receive-, Namens- oder
-  Erwartungskonzepte.
-- REPL, Agent-Controller und Script verwenden dieselbe `session::Session` und dieselbe Command- und
-  Outcome-Darstellung. Die REPL übersetzt zwischen Text und dieser Darstellung, der Agent reicht
-  einzelne JSONL-Einträge durch und das Script legt eine Dateihülle um eine Liste dieser Einträge.
-- `host::run(config_source: &str) -> std::process::ExitCode` ist der einzige öffentliche
-  Programmeinstieg des Debug Hosts. Die Funktion liest den übergebenen Konfigurationsinhalt,
-  verarbeitet den CLI-Aufruf und setzt den gewählten Ablauf zusammen.
-- Die Implementation liegt in einem privaten `host::run`-Modul. Das Ziel besitzt kein öffentliches
-  `runner`-, `program`- oder `entrypoint`-Modul und kein öffentliches Runner-Struct.
-- `host::run` ruft nicht `std::process::exit` auf. Die einbettende `main`-Funktion gibt den
-  zurückgegebenen `ExitCode` zurück.
-- Für REPL, Agent-Controller und Session Script startet `host::run` genau eine Session, prüft die
-  vom Ablauf benötigten Capabilities, führt den gewählten Controller aus und versucht anschließend
-  einen
-  sauberen Shutdown. Ein reiner Report-Aufruf startet keine Controlled Session.
-- Der gewählte Host-Ablauf bestimmt seine benötigten Capabilities. Nach `Session::start` vergleicht
-  der Host diese Anforderungen mit `Session::capabilities`, bevor er den Controller oder das Script
-  startet. Fehlt eine benötigte Capability, beendet er die Controlled Session sauber und meldet
-  einen Host-Startfehler. Die konkrete Darstellung der Anforderungen wird erst mit den Host-
-  Interfaces festgelegt.
-- `host::mod` bleibt eine kleine Fassade und exportiert keine internen CLI- oder
-  Orchestrierungsdetails.
-- Ein allgemeines `Controller`-Trait wird nicht vorweggenommen. Eine gemeinsame Seam entsteht erst,
-  wenn mehrere konkrete Controller dieselbe zusätzliche Regel benötigen, die nicht bereits durch
-  `session::Session` abgedeckt ist.
+- `host::server` ist die langlebige Entwickleranwendung um genau eine `session::Session`. Der
+  Serverprozess besitzt Session, Controlled Application und Prozesslebenszyklus unabhängig von
+  seinen Clients.
+- `host::client` ist die gemeinsame private Seam für lokale Verbindungen. REPL, Script und
+  MCP-Fassade senden darüber dieselben `command::Command`-Werte und beobachten denselben
+  Activity-Stream.
+- `host::mcp` bildet begrenzte Agent-Tool-Aufrufe auf `host::client` ab. Ein Sprachmodell muss weder
+  den Serverprozess starten noch eine Konsole dauerhaft lesen.
+- `host::repl` ist ein menschlicher Client. `host::script` ist ein endlicher Client für eine
+  versionierte Command-Liste. Beide besitzen die Session nicht.
+- Clients dürfen sich unabhängig verbinden, trennen und erneut verbinden. Ein Client-Ende sendet
+  weder Stop noch Shutdown und beendet weder laufende Commands noch Recording oder Replay.
+- Mehrere Clients dürfen gleichzeitig verbunden sein und Commands senden. Der Server übergibt sie
+  in eindeutiger Empfangsreihenfolge an den privaten dynamischen Session-Adapter; `Session` vergibt
+  weiterhin die globalen Request-IDs.
+- Der Server übernimmt Command-Annahmen, terminale Outcomes, Session-Events und später
+  Report-Ergebnisse in einen begrenzt aufbewahrten Activity-Stream. Ein Transport-Cursor ermöglicht
+  `poll`, `wait` und Wiederaufnahme nach einer Client-Trennung.
+- `command::Command::Shutdown` ist für REPL, Script und MCP-Agent ein ausdrücklicher Client-Command.
+  Der Server routet ihn zu `Session::shutdown`; kein Client dupliziert dessen Vorbedingungen oder
+  sendet versteckte Stop-Commands.
+- Das Session Protocol v3 bleibt die ausschließlich interne Verbindung zwischen
+  `session::Session` und Controlled Application. Das lokale Client-Protokoll besitzt eine getrennte
+  Version und legt keine internen Prozess-Pipes offen.
+- Prozessstart und Discovery, Transport und Zugriffsschutz, Activity-Cursor sowie Client- und
+  Shutdown-Abläufe werden in HS1 bis HS4 festgelegt. Bis dahin bleiben konkrete Server- und
+  Client-Signaturen in `goal.rs` bewusst offen.
+- Die öffentliche Host-Fassade wird nach HS1 bis HS4 erneut geprüft. Insbesondere ist noch nicht
+  entschieden, ob `host::run(config_source)` allein Serverstart und alle Client-Aufrufe tief genug
+  kapselt.
+- Das Ziel besitzt weiterhin kein öffentliches `host::config`- oder `host::command_line`-Modul.
+  Persistenz-, CLI- und Discovery-Typen bleiben private Host-Details, soweit die später
+  festgelegten Einstiegspunkte sie nicht nach außen tragen müssen.
+- Host-Einstiege rufen nicht `std::process::exit` auf. Eine einbettende `main`-Funktion gibt den
+  bestimmten `ExitCode` zurück.
 - `config_source` enthält das vollständige versionierte TOML-Dokument. Dessen Formatversion bleibt
   ein privates Persistenzdetail und wird nicht Teil des Laufzeitmodells. Unbekannte Felder und nicht
   unterstützte Versionen werden abgelehnt.
-- Der private Config-Parser liest keine Datei. `host::run` erhält den Inhalt vom Aufrufer und erzeugt
-  daraus die `session::Config`. Die CLI wählt den Host-Ablauf und darf ausschließlich
+- Der private Config-Parser liest keine Datei. Der Serverstart erhält den Inhalt vom Aufrufer und
+  erzeugt daraus die `session::Config`. Die CLI darf ausschließlich
   `session.artifact_dir` überschreiben; andere Session-Werte erhalten keine allgemeinen CLI-
   Overrides.
 - Die bisherigen Host-Felder `profile_id` und `tool` sowie die getrennte `application`-
@@ -2171,28 +2180,30 @@ Die folgenden Punkte legen die Host-Fassade und ihre interne Aufgabenverteilung 
   Abhängigkeiten für CLI, TOML und Ctrl-C frei. `command`, `report`, `session::Plugin`,
   `session::Session` und die übrigen Session-Typen bleiben ohne dieses Feature verfügbar. Der
   Kompatibilitätsalias `driver` entfällt.
-- Ohne das Feature `host` existiert das Modul `host` nicht. Mit dem Feature exportiert es
-  ausschließlich `host::run`; Config-, CLI-, Controller-, Report- und Orchestrierungstypen bleiben
-  privat.
+- Ohne das Feature `host` existiert das Modul `host` nicht. Die nach HS1 bis HS4 in H7 festgelegten
+  Host-Einstiege bleiben mit diesem Feature verfügbar; Config-, CLI-, Server-, Client-, Report- und
+  Orchestrierungstypen werden nicht unkontrolliert exportiert.
 
-### Agent-Controller
+### MCP-Agent und erneut zu prüfende JSON-Payloads
+
+ADR-0022 ersetzt `host::agent` als langlebigen stdin/stdout-Controller durch begrenzte
+MCP-Tool-Aufrufe über `host::client`. Die folgenden Command-, Fehler- und Event-Objekte dokumentieren
+weiterhin die bereits beschlossenen Payload-Kandidaten. Ihre äußere Client-Hülle, Cursor und
+Fortsetzungsregeln werden nach HS2 und HS3 in H2 bis H4 neu festgelegt.
 
 #### Festgelegte gemeinsame Command-Verarbeitung
 
-- `host::agent` ist ein dünner JSONL-Adapter vor derselben asynchronen Session-Ausführung, die REPL
-  und Script verwenden. Er besitzt keine eigene Command-Sprache und keine eigene ID-Vergabe.
+- `host::mcp` verwendet dieselbe gemeinsame Client-Seam und Command-Darstellung wie REPL und Script.
+  Die Fassade besitzt keine eigene Command-Sprache und keine eigene Request-ID-Vergabe.
 - Jede Eingabezeile enthält genau einen qualifizierten Command-Namen und das immer vorhandene
   `arguments`-Objekt. Eine Agent-Eingabe enthält keine Request-ID und kein zusätzliches
   `type: "command"`-Feld.
-- Der Adapter validiert die Zeile und reicht den Command unmittelbar an `Session::send` weiter. Er
-  darf weitere Eingabezeilen lesen und einreichen, während beliebig viele frühere Commands noch
-  ausstehen. Ein laufender Warp blockiert daher weder weitere Agent-Eingaben noch Outcomes anderer
-  Commands.
-- Während eines exklusiven Replays bleibt der Agent lesebereit, kann über `Session::send` aber nur
-  `Replay::Stop` einreichen. Andere Commands werden nicht zwischen Replay-Plan und Tick-Grenzen
-  eingefügt.
-- Für jeden angenommenen Command gibt stdout zuerst eine `pending`-Meldung mit der von `Session`
-  vergebenen Request-ID und dem qualifizierten Command-Namen aus. Später folgt genau eine
+- Der gemeinsame Serveradapter validiert den Command und reicht ihn an die Session weiter. Mehrere
+  Clients dürfen weitere Commands einreichen, während frühere Commands noch ausstehen.
+- Während eines exklusiven Replays nimmt die Session von Clients nur `Replay::Stop` an. Andere
+  Commands werden nicht zwischen Replay-Plan und Tick-Grenzen eingefügt.
+- Für jeden angenommenen Command übernimmt der Activity-Stream zuerst eine `pending`-Meldung mit der
+  von `Session` vergebenen Request-ID und dem qualifizierten Command-Namen. Später folgt genau eine
   `completed`-, `rejected`- oder `failed`-Meldung mit derselben ID und demselben Command-Namen.
 - Pending-Meldungen werden in Eingangsreihenfolge ausgegeben. Terminale Meldungen dürfen in jeder
   Reihenfolge eintreffen. Der Command-Name wird wiederholt, damit ein Agent das Ergebnis nicht nur
@@ -2201,32 +2212,149 @@ Die folgenden Punkte legen die Host-Fassade und ihre interne Aufgabenverteilung 
   Command-Typs, ob der Command hostseitig ausgeführt oder über das Wire-Protokoll an die Controlled
   Session gesendet wird.
 
-Die Agent-Form folgt diesem Muster:
+Die bisherige Agent-JSON-Form bleibt als Payload-Kandidat erhalten:
 
 ```json
 {"command":"tick.warp.start","arguments":{"ticks":600}}
-{"command":"inspect.query","arguments":{}}
+{"command":"inspect.query","arguments":{"source":"entities","entity":null,"with":[],"without":[],"projection":{"kind":"summary"}}}
 {"command":"tick.warp.stop","arguments":{}}
 
 {"request_id":17,"command":"tick.warp.start","status":"pending"}
 {"request_id":18,"command":"inspect.query","status":"pending"}
 {"request_id":19,"command":"tick.warp.stop","status":"pending"}
-{"request_id":18,"command":"inspect.query","status":"completed","output":{}}
+{"request_id":18,"command":"inspect.query","status":"completed","output":{"items":[]}}
 {"request_id":19,"command":"tick.warp.stop","status":"completed","output":{"was_running":true}}
 {"request_id":17,"command":"tick.warp.start","status":"completed","output":{"requested_ticks":600,"executed_ticks":42,"outcome":"stopped"}}
 ```
 
+#### Ungültige Agent-Eingaben
+
+Der Agent liest Eingabezeilen als Bytes. Eine vollständig gelesene Zeile mit ungültigem UTF-8 kann
+dadurch als lokaler Inhaltsfehler gemeldet werden. Die Zuständigkeitsgrenze ist der gemeinsame
+Command-Decoder: Sobald ein erlaubter `command::Command` entstanden ist, übernimmt die Session; alle
+Fehler davor gehören der Agent- beziehungsweise Client-Fassade.
+
+Ungültiges JSON einschließlich einer leeren Zeile erzeugt:
+
+```json
+{"input_line":4,"request_id":null,"status":"input_error","error":{"code":"invalid_json","message":"expected value at column 18"}}
+```
+
+Ein syntaktisch gültiger JSON-Wert, der nicht als erlaubter Agent-Command dekodiert werden kann,
+erzeugt:
+
+```json
+{"input_line":5,"request_id":null,"status":"input_error","error":{"code":"invalid_command","message":"field \"arguments\" is required"}}
+```
+
+`invalid_command` umfasst Nicht-Objekte, fehlende oder unbekannte Felder, unbekannte Command-Namen
+und strukturell falsche Argumente. `shutdown` ist ein erlaubter Client-Command; der Serveradapter
+routet ihn zu `Session::shutdown`. Eine genauere Ursache steht ausschließlich in `error.message`;
+es gibt keine weiteren stabilen Eingabefehlercodes.
+
+`input_line` beginnt bei eins und zählt jede physische Eingabezeile einschließlich leerer und
+ungültiger Zeilen. Der ursprüngliche Zeileninhalt wird nicht ausgegeben. `request_id: null` zeigt,
+dass die Session die Eingabe nie angenommen hat. Es entstehen keine `pending`-Meldung, kein History-
+oder Recording-Eintrag und kein Verbrauch einer Session-ID.
+
+Nach einem `input_error` liest der Agent die nächste Zeile und bereits angenommene Commands laufen
+weiter. Ein vollständig dekodierter Command durchläuft dagegen immer die Session-Annahme.
+Fachliche Fehler wie ungültige Command-Werte, `unknown_type_path` oder `entity_not_found` erhalten
+deshalb eine Request-ID und enden mit einer korrelierten `rejected`-Meldung.
+
+Ein technischer `std::io::Error` beim Lesen beendet `run` mit `agent::Error::Input`, weil die Grenze
+zur nächsten Eingabezeile nicht mehr verlässlich bekannt ist. Ein Schreibfehler beendet `run` mit
+`agent::Error::Output`. Reguläres EOF ist kein Lesefehler und wird zusammen mit dem kontrollierten
+Agent-Abschluss festgelegt.
+
+Die nach HS2 erneut festzulegenden Fixtures decken mindestens kaputtes JSON, ungültiges UTF-8, einen
+JSON-Nicht-Objektwert, fehlende und unbekannte Felder, einen unbekannten Command-Namen sowie
+strukturell falsche Argumente ab. Weitere Fixtures belegen, dass kein Eingabefehler eine Request-ID,
+einen History- oder einen Recording-Eintrag erzeugt, während ein dekodierbarer fachlicher Fehler
+normal abgelehnt und `shutdown` als Client-Command angenommen wird. Die bisherige Entscheidung steht
+in
+[`ADR-0020`](../adr/0020-invalid-agent-input-stays-local.md).
+
+#### Session-Events im Agent-Modus
+
+Session-Events gehören keinem Command. Ihre bisherige JSONL-Hülle verwendet `request_id: null` und
+`status: "session_event"`. Der Server vergibt keine zweite fachliche Event-ID; der Activity-Eintrag
+erhält jedoch den in HS3 festzulegenden Transport-Cursor.
+
+```json
+{"request_id":null,"status":"session_event","event":{"kind":"protocol_error","code":"unexpected_ready","message":"received a second ready message"}}
+{"request_id":null,"status":"session_event","event":{"kind":"recording_failed","path":"recordings/run.jsonl","message":"failed to flush recording"}}
+{"request_id":null,"status":"session_event","event":{"kind":"observation_error","code":"invalid_report_marker","message":"report marker is incomplete"}}
+```
+
+`Event::Failure` übernimmt `report::Failure` unmittelbar in ein `failure`-Objekt:
+
+```json
+{"request_id":null,"status":"session_event","event":{"kind":"failure","failure":{"message":"index out of bounds","origin":{"kind":"panic","location":{"file":"src/game.rs","line":42,"column":9},"backtrace":"..."}}}}
+```
+
+Weitere Origin-Formen sind:
+
+```json
+{"kind":"panic","location":null,"backtrace":null}
+{"kind":"process_exit","status":"exit status: 101"}
+{"kind":"tracing_error","target":"game::physics","location":null}
+```
+
+Optionale Failure-Meldungen, Locations, Spalten, Backtraces und Targets werden ausdrücklich mit
+`null` ausgegeben. Das Event enthält nur den beobachteten Fehler. Der gemeinsame private
+Host-Ablauf bleibt für `Report::create` und `report::submit` verantwortlich; die Darstellung des
+Reports und Provider-Ergebnisses wird mit der übrigen Host-Ausgabe festgelegt.
+
+Nicht terminale Events beenden den Agent-Ablauf nicht. Sie werden untereinander in der
+FIFO-Reihenfolge der Session ausgegeben. Command-Outcomes dürfen nach ihrer Verfügbarkeit zwischen
+ihnen erscheinen; der Agent behauptet keine zusätzliche Gesamtordnung zwischen Event- und
+Outcome-Strom.
+
+Ein unerwartetes Session-Ende verwendet dieselbe Hülle:
+
+```json
+{"request_id":null,"status":"session_event","event":{"kind":"ended","reason":{"kind":"process_exit","status":"exit status: 101"}}}
+```
+
+Die Endgründe besitzen diese Formen:
+
+```json
+{"kind":"process_exit","status":"exit status: 101"}
+{"kind":"transport_closed","channel":"stdout"}
+{"kind":"transport_failed","channel":"stdin","message":"broken pipe"}
+{"kind":"event_queue_overflow","capacity":256,"dropped_events":3}
+```
+
+Transportkanäle heißen `stdin`, `stdout` und `stderr`. Beim Empfang von `Ended` gibt der Agent zuerst
+alle bereits vorliegenden Command-Outcomes aus. Jeder danach noch unbeantwortete Command erhält in
+Annahmereihenfolge:
+
+```json
+{"request_id":17,"command":"inspect.query","status":"failed","error":{"code":"session_ended","message":"session ended before command completed"}}
+```
+
+Nach allen normalen Events und Command-Outcomes bleibt `Ended` der terminale Session-Eintrag. Ein
+erfolgreicher `Session::shutdown` erzeugt kein `Ended`. H3 prüft nach HS3 erneut die genaue äußere
+Activity-Form und Wiederaufnahme.
+
+Agent-Fixtures decken alle Event-, EndReason-, TransportChannel- und Failure-Origin-Varianten sowie
+optionale Failure-Felder ab. Reihenfolge-Fixtures prüfen normale Events in FIFO-Reihenfolge, erlaubte
+Command-Verzahnung, `Failure` und `RecordingFailed` vor `Ended`, die terminalen Meldungen
+unbeantworteter Commands in Annahmereihenfolge und `Ended` als letzte JSONL-Zeile. Die Entscheidung
+steht in
+[`ADR-0021`](../adr/0021-agent-serializes-session-events-separately.md).
+
 #### Noch zu planen
 
-- kontrollierter Abschluss und EOF bei noch laufenden Commands oder aktivem Recording,
-- ungültige JSONL-Zeilen und nicht als Command dekodierbare Einträge,
-- Weitergabe sessionweiter Ereignisse und Verhalten bei unerwartetem Session-Ende.
+- MCP-Tool-Runden für Command-Annahme sowie `poll` und `wait`,
+- Fehlerabbildung an der MCP- und Client-Grenze,
+- Client-Trennung ohne Auswirkung auf ausstehende Arbeit oder Session-Lebensdauer.
 
 ### REPL
 
-- `host::repl::run` verwendet eine bereits gestartete `session::Session` als mutable Referenz. Die
-  REPL startet die Session nicht und führt keinen Shutdown aus; diese Lebenszyklusverantwortung
-  bleibt bei `host::run`.
+- `host::repl::run` verwendet eine Verbindung über `host::client`. Die REPL startet und besitzt die
+  Session nicht. Eine getrennte REPL beendet weder Server noch Session.
 - Die REPL sendet Session-Commands grundsätzlich nicht blockierend und bleibt bei ausstehenden
   Commands ansprechbar. Insbesondere kann sie die Pace eines laufenden Warp ändern, ihn stoppen
   sowie Recording und Replay innerhalb derselben Session starten und stoppen.
@@ -2234,14 +2362,19 @@ Die Agent-Form folgt diesem Muster:
   `replay stop` zu. Erst nach `completed`, `stopped` oder `blocked` kann sie wieder andere Commands
   einreichen.
 - Die REPL übersetzt jede gültige menschliche Eingabe in denselben qualifizierten Command-Namen und
-  dasselbe `arguments`-Objekt, die Agent und Script verwenden. Sie erzeugt keine eigene
-  Command-Darstellung und vergibt keine eigene Anzeigenummer.
+  dasselbe `arguments`-Objekt, die Client-Protokoll, MCP und Script verwenden. Sie erzeugt keine
+  eigene Command-Darstellung und vergibt keine eigene Anzeigenummer.
 - Jeder gesendete Command wird mit der von `Session` vergebenen Request-ID und seinem Command-Namen
-  als `pending` angezeigt. Ergebnisse werden nach ihrem Eintreffen automatisch mit derselben ID und
-  demselben Namen ausgegeben. Die REPL besitzt keinen ausdrücklichen `receive`-Befehl; spätere
-  Ergebnisse dürfen ungeordnet zwischen Prompts erscheinen.
+  als `pending` angezeigt. Activity-Einträge werden nach ihrem Eintreffen über den gemeinsamen Cursor
+  gelesen; Ergebnisse dürfen ungeordnet zwischen Prompts erscheinen.
 - Die REPL-eigenen Befehle `help`, `pending` und `quit` werden nicht an `Session::send` übergeben.
-  `pending` zeigt alle noch ausstehenden Commands mit ihrer Session-Request-ID.
+  `pending` zeigt die im gemeinsamen Serveradapter noch ausstehenden Commands mit ihrer
+  Session-Request-ID.
+- `quit`, Ctrl-C und eine geschlossene REPL-Eingabe trennen nur diesen Client. Sie warten nicht auf
+  ausstehende Commands, blockieren nicht bei aktivem Recording und senden weder Stop noch Shutdown.
+- `shutdown` ist davon getrennt ein ausdrücklicher `command::Command::Shutdown`. Der Serveradapter
+  routet ihn zu `Session::shutdown` und gibt dessen Erfolg oder Blockierung als gemeinsame Activity
+  aus.
 - Replay ist kein eigener Host-Ablauf. `replay start PATH` und `replay stop` verwenden die
   hostseitigen Replay-Commands innerhalb der bestehenden Session. Dasselbe gilt für
   `recording start PATH` und `recording stop`.
@@ -2249,35 +2382,78 @@ Die Agent-Form folgt diesem Muster:
   fatale Protokollmeldungen werden angezeigt und beenden die REPL nicht. Ein unerwartetes
   Session-Ende oder ein Fehler der Terminal-Ein-/Ausgabe beendet `run` mit einem REPL-eigenen
   Fehler.
-- `quit` liefert nur dann `Exit::Quit`, wenn kein Command mehr aussteht und kein Recording aktiv
-  ist. Andernfalls zeigt die REPL die blockierende Arbeit und verlangt, sie abzuwarten oder durch
-  einen ausdrücklichen Command zu stoppen. `quit` sendet keine versteckten Stop-Commands.
-- Ctrl-C liefert `Exit::Interrupted`, wenn kein Command aussteht und kein Recording aktiv ist.
-  Andernfalls bleibt die REPL geöffnet, zeigt die blockierende Arbeit und verlangt einen
-  ausdrücklichen Stop. Wiederholtes Ctrl-C erzwingt keinen harten Session-Abbruch.
-- Bei geschlossener Eingabe nimmt die REPL keine neuen Zeilen mehr an, empfängt aber noch alle
-  ausstehenden Ergebnisse. Danach liefert sie `Exit::InputClosed`. Ist anschließend noch ein
-  Recording aktiv, ergibt `run` stattdessen `Error::ActiveRecordingOnInputClose`; die REPL beendet
-  ein Recording nicht automatisch.
 - Der aktuelle `ControllerSession`-Status und seine Felder `paused` und `last_action` werden nicht als
-  Session-Zustand übernommen. Die REPL zeigt stattdessen ausstehende Commands und eingetroffene
-  Ergebnisse.
+  Session-Zustand übernommen. Die REPL zeigt stattdessen die über den Server beobachtbare Activity.
 - Die einfache Befehlssyntax folgt den fachlichen Command-Gruppen, darunter `tick warp`,
-  `recording start|stop` und `replay start|stop`. Die genaue Textdarstellung komplexer Inspect-
-  Queries und Sets wird mit deren JSON- und Wire-Abbildung festgelegt, ohne das REPL-Interface oder
-  die Pending-Regeln erneut zu öffnen.
+  `recording start|stop` und `replay start|stop`.
+
+#### Inspect-Eingaben
+
+Die vollständige REPL-Form für Inspect lautet:
+
+```text
+inspect query <arguments-json>
+```
+
+`<arguments-json>` umfasst den gesamten Rest der Eingabezeile und ist genau das unter "JSON- und
+Wire-Form" festgelegte `arguments`-Objekt von `inspect.query`. Es enthält weder den Command-Namen noch
+eine Request-ID. Die REPL verwendet dafür denselben Inspect-Arguments-Codec wie Client-Protokoll,
+MCP, Script und Wire-Protokoll. Sie besitzt keinen zweiten Query-Typ und keine eigene Flag-Sprache
+für Filter, Selektionen oder Projektionen.
+
+Eine kombinierte Entity-Query kann beispielsweise so eingegeben werden:
+
+```text
+inspect query {"source":"entities","entity":null,"with":["game::Player"],"without":["game::Dead"],"projection":{"kind":"components","selection":{"kind":"listed","type_paths":["game::Health"]}}}
+```
+
+Für häufige Abfragen gibt es genau vier Kurzformen:
+
+```text
+inspect entities
+    -> {"source":"entities","entity":null,"with":[],"without":[],"projection":{"kind":"summary"}}
+
+inspect entity 7:1
+    -> {"source":"entities","entity":{"index":7,"generation":1},"with":[],"without":[],"projection":{"kind":"summary"}}
+
+inspect resources
+    -> {"source":"resources","selector":{"kind":"all"},"projection":{"kind":"metadata"}}
+
+inspect resource game::GameState
+    -> {"source":"resources","selector":{"kind":"type","type_path":"game::GameState"},"projection":{"kind":"value"}}
+```
+
+`index` und `generation` sind in der Kurzform vorzeichenlose dezimale `u32`, getrennt durch genau
+einen Doppelpunkt. Bei `inspect resource` wird der nicht leere Rest der Zeile nach äußerem Trimmen als
+vollständiger Type Path übernommen. Jede Kurzform erzeugt direkt denselben
+`command::inspect::query::Command` wie die ausgeschriebene JSON-Form. Weitere Kurzformen werden nicht
+aus dem Inspect-Schema abgeleitet.
+
+Fehlerhafte JSON-Syntax, ein anderer JSON-Wert als ein Objekt, strukturell ungültige Argumente,
+unbekannte Felder und fehlerhafte Kurzform-Operanden werden lokal angezeigt. Die REPL sendet in
+diesen Fällen keinen Command; deshalb entstehen weder Request-ID noch `pending`-Anzeige. Ein
+erfolgreich dekodierter Command wird dagegen normal angenommen. Fachliche Fehler wie
+`unknown_type_path` oder `entity_not_found` erscheinen anschließend als korrelierte
+Command-Ablehnung.
+
+`help inspect` zeigt die vier Kurzformen und kopierbare JSON-Beispiele für alle Entity- und
+Resource-Projektionen. Parser-Fixtures vergleichen jede Kurzform mit ihrer JSON-Form und decken
+außerdem alle Projektionen, lokale Parsefehler und korrelierte fachliche Ablehnungen ab. Die
+Entscheidung ist in
+[`ADR-0019`](../adr/0019-repl-uses-json-for-complex-inspect-queries.md) festgehalten.
 
 ### Session Script
 
 #### Festgelegtes Ziel
 
-- `host::script` führt eine vorab beschriebene Liste von Commands gegen eine bereits laufende
-  `session::Session` aus. Das Modul startet und beendet keine Session, schreibt keine Darstellung
-  und bestimmt keinen Prozess-Exit-Code. `Script::parse` erhält den bereits gelesenen Dateiinhalt;
-  Dateizugriff und die übrige Ablaufverantwortung bleiben bei `host::run`.
+- `host::script` führt eine vorab beschriebene Liste von Commands über eine bestehende
+  `host::client`-Verbindung aus. Das Modul startet und besitzt keine Session. Ohne ausdrücklichen
+  Shutdown trennt sich der Script-Client nach seinem Ablauf, während die Session bestehen bleibt.
+  `Script::parse` erhält den bereits gelesenen Dateiinhalt; Dateizugriff und Client-Verbindung
+  bleiben außerhalb des Script-Moduls.
 - Das persistierte Format ist ein versioniertes JSON-Dokument mit einem `commands`-Array. Jeder
   Eintrag besitzt exakt dieselbe Form aus qualifiziertem Command-Namen und `arguments`-Objekt, die
-  ein Agent als einzelne JSONL-Zeile einreicht und die die REPL aus menschlicher Eingabe erzeugt.
+  MCP, Client-Protokoll und REPL verwenden.
 - Das Script-Format besitzt keine eigenen Step-Varianten, Namen, Request-IDs, Send-/Receive-Regeln,
   Erwartungen, Assertions, Bedingungen, Schleifen oder zeitbasierten Waits.
 - `Script::parse` liest und validiert das vollständige Dokument, bevor ein Command ausgeführt werden
@@ -2285,12 +2461,12 @@ Die Agent-Form folgt diesem Muster:
   aktuelle `Script`-Laufzeitmodell übernommen. Ein späterer Parser darf ältere Formatversionen in
   dieses Modell übersetzen. `Script::new` validiert programmatisch erzeugte Commands nach denselben
   Regeln.
-- Ein Script darf keinen Shutdown-Command enthalten. Der aufrufende Host besitzt den
-  Session-Lebenszyklus und führt den Shutdown nach dem gewählten Ablauf aus.
-- `script::run` reicht alle Commands in Dateireihenfolge an `Session::send` weiter. Nach der
-  unmittelbaren Vergabe einer Request-ID wird der nächste Command eingereicht; auf das terminale
-  Outcome wird dabei nicht gewartet. Dadurch dürfen beliebig viele Script-Commands gleichzeitig
-  ausstehen.
+- Ein Script darf `command::Command::Shutdown` ausdrücklich enthalten. Der Serveradapter routet ihn
+  zu `Session::shutdown`; das Script implementiert keine Shutdown-Regel. HS4 legt fest, an welcher
+  Position Shutdown zulässig ist und wann vorherige Script-Commands terminal sein müssen.
+- `script::run` reicht Commands in Dateireihenfolge an `host::client` weiter. Die genaue
+  Einreichungs- und Wartefolge wird nach HS3 und HS4 erneut geprüft, damit der gemeinsame
+  Activity-Stream und ein möglicher Shutdown nicht umgangen werden.
 - Nachdem alle Commands eingereicht wurden, sammelt `run` sämtliche noch ausstehenden Outcomes ein.
   Die Zuordnung zum ursprünglichen Array-Eintrag erfolgt intern über die von `Session` vergebene
   Request-ID. Terminale Outcomes dürfen in jeder Reihenfolge eintreffen.
@@ -2313,7 +2489,13 @@ Die JSON-Form folgt diesem Muster:
     },
     {
       "command": "inspect.query",
-      "arguments": {}
+      "arguments": {
+        "source": "entities",
+        "entity": null,
+        "with": [],
+        "without": [],
+        "projection": { "kind": "summary" }
+      }
     },
     {
       "command": "tick.warp.stop",
@@ -2331,7 +2513,7 @@ Die JSON-Form folgt diesem Muster:
 - Script-Parsing und strukturelle Validierung müssen vor der ersten Session-Mutation abgeschlossen
   sein. Dateipfade und Dateifehler ergänzt der aufrufende Host außerhalb des Script-Moduls.
 - Das Script besitzt keine eigene Korrelationslogik im persistierten Format. Es verwendet intern die
-  von `Session` vergebenen Request-IDs und dieselben Pending- und Outcome-Regeln wie Agent und REPL.
+  von `Session` vergebenen Request-IDs und denselben Activity-Stream wie MCP und REPL.
 - Das neue persistierte Format erhält eine eigene Formatversion. Seine Command-Einträge verwenden
-  jedoch dieselbe qualifizierte Command- und Argumentform wie Agent und Wire-Codec, damit keine
-  zweite Command-Sprache entsteht.
+  jedoch dieselbe qualifizierte Command- und Argumentform wie Client-Protokoll, MCP und Wire-Codec,
+  damit keine zweite Command-Sprache entsteht.

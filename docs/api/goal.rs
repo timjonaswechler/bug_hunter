@@ -6,10 +6,17 @@ mod handle {
 }
 
 mod command {
-    pub trait Request: Into<Command> {
+    mod private {
+        pub trait Sealed {}
+    }
+
+    // Nur die von bug_hunter definierten konkreten Command-Typen implementieren dieses Trait.
+    pub trait Request: private::Sealed + Into<Command> {
         type Output;
     }
 
+    // Gemeinsame typgelöschte Darstellung für Parsing, History, Recording und interne Ausführung.
+    // Dieser Typ implementiert nicht Request. Shutdown ist nur über Session::shutdown ausführbar.
     pub enum Command {
         Input(input::Command),
         Tick(tick::Command),
@@ -742,6 +749,8 @@ mod session {
 
         pub fn capabilities(&self) -> &Capabilities;
 
+        // Akzeptiert nur die versiegelten konkreten Request-Typen. Die dynamische Verarbeitung von
+        // command::Command für die eingebauten Host-Abläufe bleibt crate-intern bei session.
         pub fn send<C>(&mut self, command: C) -> Result<Pending<C::Output>, Error>
         where
             C: crate::command::Request;
@@ -776,49 +785,44 @@ mod session {
 
 #[cfg(feature = "host")]
 pub mod host {
-    // Einziger öffentlicher Host-Einstieg. Die Implementation liest intern eine versionierte
-    // TOML-Konfiguration. Config-, CLI- und Controller-Typen bleiben privat.
+    // OPEN(HS1-HS4, H7): Gegen den persistenten Session-Host neu prüfen, ob ein Einstiegspunkt für
+    // Serverstart und alle Client-Aufrufe ausreicht. Config-, CLI- und
+    // Client-Typen bleiben privat.
     pub fn run(config_source: &str) -> std::process::ExitCode;
 
+    mod server {
+        // Zunächst besitzt genau ein lokaler Serverprozess genau eine session::Session. Seine
+        // Lebensdauer ist von verbundenen Clients unabhängig. Start, Discovery, Transport,
+        // Activity-Stream und Shutdown werden in HS1 bis HS4 abgeschlossen.
+    }
+
+    mod client {
+        // Gemeinsame private Seam für REPL, Script und MCP. Der Server besitzt Pending-Arbeit und
+        // Activity-Cursor über einzelne Client-Verbindungen hinaus.
+        pub struct Client {}
+    }
+
+    mod mcp {
+        // Agent-Fassade aus begrenzten Tool-Aufrufen über host::client. Sie setzt kein dauerhaft
+        // stdout lesendes Sprachmodell voraus. Das konkrete Tool-Interface wird in H4 festgelegt.
+    }
+
     mod repl {
+        // Komplexe Inspect-Queries verwenden `inspect query <arguments-json>` und damit direkt den
+        // gemeinsamen Inspect-Codec. Vier feste Kurzformen erzeugen lediglich häufige Commands;
+        // die REPL besitzt kein eigenes Query-Modell und keine vollständige Inspect-Flag-Sprache.
         pub enum Exit {
             Quit,
             InputClosed,
             Interrupted,
         }
 
-        pub fn run(session: &mut crate::session::Session) -> Result<Exit, Error>;
+        pub fn run(client: &mut super::client::Client) -> Result<Exit, Error>;
 
         pub enum Error {
             Terminal { message: String },
             Session(crate::session::Error),
-            ActiveRecordingOnInputClose,
         }
-    }
-
-    mod agent {
-        pub enum Exit {
-            InputClosed,
-        }
-
-        // Liest dieselben JSON-Command-Einträge, die auch ein Script enthält. Der Agent liefert
-        // keine Request-ID. Session vergibt sie und die JSONL-Ausgabe meldet für jeden gültigen
-        // Eintrag zuerst pending und später genau ein terminales Outcome. Jede Meldung enthält
-        // Request-ID und qualifizierten Command-Namen.
-        pub fn run(
-            session: &mut crate::session::Session,
-            input: impl std::io::BufRead,
-            output: impl std::io::Write,
-        ) -> Result<Exit, Error>;
-
-        pub enum Error {
-            Input { message: String },
-            Output { message: String },
-            Session(crate::session::Error),
-        }
-
-        // OPEN: Kontrollierten Abschluss, EOF bei noch laufenden Commands und Session-Events
-        // zusammen mit dem übrigen Agent-Interface festlegen.
     }
 
     mod script {
@@ -860,14 +864,15 @@ pub mod host {
             },
         }
 
-        // Reicht alle Commands in Dateireihenfolge an Session weiter, ohne auf terminale Outcomes
-        // zu warten. Danach werden alle noch ausstehenden Outcomes ungeordnet eingesammelt.
-        // Session-Start, Shutdown, Dateizugriff, Darstellung und Exit-Code bleiben beim Host.
+        // OPEN(HS3, HS4): Einreichungs- und Wartefolge gegen Activity-Stream und Shutdown prüfen.
+        // Ein ausdrücklicher Shutdown wird vom Server zu Session::shutdown geroutet; das Script
+        // besitzt die Session nicht.
         pub fn run(
-            session: &mut crate::session::Session,
+            client: &mut super::client::Client,
             script: &Script,
         ) -> Result<Outcome, Error>;
 
+        // OPEN(HS2, HS3): Client- und Cursorfehler ergänzen, ohne Session-Interna offenzulegen.
         pub enum Error {
             InvalidScript {
                 command_index: Option<usize>,

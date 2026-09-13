@@ -36,15 +36,18 @@ Diese lineare Reihenfolge ist der Arbeitsplan. Jeder Punkt wird abgeschlossen un
 17. [x] **RP2:** Das Replay-Interface abschließen.
 18. [x] **SR1:** Die Seam zwischen Session-Beobachtung und Reporting festlegen.
 19. [x] **S1:** Alle verbleibenden Session-Fragen als konkrete `OPEN`-Punkte erfassen.
-20. [ ] **S2:** `session::Session` und seine direkten Module abschließen.
-21. [ ] **H1:** Die REPL-Syntax für komplexe Inspect-Queries festlegen.
-22. [ ] **H2:** Das Agent-Verhalten bei ungültigen JSONL-Eingaben festlegen.
-23. [ ] **H3:** Die Ausgabe von Session-Events und unerwartetem Session-Ende im Agent-Modus
-    festlegen.
-24. [ ] **H4:** EOF und kontrollierten Abschluss des Agent-Modus festlegen.
-25. [ ] **H5:** Die Capability-Anforderungen der einzelnen Host-Abläufe festlegen.
-26. [ ] **H6:** Alle verbleibenden Host-Fragen als konkrete `OPEN`-Punkte erfassen.
-27. [ ] **H7:** `host::run` und die öffentliche Host-Fassade abschließen.
+20. [x] **S2:** `session::Session` und seine direkten Module abschließen.
+21. [ ] **HS1:** Lebensdauer und Discovery des persistenten Session-Hosts festlegen.
+22. [ ] **HS2:** Lokalen Client-Transport und Zugriffsschutz festlegen.
+23. [ ] **HS3:** Den gemeinsamen Activity-Stream und seine Cursor-Regeln festlegen.
+24. [ ] **HS4:** Mehrere Clients, Command-Annahme und Shutdown festlegen.
+25. [x] **H1:** Die REPL-Syntax für komplexe Inspect-Queries festlegen.
+26. [ ] **H2:** Ungültige Agent-Eingaben gegen das Client-Protokoll neu prüfen.
+27. [ ] **H3:** Die Ausgabe von Session-Events im gemeinsamen Activity-Stream neu prüfen.
+28. [ ] **H4:** Agent-Tool-Runden, Warten und Verbindungstrennung festlegen.
+29. [ ] **H5:** Die Capability-Anforderungen der einzelnen Client-Abläufe festlegen.
+30. [ ] **H6:** Alle verbleibenden Host-Fragen als konkrete `OPEN`-Punkte erfassen.
+31. [ ] **H7:** Session-Host, Clients und die öffentliche Host-Fassade abschließen.
 
 Die Detailabschnitte unten beschreiben für jeden Punkt Owner, Voraussetzungen und erwartetes
 Ergebnis.
@@ -818,7 +821,93 @@ Die interne Datenstruktur für laufende Command-Arbeit im Bevy-Event-Loop wird e
 Implementation entworfen. Sie ist kein offener Teil des öffentlichen Ziel-Interfaces, solange sie
 die beschlossenen Fairness-, Reihenfolge- und World-Zugriffsregeln erfüllt.
 
-## Stufe 5: Controller auf dem fertigen Session-Interface abschließen
+**Teilentscheidung:** `command::Request` bleibt das versiegelte Interface der konkreten
+`bug_hunter`-Commands und verbindet jeden Request mit genau einem Output-Typ. Die typgelöschte
+`command::Command`-Darstellung implementiert `Request` nicht; insbesondere kann ihre
+`Shutdown`-Variante die Vorbedingungen von `Session::shutdown` nicht umgehen.
+
+Der Session-Host verwendet einen crate-internen Adapter von `session`, der validierte
+`command::Command`-Werte über denselben Koordinator einreicht und ihre Outcomes typgelöscht
+bereitstellt. Eine interne Aktivitätsbenachrichtigung weckt den Host bei neuen Outcomes oder Events.
+Das öffentliche Interface erhält weder ein zweites dynamisches `send` noch `receive_any`. Die
+Entscheidung steht in
+[`ADR-0018`](../adr/0018-public-requests-are-typed-and-sealed.md).
+
+**S2 abgeschlossen:** `session::Config` enthält ausschließlich Launch, Artifact-Root, Tick- und
+Report-Konfiguration. `launch::Config` verankert die Session an einem Cargo-Manifest und verlangt
+Package sowie Binary oder Example. `Capabilities` bleibt der unveränderliche Snapshot des
+Ready-Handshakes und enthält derzeit nur die optionale Screenshot-Unterstützung.
+
+`RequestId`, das versiegelte `Request`-Trait und `Pending` bilden das öffentliche
+Command-Interface. `send` trennt Annahme und Ergebnis; `try_receive` und `receive` entnehmen das
+Ergebnis genau einmal. Die typgelöschte Host-Ausführung bleibt privat. History ist ausschließlich
+über den Report-Kontext sichtbar. Session-Events besitzen eine begrenzte Queue und enden bei einem
+unerwarteten Session-Ende mit genau einem typisierten `Ended`.
+
+`Session::start`, `capabilities`, Command-Annahme, Ergebnis- und Event-Empfang sowie
+`Session::shutdown` decken den vollständigen öffentlichen Lebenszyklus ab. Die Fehlergruppen
+unterscheiden Fehler vor dem Start, lokale Bedien- und Command-Fehler sowie ein terminales
+Session-Ende. Shutdown und Drop folgen ADR-0017. Es gibt keinen öffentlichen Session-Status,
+History-Accessor, Transportadapter, dynamischen Command-Einstieg oder Async-Runtime-Vertrag.
+
+Alle Signaturen in `goal.rs` sind damit gegen die Session-Regeln in `migration.md` und ADR-0010 bis
+ADR-0018 geprüft. Der Session-Host darf diese Regeln verwenden, aber keine eigene Command-Annahme,
+Request-ID-Vergabe, Pending-Semantik oder Shutdown-Ausführung ergänzen. Sein dynamischer Adapter
+routet `Command::Shutdown` ausschließlich zu `Session::shutdown`.
+
+## Stufe 5: persistenten Session-Host und seine Clients abschließen
+
+[`ADR-0022`](../adr/0022-session-host-outlives-clients.md) ersetzt das bisherige Modell, in dem
+`host::run` genau einen direkt auf `&mut Session` arbeitenden Controller startet und nach dessen Ende
+automatisch herunterfährt. Ein lokaler Session-Host besitzt die Session nun unabhängig von seinen
+Clients. Deshalb werden die transportabhängigen Teile von H2 und H3 erneut geprüft und das bisherige
+EOF-Thema H4 ersetzt.
+
+### HS1: Lebensdauer und Discovery des Session-Hosts
+
+- **Art:** Entscheidung
+- **Owner:** `host::server`
+- **Benötigt:** S2
+
+Festzulegen sind Start, Lebensdauer und Auffinden des zunächst genau einer Session zugeordneten
+Hostprozesses. Dazu gehören Session-ID, Endpoint-Metadaten, Vorder- oder Hintergrundstart,
+Bereitschaftssignal, Erkennung verwaister Metadaten und Aufräumen nach normalem sowie unerwartetem
+Serverende. Das Ende des startenden Clients darf den Server nicht beenden.
+
+### HS2: lokaler Client-Transport und Zugriffsschutz
+
+- **Art:** Entscheidung
+- **Owner:** `host::server` und `host::client`
+- **Benötigt:** HS1
+
+Festzulegen sind der plattformübergreifende lokale Transport, Framing und Version des
+Client-Protokolls, Endpoint-Discovery, lokale Berechtigungen beziehungsweise Authentisierung sowie
+das Verhalten bei Verbindungsaufbau, Protokollfehler und Verbindungsabbruch. Das interne Session
+Protocol v3 bleibt davon getrennt.
+
+### HS3: gemeinsamer Activity-Stream
+
+- **Art:** Entscheidung
+- **Owner:** `host::server` und `host::client`
+- **Benötigt:** HS2
+
+Festzulegen ist ein begrenzt aufbewahrter, wiederaufnehmbarer Strom aus Command-Annahmen,
+terminalen Outcomes, Session-Events und späteren Report-Ergebnissen. Zu bestimmen sind Cursor,
+Reihenfolge, Aufbewahrungsgrenze, Gap-Meldung bei einem zu alten Cursor sowie die Semantik von
+sofortigem `poll` und wartendem `wait`. Der Cursor ist eine Transportposition und keine zweite
+Request-ID.
+
+### HS4: mehrere Clients, Command-Annahme und Shutdown
+
+- **Art:** Entscheidung
+- **Owner:** `host::server` und `host::client`
+- **Benötigt:** HS3
+
+Festzulegen sind die Empfangsreihenfolge gleichzeitig sendender Clients, die Sichtbarkeit von
+Commands und Outcomes anderer Clients sowie der serverseitige Besitz ausstehender Arbeit.
+Client-Trennung darf weder Stop noch Shutdown senden. REPL, Script und MCP-Agent dürfen dagegen
+`command::Command::Shutdown` ausdrücklich einreichen; der gemeinsame Adapter routet ausschließlich
+diese Variante zu `Session::shutdown`.
 
 ### H1: komplexe Inspect-Eingaben der REPL
 
@@ -829,41 +918,81 @@ die beschlossenen Fairness-, Reihenfolge- und World-Zugriffsregeln erfüllt.
 Die Textsyntax für komplexe Inspect-Queries wird auf die fertige gemeinsame Command-Form
 abgebildet. Sie darf keine zweite fachliche Query-Darstellung erzeugen.
 
+**Abgeschlossen:** `inspect query <arguments-json>` übernimmt für komplexe Queries genau das
+gemeinsame `arguments`-Objekt von `inspect.query` und dekodiert es mit demselben Codec wie
+Client-Protokoll, MCP, Script und Wire-Protokoll. Die REPL besitzt keinen eigenen Inspect-Query-Typ
+und keine vollständige Flag-Sprache.
+
+Die festen Kurzformen `inspect entities`, `inspect entity <index>:<generation>`,
+`inspect resources` und `inspect resource <type-path>` erzeugen unmittelbar vier häufige gemeinsame
+Commands. Lokale Syntax- und Strukturfehler erhalten keine Request-ID; fachliche Ablehnungen eines
+erfolgreich dekodierten Commands durchlaufen die normale Session-Korrelation. Die vollständige
+Entscheidung steht in
+[`ADR-0019`](../adr/0019-repl-uses-json-for-complex-inspect-queries.md).
+
 ### H2: ungültige Agent-Eingaben
 
 - **Art:** Entscheidung
-- **Owner:** `host::agent`
-- **Benötigt:** P1, S2
+- **Owner:** `host::mcp` und `host::client`
+- **Benötigt:** P1, HS2, HS3, HS4
 
-Festzulegen ist das Verhalten für ungültige JSONL-Zeilen und syntaktisch gültige Einträge, die nicht
-als Command dekodiert werden können. Zu bestimmen sind Ausgabeform, Fortsetzung nach dem Fehler und
-die Frage, ob für nie angenommene Eingaben eine Request-ID existiert.
+Erneut zu prüfen ist das Verhalten für Eingaben, die nicht als Command dekodiert werden können.
+ADR-0020 legt weiterhin die Fehlerklassen `invalid_json` und `invalid_command` sowie die Regel fest,
+dass eine nie angenommene Eingabe keine Request-ID verbraucht. Das gemeinsame Client-Protokoll und
+die MCP-Tool-Grenze bestimmen jedoch neu, ob Zeilennummer, Fortsetzung und bisherige
+`input_error`-Hülle erhalten bleiben.
+
+**Bisher beschlossen:** Vollständig gelesene ungültige Zeilen erzeugen eine maschinenlesbare
+`input_error`-Meldung mit physischer `input_line` und `request_id: null`. Ungültiges JSON und
+ungültiges UTF-8 verwenden `invalid_json`; syntaktisch gültige, aber nicht als erlaubter
+Agent-Command dekodierbare Werte verwenden `invalid_command`. Weitere stabile Eingabefehlercodes
+gibt es nicht.
+
+Die Session bleibt bei diesen Fehlern unberührt und der Agent liest die nächste Zeile. Erst ein
+erfolgreich dekodierter `command::Command` überschreitet die Session-Grenze und kann eine Request-ID
+oder ein fachliches `rejected` erhalten. `shutdown` ist nach ADR-0022 ein erlaubter Client-Command
+und kein `invalid_command`. Die noch gültigen Teile der Entscheidung stehen in
+[`ADR-0020`](../adr/0020-invalid-agent-input-stays-local.md).
 
 ### H3: Session-Events im Agent-Modus
 
 - **Art:** Entscheidung
-- **Owner:** `host::agent`
-- **Benötigt:** S2
+- **Owner:** `host::server`, `host::client` und `host::mcp`
+- **Benötigt:** S2, HS3, HS4
 
-Festzulegen ist, wie nicht fatale Session-Events und ein unerwartetes Session-Ende in der
-maschinenlesbaren Ausgabe erscheinen. Die Darstellung muss von terminalen Command-Outcomes
-unterscheidbar sein.
+Erneut zu prüfen ist, wie nicht fatale Session-Events und ein unerwartetes Session-Ende als Einträge
+des gemeinsamen Activity-Streams erscheinen. Die Event- und EndReason-Payloads aus ADR-0021 bleiben;
+äußere Hülle, Cursor und Reihenfolge gegenüber den übrigen Activity-Einträgen folgen jedoch HS3.
 
-### H4: EOF und kontrollierter Agent-Abschluss
+**Bisher beschlossen:** Alle Session-Events verwenden `status: "session_event"` und
+`request_id: null`; `event.kind` bildet die bestehende `session::Event`-Variante direkt ab. Normale
+Events werden in Session-FIFO-Reihenfolge ausgegeben, beenden den Agent-Ablauf nicht und dürfen sich
+nach Verfügbarkeit mit Command-Outcomes verzahnen.
+
+Bei `Ended` erhalten alle noch unbeantworteten Commands zunächst in Annahmereihenfolge ein
+terminales `failed` mit `session_ended`. Danach erscheint `Ended` als letzte JSONL-Meldung der
+Session, und der Agent nimmt keine Eingaben mehr an. Die Darstellung des Report-Provider-Ergebnisses
+bleibt Teil der allgemeinen Host-Ausgabe. Diese Regeln werden unter dem persistenten Servermodell
+gegen Client-Trennung, Cursor und Wiederaufnahme geprüft. Die bisherige Entscheidung steht in
+[`ADR-0021`](../adr/0021-agent-serializes-session-events-separately.md).
+
+### H4: Agent-Tool-Runden, Warten und Verbindungstrennung
 
 - **Art:** Entscheidung
-- **Owner:** `host::agent`
-- **Benötigt:** H2, H3
+- **Owner:** `host::mcp`
+- **Benötigt:** HS4, H2, H3
 
-Festzulegen ist das Verhalten bei EOF mit ausstehenden Commands, laufendem Replay oder aktivem
-Recording. Der Agent darf keine versteckten Stop-Commands senden und kein Recording stillschweigend
-beenden. Danach kann das `host::agent::Exit`- und Fehler-Interface abgeschlossen werden.
+Festzulegen sind begrenzte MCP-Tool-Aufrufe für Command-Annahme und das Abfragen beziehungsweise
+Abwarten von Activity. Zu bestimmen ist, wann ein Tool-Aufruf zum Sprachmodell zurückkehrt, wie es
+seinen Cursor fortsetzt und wie Fehler des Client-Transports erscheinen. Das Ende eines Tool-Aufrufs
+oder einer Client-Verbindung darf keine Session-Arbeit verändern. Ein ausdrücklicher Shutdown bleibt
+ein normaler Client-Command an den gemeinsamen Adapter.
 
 ### H5: konkrete Capability-Anforderungen der Host-Abläufe
 
 - **Art:** Entscheidung
 - **Owner:** privates `host::run`-Modul
-- **Benötigt:** H1, H4 und das bereits skizzierte `host::script`
+- **Benötigt:** HS4, H1, H4 und das bereits skizzierte `host::script`
 
 Für REPL, Agent und Script ist festzulegen, wie der Host ihre benötigten Capabilities vor dem Start
 des Ablaufs bestimmt. Die Darstellung bleibt privat, muss aber aus den tatsächlich verwendeten
@@ -882,22 +1011,24 @@ Commands ableitbar sein und darf keine zweite Capability-Definition neben
 `OPEN`-Punkte erfasst, statt fehlende Details anzunehmen. Geprüft werden:
 
 - das private versionierte TOML-Format,
-- die Auswahl von REPL, Agent, Script und reinem Report-Aufruf,
+- Start und Discovery von Session-Host, REPL-, Script-, MCP- und reinem Report-Client,
 - CLI-Syntax und erlaubter Artifact-Override,
 - Dateizugriffe für Config, Script, Recording, Replay und Reports,
 - Fehlerdarstellung und Exit-Code-Zuordnung,
+- Darstellung erzeugter Reports und ihrer Provider-Ergebnisse,
 - Capability-Prüfung,
-- sauberer Shutdown nach jedem Ablauf.
+- sauberer ausdrücklicher Shutdown und Serverende ohne automatische Kopplung an einen Client.
 
-### H7: `host::run` und die Host-Fassade abschließen
+### H7: Session-Host, Clients und Host-Fassade abschließen
 
 - **Art:** Abschluss
 - **Owner:** `host`
 - **Benötigt:** H6 und alle dort erfassten Entscheidungen
 
-Zum Schluss wird der gesamte Ablauf von `host::run(config_source)` geprüft. Mit dem Feature `host`
-bleibt `host::run` der einzige öffentliche Export. Ohne das Feature existiert `host` nicht. Private
-CLI-, Config-, Controller- und Orchestrierungstypen dürfen nicht nach außen gelangen.
+Zum Schluss werden der Session-Host, die gemeinsame Client-Seam, REPL, Script und MCP-Fassade gegen
+alle Entscheidungen geprüft. Ob `host::run(config_source)` als einziger öffentlicher Export für
+Serverstart und Client-Aufrufe ausreicht, wird dabei ausdrücklich neu bewertet. Ohne das Feature
+`host` existiert `host` weiterhin nicht.
 
 ## Kurzform der Kausalkette
 
@@ -910,10 +1041,11 @@ R5 ------------------+-> R6 -> R7 -> R8 -> RP1 -> RP2
                                   +-> SR1 -----------+
 R5 -------------------------------------------------+-> S1 -> S2
                                                          |
-I5 + P1 + S2 -> H1                                      |
-P1 + S2 -> H2 -> H4                                     |
-S2 -------> H3 -> H4                                    |
-H1 + H4 -> H5 -> H6 -> H7 <-----------------------------+
+S2 -> HS1 -> HS2 -> HS3 -> HS4                          |
+I5 + P1 + S2 ---------------------> H1                   |
+P1 + HS2 + HS3 + HS4 ------------> H2 -> H4             |
+S2 + HS3 + HS4 ------------------> H3 -> H4             |
+HS4 + H1 + H4 -> H5 -> H6 -> H7 <-----------------------+
 ```
 
 ## Nicht als vorgelagerte API-Entscheidung behandeln
