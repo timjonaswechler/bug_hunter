@@ -1,7 +1,7 @@
-//! Explicit controlled-frame advancement and the per-session controlled clock.
+//! Explicit controlled-frame stepping and the per-session controlled clock.
 //!
 //! Controlled Sessions have no background simulation clock: controlled schedules run only for
-//! requested advances. Each frame uses the requested fixed step and is counted only after it
+//! requested steps. Each frame uses the requested fixed step and is counted only after it
 //! completes.
 
 use bevy::prelude::Resource;
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{fmt, time::Duration};
 
-/// Maximum number of simulation frames accepted by one advance command.
+/// Maximum number of simulation frames accepted by one step command.
 pub const MAX_FRAMES: u64 = 10_000;
 /// Maximum controlled delta accepted for one simulation frame.
 pub const MAX_STEP_NANOSECONDS: u64 = 1_000_000_000;
@@ -19,7 +19,7 @@ pub const MAX_STEP_NANOSECONDS: u64 = 1_000_000_000;
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     /// Runs `frames` controlled frames, each with the same controlled-time step.
-    Advance {
+    Step {
         /// Number of frames to complete.
         frames: u64,
         /// Controlled delta applied to every frame.
@@ -28,9 +28,9 @@ pub enum Command {
 }
 
 impl Command {
-    /// Constructs an explicit frame-advance request.
-    pub const fn advance(frames: u64, step_nanoseconds: u64) -> Self {
-        Self::Advance {
+    /// Constructs an explicit frame-step request.
+    pub const fn step(frames: u64, step_nanoseconds: u64) -> Self {
+        Self::Step {
             frames,
             step_nanoseconds,
         }
@@ -38,7 +38,7 @@ impl Command {
 
     /// Enforces positive values and the per-command frame and step maxima.
     pub fn validate(&self) -> Result<(), Error> {
-        let Self::Advance {
+        let Self::Step {
             frames,
             step_nanoseconds,
         } = *self;
@@ -57,12 +57,12 @@ impl Command {
         Ok(())
     }
 
-    pub(crate) const fn into_advance(self) -> Advance {
+    pub(crate) const fn into_step(self) -> Step {
         match self {
-            Self::Advance {
+            Self::Step {
                 frames,
                 step_nanoseconds,
-            } => Advance {
+            } => Step {
                 frames,
                 step: Duration::from_nanos(step_nanoseconds),
             },
@@ -71,7 +71,7 @@ impl Command {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Advance {
+pub(crate) struct Step {
     pub frames: u64,
     pub step: Duration,
 }

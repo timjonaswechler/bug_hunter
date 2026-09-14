@@ -38,7 +38,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         SessionOptions::new().with_artifact_dir(&artifact_root),
     )?;
     let ready = session.ready()?;
-    assert_eq!(ready.mode, bug_hunter::RunMode::Rendered);
+    assert!(ready.controls.contains(&"screenshot".into()));
     advance(&mut session, 1)?;
 
     let targets = observe(&mut session, Selector::Targets, Projection::Summary)?;
@@ -232,7 +232,7 @@ fn pointer(
 }
 
 fn advance(session: &mut Session, frames: u64) -> Result<(), Box<dyn std::error::Error>> {
-    session.request(Command::Time(TimeCommand::advance(frames, 16_666_667)))?;
+    session.request(Command::Time(TimeCommand::step(frames, 16_666_667)))?;
     Ok(())
 }
 

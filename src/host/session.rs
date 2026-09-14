@@ -1,6 +1,6 @@
 //! Child-process lifecycle and synchronous JSONL protocol client.
 //!
-//! A Debug Host normally follows `spawn` → [`Session::ready`] → requests/waits →
+//! A Debug Host normally follows `spawn` → [`Session::ready`] → requests →
 //! [`Session::shutdown`]. Child stdout is protocol-only; stderr is streamed separately into the
 //! rolling diagnostics buffer.
 
@@ -13,10 +13,7 @@ use super::{
         SessionOutcome,
     },
 };
-use crate::{
-    bug_hunter_ARTIFACT_DIR, Command, PROTOCOL_VERSION, Ready, Request, Response,
-    ResponseStatus, observation::Request as ObservationRequest, time::Command as TimeCommand,
-};
+use crate::{Command, PROTOCOL_VERSION, Ready, Request, Response, ResponseStatus, bug_hunter_ARTIFACT_DIR};
 use serde_json::Value;
 use std::{
     fmt,
@@ -30,7 +27,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-/// Process, transport, protocol, request, or bounded-wait failure.
+/// Process, transport, protocol, or request failure.
 #[derive(Debug)]
 pub enum DriverError {
     /// Child process could not be launched or piped.
@@ -43,13 +40,6 @@ pub enum DriverError {
     Child(String),
     /// The child returned a protocol-level error response.
     RequestFailed(Response),
-    /// An observation predicate remained false after the configured controlled frames.
-    WaitLimitReached {
-        /// Number of frames advanced before stopping.
-        frame_limit: u64,
-        /// Final observation result received.
-        last_observation: Value,
-    },
 }
 
 impl fmt::Display for DriverError {
@@ -60,10 +50,6 @@ impl fmt::Display for DriverError {
             Self::Protocol(message) => write!(formatter, "protocol error: {message}"),
             Self::Child(message) => formatter.write_str(message),
             Self::RequestFailed(response) => write!(formatter, "request failed: {response:?}"),
-            Self::WaitLimitReached { frame_limit, .. } => write!(
-                formatter,
-                "observation condition was not met within {frame_limit} controlled frames"
-            ),
         }
     }
 }
@@ -78,7 +64,7 @@ impl std::error::Error for DriverError {}
 /// root. If omitted, the child root falls back to `artifact_dir`, then to `artifacts`.
 ///
 /// ```
-/// use bug_hunter::driver::SessionOptions;
+/// use bug_hunter::host::SessionOptions;
 /// let options = SessionOptions::new()
 ///     .with_artifact_dir("artifacts/host")
 ///     .with_session_artifact_dir("artifacts/sessions/alpha");
@@ -151,14 +137,13 @@ impl SessionOptions {
         self
     }
 
-    /// Sets explicit Session Recording identity, expected mode, and opaque host configuration.
+    /// Sets explicit Session Recording identity, expected  and opaque host configuration.
     pub fn with_recording_context(
         mut self,
         session_id: impl Into<String>,
-        mode: crate::RunMode,
         configuration: Value,
     ) -> Self {
-        self.recording.context = SessionContext::new(session_id, mode, configuration);
+        self.recording.context = SessionContext::new(session_id, configuration);
         self.recording.context_explicit = true;
         self
     }
@@ -283,17 +268,7 @@ impl Session {
                 DriverError::Protocol(format!("invalid ready message: {ready:?}")),
             );
         }
-        if self.recording.context_explicit && ready.mode != self.recording.context.mode {
-            return self.fail(
-                "ready_mode_mismatch",
-                DriverError::Protocol(format!(
-                    "child reported mode {:?}, expected {:?}",
-                    ready.mode, self.recording.context.mode
-                )),
-            );
-        }
         if !self.recording.context_explicit {
-            self.recording.context.mode = ready.mode;
             self.recording.context.protocol_version = ready.version;
         }
         self.recording.ready = true;
@@ -489,42 +464,6 @@ impl Session {
             kind: kind.into(),
             message: message.into(),
         })
-    }
-
-    /// Repeats an observation and advances one controlled frame after each miss.
-    ///
-    /// The predicate runs first against the current state. At most `limit` controlled frames are
-    /// then advanced.
-    pub fn wait_for_observation<F>(
-        &mut self,
-        request: ObservationRequest,
-        limit: super::wait::FrameLimit,
-        mut predicate: F,
-    ) -> Result<Response, DriverError>
-    where
-        F: FnMut(&Value) -> bool,
-    {
-        let mut response = self.request(Command::Observe(request.clone()))?;
-        for advanced_frames in 0..=limit.frames {
-            let observation = response.result.as_ref().ok_or_else(|| {
-                DriverError::Protocol("completed observation has no result".into())
-            })?;
-            if predicate(observation) {
-                return Ok(response);
-            }
-            if advanced_frames == limit.frames {
-                return Err(DriverError::WaitLimitReached {
-                    frame_limit: limit.frames,
-                    last_observation: observation.clone(),
-                });
-            }
-            self.request(Command::Time(TimeCommand::advance(
-                1,
-                limit.step_nanoseconds,
-            )))?;
-            response = self.request(Command::Observe(request.clone()))?;
-        }
-        unreachable!("the bounded wait loop always returns")
     }
 
     /// Checks that the child is still running without exposing its process status to Controllers.

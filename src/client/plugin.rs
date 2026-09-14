@@ -1,15 +1,14 @@
 //! Bevy integration for controlled schedules, Virtual Input isolation, and protocol transport.
 //!
-//! The plugin runs controlled schedules only for explicit time advances, queues Virtual Input for
-//! controlled frames, and discards native keyboard, pointer, text, and scroll input. [`RunMode`] is
-//! handshake metadata, not a request to install or remove a renderer or window. Screenshot
+//! The plugin runs controlled schedules only for explicit time steps, queues Virtual Input for
+//! controlled frames, and discards native keyboard, pointer, text, and scroll input. Screenshot
 //! capability remains conditional on the embedding composition.
 
 use crate::{
     keyboard::{self as virtual_keyboard, Command as KeyboardCommand, State as KeyboardState},
     observation::{self, Request as ObservationRequest},
     pointer::{self, Command as PointerCommand, State as PointerState},
-    protocol::{self, Command, Response, RunMode},
+    protocol::{self, Command, Response},
     screenshot::{self, Command as ScreenshotCommand},
     text::{self as virtual_text, Command as TextCommand, State as TextState},
     time::{Clock, Command as TimeCommand},
@@ -48,7 +47,6 @@ const INPUT_CAPACITY: usize = 64;
 /// responsible for selecting plugins, windows, rendering, and [`crate::screenshot::Plugin`].
 #[derive(Clone)]
 pub struct AutomationControlPlugin {
-    mode: RunMode,
     output: Arc<dyn Output>,
     input_factory: Arc<dyn Fn() -> JsonLinesInput + Send + Sync>,
 }
@@ -57,14 +55,13 @@ impl std::fmt::Debug for AutomationControlPlugin {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("AutomationControlPlugin")
-            .field("mode", &self.mode)
             .finish_non_exhaustive()
     }
 }
 
 impl Default for AutomationControlPlugin {
     fn default() -> Self {
-        Self::rendered_stdio()
+        Self::stdio()
     }
 }
 
@@ -100,36 +97,19 @@ where
 }
 
 impl AutomationControlPlugin {
-    /// Configures Logical Mode metadata and stdin/stdout JSONL transport.
-    ///
-    /// This does not itself create an application composition or remove a renderer.
-    pub fn logical_stdio() -> Self {
-        Self::stdio(RunMode::Logical)
-    }
-
-    /// Configures Rendered Mode metadata and stdin/stdout JSONL transport.
-    ///
-    /// This does not install rendering, a window, or screenshot support.
-    pub fn rendered_stdio() -> Self {
-        Self::stdio(RunMode::Rendered)
-    }
-
-    fn stdio(mode: RunMode) -> Self {
+    fn stdio() -> Self {
         Self {
-            mode,
             output: Arc::new(crate::transport::StdoutOutput),
             input_factory: Arc::new(|| JsonLinesInput::stdin(INPUT_CAPACITY)),
         }
     }
 
-    /// Configures explicit mode metadata and custom transport adapters.
+    /// Configures custom transport adapters.
     ///
     /// The input factory supplies the [`JsonLinesInput`]. The [`Output`] receives the startup
-    /// [`crate::Ready`] and subsequent [`Response`] values. `mode` is metadata and does not select
-    /// the embedding Bevy composition.
-    pub fn with_io(mode: RunMode, input: impl InputFactory, output: Arc<dyn Output>) -> Self {
+    /// [`crate::Ready`] and subsequent [`Response`] values.
+    pub fn with_io(input: impl InputFactory, output: Arc<dyn Output>) -> Self {
         Self {
-            mode,
             output,
             input_factory: input.factory(),
         }
@@ -161,7 +141,6 @@ impl Plugin for AutomationControlPlugin {
             input: (self.input_factory)(),
             output: Arc::clone(&self.output),
         });
-        app.insert_resource(Configuration { mode: self.mode });
         // Controlled Sessions use explicit manual durations. Disconnect Bevy's render-clock channel
         // so nested controlled frames neither consume wall-clock timestamps nor trigger missing-time
         // warnings when several simulation frames run before the next render frame.
@@ -186,8 +165,8 @@ impl Plugin for AutomationControlPlugin {
             ))
             .add_systems(Startup, emit_ready)
             .add_systems(PostStartup, pointer::ensure_mouse_pointer)
-            .add_systems(PostStartup, pointer::spawn_helper.run_if(rendered_mode))
-            .add_systems(First, pointer::update_helper.run_if(rendered_mode))
+            .add_systems(PostStartup, pointer::spawn_helper)
+            .add_systems(First, pointer::update_helper)
             .add_systems(
                 control_schedule::Input,
                 (
@@ -240,15 +219,6 @@ struct SimulationScheduleOrder(Vec<InternedScheduleLabel>);
 struct Transport {
     input: JsonLinesInput,
     output: Arc<dyn Output>,
-}
-
-#[derive(Clone, Copy, Resource)]
-struct Configuration {
-    mode: RunMode,
-}
-
-fn rendered_mode(configuration: Res<Configuration>) -> bool {
-    configuration.mode == RunMode::Rendered
 }
 
 #[derive(Default, Resource)]
@@ -355,9 +325,8 @@ fn discard_native_focused_input(mut input: NativeInputBuffers) {
 }
 
 fn emit_ready(world: &World) {
-    let configuration = world.resource::<Configuration>();
-    let mut ready = protocol::Ready::new(configuration.mode);
-    if configuration.mode == RunMode::Rendered && screenshot::is_available(world) {
+    let mut ready = protocol::Ready::new();
+    if screenshot::is_available(world) {
         ready = ready.with_screenshot();
     }
     if let Err(error) = world.resource::<Transport>().output.ready(&ready) {
@@ -571,18 +540,6 @@ fn dispatch_request(world: &mut World) {
             command,
             capture,
         } => {
-            if world.resource::<Configuration>().mode != RunMode::Rendered {
-                let error = screenshot::Error::CapabilityUnavailable;
-                world
-                    .resource_mut::<PendingRequests>()
-                    .0
-                    .push(PendingRequest::Response(Response::error(
-                        sequence,
-                        error.code(),
-                        error.to_string(),
-                    )));
-                return;
-            }
             if capture.is_some() {
                 world
                     .resource_mut::<PendingRequests>()
@@ -633,28 +590,28 @@ fn dispatch_request(world: &mut World) {
 }
 
 fn run_controlled_frames(world: &mut World) {
-    let Some(advance) = world
-        .resource::<PendingRequests>()
-        .0
-        .last()
-        .and_then(|pending| match pending {
-            PendingRequest::Time { command, .. } => Some(command.into_advance()),
-            _ => None,
-        })
+    let Some(step) =
+        world
+            .resource::<PendingRequests>()
+            .0
+            .last()
+            .and_then(|pending| match pending {
+                PendingRequest::Time { command, .. } => Some(command.into_step()),
+                _ => None,
+            })
     else {
         return;
     };
     let schedules = world.resource::<SimulationScheduleOrder>().0.clone();
-    for _ in 0..advance.frames {
-        *world.resource_mut::<TimeUpdateStrategy>() =
-            TimeUpdateStrategy::ManualDuration(advance.step);
+    for _ in 0..step.frames {
+        *world.resource_mut::<TimeUpdateStrategy>() = TimeUpdateStrategy::ManualDuration(step.step);
         for &schedule in &schedules {
             let _ = world.try_run_schedule(schedule);
             if (*schedule).eq(&First) {
                 flush_virtual_input(world);
             }
         }
-        world.resource_mut::<Clock>().complete_frame(advance.step);
+        world.resource_mut::<Clock>().complete_frame(step.step);
     }
     *world.resource_mut::<TimeUpdateStrategy>() =
         TimeUpdateStrategy::ManualDuration(std::time::Duration::ZERO);
@@ -776,12 +733,6 @@ mod tests {
     }
 
     fn controlled_app() -> (App, mpsc::SyncSender<Input>, Arc<MemoryOutput>, Entity) {
-        controlled_app_in_mode(RunMode::Logical)
-    }
-
-    fn controlled_app_in_mode(
-        mode: RunMode,
-    ) -> (App, mpsc::SyncSender<Input>, Arc<MemoryOutput>, Entity) {
         let (sender, receiver) = mpsc::sync_channel(8);
         let receiver = Mutex::new(Some(receiver));
         let output = Arc::new(MemoryOutput::default());
@@ -791,7 +742,6 @@ mod tests {
             .add_message::<WindowEvent>()
             .add_plugins(DefaultPickingPlugins)
             .add_plugins(AutomationControlPlugin::with_io(
-                mode,
                 move || JsonLinesInput::from_receiver(receiver.lock().unwrap().take().unwrap()),
                 output_trait,
             ));
@@ -804,31 +754,14 @@ mod tests {
 
     #[test]
     fn plugin_disconnects_render_time_from_manually_controlled_time() {
-        let (_input_sender, input_receiver) = mpsc::sync_channel(1);
-        let input_receiver = Mutex::new(Some(input_receiver));
-        let output: Arc<dyn Output> = Arc::new(MemoryOutput::default());
+        let _output: Arc<dyn Output> = Arc::new(MemoryOutput::default());
         let (_render_sender, render_receiver) = bevy::time::create_time_channels();
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(render_receiver)
-            .add_plugins(AutomationControlPlugin::with_io(
-                RunMode::Rendered,
-                move || {
-                    JsonLinesInput::from_receiver(input_receiver.lock().unwrap().take().unwrap())
-                },
-                output,
-            ));
+            .add_plugins(AutomationControlPlugin::stdio());
 
         assert!(!app.world().contains_resource::<TimeReceiver>());
-    }
-
-    #[test]
-    fn with_io_preserves_the_explicit_mode_in_ready_metadata() {
-        for mode in [RunMode::Logical, RunMode::Rendered] {
-            let (mut app, _sender, output, _window) = controlled_app_in_mode(mode);
-            app.update();
-            assert_eq!(output.ready.lock().unwrap()[0].mode, mode);
-        }
     }
 
     #[test]
@@ -1021,7 +954,7 @@ mod tests {
             &mut app,
             &sender,
             2,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         let virtual_location = app
             .world_mut()
@@ -1107,7 +1040,7 @@ mod tests {
             &mut app,
             &sender,
             1,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":25000000}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":25000000}}"#,
         );
 
         assert_eq!(app.world().resource::<FrameCapture>().updates, 1);
@@ -1130,7 +1063,7 @@ mod tests {
             &mut app,
             &sender,
             1,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":1000000000}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":1000000000}}"#,
         );
 
         assert_eq!(
@@ -1145,7 +1078,7 @@ mod tests {
 
     #[test]
     fn rendered_redraw_updates_do_not_run_simulation_schedules() {
-        let (mut app, sender, output, _window) = controlled_app_in_mode(RunMode::Rendered);
+        let (mut app, sender, output, _window) = controlled_app();
         app.init_resource::<FrameCapture>()
             .add_systems(Update, capture_update);
         app.update();
@@ -1153,7 +1086,6 @@ mod tests {
             app.update();
         }
 
-        assert_eq!(output.ready.lock().unwrap()[0].mode, RunMode::Rendered);
         assert_eq!(app.world().resource::<FrameCapture>().updates, 0);
         assert_eq!(app.world().resource::<Clock>().frame_index(), 0);
         assert_eq!(
@@ -1187,15 +1119,12 @@ mod tests {
             .add_systems(Update, capture_update);
         app.update();
         for (sequence, action) in [
-            (1, r#"{"type":"advance","frames":0,"step_nanoseconds":1}"#),
-            (
-                2,
-                r#"{"type":"advance","frames":10001,"step_nanoseconds":1}"#,
-            ),
-            (3, r#"{"type":"advance","frames":1,"step_nanoseconds":0}"#),
+            (1, r#"{"type":"step","frames":0,"step_nanoseconds":1}"#),
+            (2, r#"{"type":"step","frames":10001,"step_nanoseconds":1}"#),
+            (3, r#"{"type":"step","frames":1,"step_nanoseconds":0}"#),
             (
                 4,
-                r#"{"type":"advance","frames":1,"step_nanoseconds":1000000001}"#,
+                r#"{"type":"step","frames":1,"step_nanoseconds":1000000001}"#,
             ),
         ] {
             send_command(
@@ -1239,7 +1168,7 @@ mod tests {
             &mut first,
             &first_sender,
             1,
-            r#"{"type":"time","action":{"type":"advance","frames":2,"step_nanoseconds":500}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":2,"step_nanoseconds":500}}"#,
         );
 
         assert_eq!(first.world().resource::<Clock>().frame_index(), 2);
@@ -1271,7 +1200,7 @@ mod tests {
                     &sender,
                     index as u64 + 1,
                     &format!(
-                        r#"{{"type":"time","action":{{"type":"advance","frames":{frames},"step_nanoseconds":25000000}}}}"#
+                        r#"{{"type":"time","action":{{"type":"step","frames":{frames},"step_nanoseconds":25000000}}}}"#
                     ),
                 );
             }
@@ -1307,7 +1236,7 @@ mod tests {
             &mut app,
             &sender,
             2,
-            r#"{"type":"time","action":{"type":"advance","frames":3,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":3,"step_nanoseconds":16666667}}"#,
         );
         assert_eq!(app.world().resource::<FrameCapture>().held_updates, 3);
 
@@ -1321,10 +1250,95 @@ mod tests {
             &mut app,
             &sender,
             4,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         assert_eq!(app.world().resource::<FrameCapture>().updates, 4);
         assert_eq!(app.world().resource::<FrameCapture>().held_updates, 3);
+    }
+
+    #[test]
+    fn multiple_virtual_inputs_queue_until_next_step() {
+        // Paket D: Batching — mehrere Inputs vor einem step müssen im selben Frame sichtbar werden.
+        let (mut app, sender, _output, window) = controlled_app();
+        app.init_resource::<FrameCapture>()
+            .init_resource::<KeyboardCapture>()
+            .init_resource::<TextCapture>()
+            .add_systems(Update, (capture_update, capture_text));
+        let target = app
+            .world_mut()
+            .spawn(bevy::text::EditableText::default())
+            .id();
+        app.world_mut()
+            .insert_resource(InputFocus::from_entity(target));
+        app.update();
+        // 3 Inputs ohne step -> 0 Updates, alle queued in QueuedVirtualInput
+        send_command(
+            &mut app,
+            &sender,
+            1,
+            r#"{"type":"pointer","action":{"type":"move","surface":null,"position":[10.0,20.0]}}"#,
+        );
+        send_command(
+            &mut app,
+            &sender,
+            2,
+            r#"{"type":"keyboard","action":{"type":"press","key":"a"}}"#,
+        );
+        send_command(&mut app, &sender, 3, r#"{"type":"text","text":"hi"}"#);
+        assert_eq!(app.world().resource::<FrameCapture>().updates, 0);
+        assert!(
+            app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::KeyA)
+                == false,
+            "key must not be visible before step"
+        );
+        assert!(app.world().resource::<TextCapture>().0.is_empty());
+        let loc_before = app
+            .world_mut()
+            .query::<&PointerLocation>()
+            .single(app.world())
+            .unwrap()
+            .location()
+            .is_none();
+        assert!(loc_before, "pointer must not be placed before step");
+        // Ein step -> alle 3 Inputs im selben Frame geflusht
+        send_command(
+            &mut app,
+            &sender,
+            4,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
+        );
+        assert_eq!(app.world().resource::<FrameCapture>().updates, 1);
+        assert_eq!(app.world().resource::<Clock>().frame_index(), 1);
+        assert!(
+            app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::KeyA)
+        );
+        assert_eq!(
+            app.world().resource::<TextCapture>().0,
+            vec!["hi".to_string()]
+        );
+        let loc_after = app
+            .world_mut()
+            .query::<&PointerLocation>()
+            .single(app.world())
+            .unwrap()
+            .location()
+            .map(|l| l.position);
+        assert_eq!(loc_after, Some(Vec2::new(10.0, 20.0)));
+        // Zweiter step ohne neuen Input -> keine Duplikate
+        send_command(
+            &mut app,
+            &sender,
+            5,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
+        );
+        assert_eq!(app.world().resource::<FrameCapture>().updates, 2);
+        // Text darf nicht nochmal erscheinen, Key bleibt gehalten
+        assert_eq!(app.world().resource::<TextCapture>().0.len(), 1);
+        let _ = window; // keep window alive for borrow checker
     }
 
     fn capture_window(mut input: MessageReader<WindowEvent>, mut capture: ResMut<WindowCapture>) {
@@ -1413,7 +1427,7 @@ mod tests {
             &mut app,
             &sender,
             2,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         assert!(
             app.world()
@@ -1445,14 +1459,14 @@ mod tests {
             &mut app,
             &sender,
             5,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         send_command(&mut app, &sender, 6, r#"{"type":"text","text":"virtual"}"#);
         send_command(
             &mut app,
             &sender,
             7,
-            r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+            r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
         );
         send_command(
             &mut app,
@@ -1596,7 +1610,7 @@ mod tests {
                 &mut app,
                 &sender,
                 sequence + 1,
-                r#"{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}"#,
+                r#"{"type":"time","action":{"type":"step","frames":1,"step_nanoseconds":16666667}}"#,
             );
         }
 

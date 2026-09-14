@@ -1,4 +1,4 @@
-use bug_hunter::driver::{github, ReportConfig};
+use bug_hunter::host::{ReportConfig, github};
 use serde_json::json;
 use std::{
     fs,

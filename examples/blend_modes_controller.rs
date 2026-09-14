@@ -39,7 +39,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         SessionOptions::new().with_artifact_dir(&artifact_root),
     )?;
     let ready = session.ready()?;
-    assert_eq!(ready.mode, bug_hunter::RunMode::Rendered);
     assert!(ready.controls.contains(&"keyboard".into()));
     assert!(ready.controls.contains(&"time".into()));
     assert!(ready.controls.contains(&"screenshot".into()));
@@ -219,7 +218,7 @@ fn tap(session: &mut Session, key: Key) -> Result<(), Box<dyn std::error::Error>
 }
 
 fn advance(session: &mut Session, frames: u64) -> Result<(), Box<dyn std::error::Error>> {
-    session.request(Command::Time(TimeCommand::advance(
+    session.request(Command::Time(TimeCommand::step(
         frames,
         STEP_NANOSECONDS,
     )))?;

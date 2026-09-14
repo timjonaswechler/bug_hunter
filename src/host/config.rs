@@ -19,7 +19,6 @@ pub struct Config {
     pub application: ApplicationConfig,
     pub session: SessionConfig,
     pub report: ReportConfig,
-    pub screen: ScreenConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -41,7 +40,6 @@ pub struct ApplicationConfig {
     pub features: Vec<String>,
     #[serde(default)]
     pub arguments: Vec<String>,
-    pub mode_argument: String,
 }
 
 impl ApplicationConfig {
@@ -56,24 +54,10 @@ impl ApplicationConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DefaultMode {
-    Logical,
-    Rendered,
-}
-
-impl Default for DefaultMode {
-    fn default() -> Self {
-        Self::Rendered
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionConfig {
     pub id: String,
-    pub default_mode: DefaultMode,
     pub surface_width: u32,
     pub surface_height: u32,
     pub frame_nanoseconds: u64,
@@ -84,7 +68,6 @@ impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             id: "session".into(),
-            default_mode: DefaultMode::Rendered,
             surface_width: 640,
             surface_height: 360,
             frame_nanoseconds: 16_666_667,
@@ -146,14 +129,7 @@ impl Config {
             ("tool.about", self.tool.about.as_str()),
             ("application.package", self.application.package.as_str()),
             ("application.target", self.application.target.as_str()),
-            (
-                "application.mode_argument",
-                self.application.mode_argument.as_str(),
-            ),
             ("session.id", self.session.id.as_str()),
-            ("screen.target", self.screen.target.as_str()),
-            ("screen.component", self.screen.component.as_str()),
-            ("screen.result_field", self.screen.result_field.as_str()),
         ] {
             require_value(name, value)?;
         }
@@ -174,9 +150,6 @@ impl Config {
             return Err(format!(
                 "session.startup_frames must be between 1 and {MAX_FRAMES}"
             ));
-        }
-        if !self.screen.value_pointer.starts_with('/') {
-            return Err("screen.value_pointer must be a JSON pointer beginning with '/'".into());
         }
         if let Some(generated_by) = &self.report.generated_by {
             require_value("report.generated_by", generated_by)?;
@@ -246,11 +219,9 @@ package = "app"
 target = "app"
 features = ["automation-control"]
 arguments = []
-mode_argument = "--controlled-mode"
 
 [session]
 id = "alpha"
-default_mode = "rendered"
 surface_width = 640
 surface_height = 360
 frame_nanoseconds = 16666667
@@ -258,12 +229,6 @@ startup_frames = 1
 
 [report]
 generated_by = "test_debug report"
-
-[screen]
-target = "session.status"
-component = "app::SessionObservation"
-value_pointer = "/active_screen"
-result_field = "active_screen"
 "#;
 
     #[test]
@@ -276,13 +241,6 @@ result_field = "active_screen"
     #[test]
     fn rejects_unknown_and_invalid_profile_fields() {
         assert!(Config::parse(&PROFILE.replace("version = 1", "version = 2")).is_err());
-        assert!(
-            Config::parse(&PROFILE.replace(
-                "value_pointer = \"/active_screen\"",
-                "value_pointer = \"active_screen\""
-            ))
-            .is_err()
-        );
         assert!(
             Config::parse(&PROFILE.replace("profile_id = \"test-v1\"", "profile_id = \"\""))
                 .is_err()

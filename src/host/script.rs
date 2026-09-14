@@ -1,8 +1,7 @@
 use super::{
     Config, RecentLogs,
     controller::{
-        Action, Button, ControllerError, ControllerSession, KeyboardAction, Mode, Observation,
-        PointerAction,
+        Action, Button, ControllerError, ControllerSession, KeyboardAction, PointerAction,
     },
     recording::Controller,
 };
@@ -33,25 +32,8 @@ struct Script {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SessionConfiguration {
-    mode: ScriptMode,
     #[serde(default)]
     record: Option<PathBuf>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ScriptMode {
-    Logical,
-    Rendered,
-}
-
-impl From<ScriptMode> for Mode {
-    fn from(value: ScriptMode) -> Self {
-        match value {
-            ScriptMode::Logical => Self::Logical,
-            ScriptMode::Rendered => Self::Rendered,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,9 +51,8 @@ enum Step {
     Text {
         text: String,
     },
-    Wait {
-        condition: Condition,
-        max_frames: u64,
+    Step {
+        frames: u64,
     },
     Expect {
         condition: Condition,
@@ -79,8 +60,6 @@ enum Step {
     Screenshot {
         path: String,
         expect: ScreenshotExpectation,
-        #[serde(default)]
-        rendered_only: bool,
     },
 }
 
@@ -122,28 +101,43 @@ impl From<ScriptButton> for Button {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum Condition {
-    Screen { equals: String },
+    Component {
+        target: String,
+        component: String,
+        field: String,
+        equals: Value,
+    },
 }
 
 impl Condition {
-    const fn observation(&self) -> Observation {
+    fn description(&self) -> String {
         match self {
-            Self::Screen { .. } => Observation::ActiveScreen,
+            Self::Component {
+                target,
+                component,
+                field,
+                ..
+            } => format!("{component}@{target}.{field}"),
         }
     }
 
-    fn matches(&self, result_field: &str, actual: &Value) -> bool {
+    fn expected(&self) -> Value {
         match self {
-            Self::Screen { equals } => actual[result_field] == *equals,
+            Self::Component { equals, .. } => equals.clone(),
         }
     }
 
-    fn expected(&self, result_field: &str) -> Value {
+    fn check(&self, session: &mut ControllerSession) -> Result<(bool, Value), ControllerError> {
         match self {
-            Self::Screen { equals } => Value::Object(serde_json::Map::from_iter([(
-                result_field.to_owned(),
-                Value::String(equals.clone()),
-            )])),
+            Self::Component {
+                target,
+                component,
+                field,
+                equals,
+            } => {
+                let actual = session.observe_component_value(target, component, field)?;
+                Ok((&actual == equals, actual))
+            }
         }
     }
 }
@@ -196,7 +190,6 @@ impl ScreenshotExpectation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ErrorKind {
     InvalidScript,
-    Timeout,
     Action,
     Expectation,
 }
@@ -240,7 +233,6 @@ impl Error {
     pub(crate) const fn exit_code(&self) -> i32 {
         match self.kind {
             ErrorKind::InvalidScript => INVALID_SCRIPT_EXIT,
-            ErrorKind::Timeout => TIMEOUT_EXIT,
             ErrorKind::Action => ACTION_EXIT,
             ErrorKind::Expectation => EXPECTATION_EXIT,
         }
@@ -283,13 +275,11 @@ impl std::error::Error for Error {}
 pub(crate) struct Summary {
     pub(crate) completed: usize,
     pub(crate) skipped: usize,
-    pub(crate) mode: Mode,
 }
 
 pub(crate) fn run(
     profile: &Config,
     script_path: &Path,
-    mode_override: Option<Mode>,
     artifact_dir: PathBuf,
     record_override: Option<PathBuf>,
     recent_logs: RecentLogs,
@@ -319,12 +309,6 @@ pub(crate) fn run(
         Ok(script)
     });
 
-    let configured_mode = script
-        .as_ref()
-        .ok()
-        .map(|script| script.session.mode.into())
-        .or_else(|| document.as_ref().and_then(mode_from_document));
-    let mode = mode_override.or(configured_mode).unwrap_or(Mode::Logical);
     let configured_record = script
         .as_ref()
         .ok()
@@ -332,7 +316,6 @@ pub(crate) fn run(
         .or_else(|| document.as_ref().and_then(record_from_document));
     let session = ControllerSession::start(
         profile,
-        mode,
         artifact_dir,
         record_override.or(configured_record),
         recent_logs,
@@ -356,13 +339,7 @@ pub(crate) fn run(
         (Ok(script), Ok(session)) => (script, session),
     };
 
-    let execution = execute_steps(
-        script_path,
-        &script.steps,
-        mode,
-        &profile.screen.result_field,
-        &mut session,
-    );
+    let execution = execute_steps(script_path, &script.steps, &mut session);
     if let Err(error) = &execution {
         session.capture_script_error(error.kind_name());
     }
@@ -375,19 +352,7 @@ pub(crate) fn run(
             script.steps.len().max(1),
             error.to_string(),
         )),
-        (Ok((completed, skipped)), Ok(())) => Ok(Summary {
-            completed,
-            skipped,
-            mode,
-        }),
-    }
-}
-
-fn mode_from_document(document: &Value) -> Option<Mode> {
-    match document.pointer("/session/mode").and_then(Value::as_str) {
-        Some("logical") => Some(Mode::Logical),
-        Some("rendered") => Some(Mode::Rendered),
-        _ => None,
+        (Ok((completed, skipped)), Ok(())) => Ok(Summary { completed, skipped }),
     }
 }
 
@@ -402,7 +367,6 @@ impl Error {
     const fn kind_name(&self) -> &'static str {
         match self.kind {
             ErrorKind::InvalidScript => "invalid_session_script",
-            ErrorKind::Timeout => "session_script_timeout",
             ErrorKind::Action => "session_script_action_failed",
             ErrorKind::Expectation => "session_script_expectation_failed",
         }
@@ -426,12 +390,12 @@ fn validate(path: &Path, script: &Script) -> Result<(), Error> {
         ));
     }
     for (index, step) in script.steps.iter().enumerate() {
-        if let Step::Wait { max_frames, .. } = step
-            && (*max_frames == 0 || *max_frames > MAX_FRAMES)
+        if let Step::Step { frames } = step
+            && (*frames == 0 || *frames > MAX_FRAMES)
         {
             return Err(Error::invalid(
                 path,
-                format!("$.steps[{index}].max_frames must be between 1 and {MAX_FRAMES}"),
+                format!("$.steps[{index}].frames must be between 1 and {MAX_FRAMES}"),
             ));
         }
     }
@@ -441,16 +405,11 @@ fn validate(path: &Path, script: &Script) -> Result<(), Error> {
 fn execute_steps(
     path: &Path,
     steps: &[Step],
-    mode: Mode,
-    screen_result_field: &str,
     session: &mut ControllerSession,
 ) -> Result<(usize, usize), Error> {
-    let initial = session
-        .observe(Observation::ActiveScreen)
-        .map_err(|error| action_error(path, 1, error, None))?;
-    let mut last_observation = Some((Observation::ActiveScreen.as_str().into(), initial));
+    let mut last_observation: Option<(String, Value)> = None;
     let mut completed = 0;
-    let mut skipped = 0;
+    let skipped = 0;
 
     for (index, step) in steps.iter().enumerate() {
         let position = index + 1;
@@ -494,56 +453,24 @@ fn execute_steps(
                 position,
                 &last_observation,
             )?,
-            Step::Wait {
-                condition,
-                max_frames,
-            } => {
-                let observation = condition.observation();
-                match session.wait_for(observation, *max_frames, |actual| {
-                    condition.matches(screen_result_field, actual)
-                }) {
-                    Ok(actual) => {
-                        last_observation = Some((observation.as_str().into(), actual));
-                    }
-                    Err(ControllerError::WaitLimitReached {
-                        last_observation: actual,
-                        ..
-                    }) => {
-                        return Err(Error {
-                            kind: ErrorKind::Timeout,
-                            script: path.to_path_buf(),
-                            step: Some(position),
-                            message: format!(
-                                "wait condition was not met within {max_frames} controlled frames"
-                            ),
-                            expected: Some(condition.expected(screen_result_field)),
-                            actual: Some(actual.clone()),
-                            last_observation: Some((observation.as_str().into(), actual)),
-                        });
-                    }
-                    Err(error) => {
-                        return Err(action_error(
-                            path,
-                            position,
-                            error,
-                            last_observation.clone(),
-                        ));
-                    }
-                }
-            }
-            Step::Expect { condition } => {
-                let observation = condition.observation();
-                let actual = session.observe(observation).map_err(|error| {
+            Step::Step { frames } => {
+                session.step(*frames).map_err(|error| {
                     action_error(path, position, error, last_observation.clone())
                 })?;
-                last_observation = Some((observation.as_str().into(), actual.clone()));
-                if !condition.matches(screen_result_field, &actual) {
+            }
+            Step::Expect { condition } => {
+                let description = condition.description();
+                let (matched, actual) = condition.check(session).map_err(|error| {
+                    action_error(path, position, error, last_observation.clone())
+                })?;
+                last_observation = Some((description.clone(), actual.clone()));
+                if !matched {
                     return Err(Error {
                         kind: ErrorKind::Expectation,
                         script: path.to_path_buf(),
                         step: Some(position),
                         message: "expectation did not match".into(),
-                        expected: Some(condition.expected(screen_result_field)),
+                        expected: Some(condition.expected()),
                         actual: Some(actual),
                         last_observation,
                     });
@@ -552,12 +479,7 @@ fn execute_steps(
             Step::Screenshot {
                 path: artifact_path,
                 expect,
-                rendered_only,
             } => {
-                if *rendered_only && mode == Mode::Logical {
-                    skipped += 1;
-                    continue;
-                }
                 let actual = session
                     .capture_screenshot(ScreenshotCommand::new(artifact_path))
                     .map_err(|error| {
@@ -601,11 +523,7 @@ fn action_error(
     error: ControllerError,
     last_observation: Option<(String, Value)>,
 ) -> Error {
-    let kind = if matches!(error, ControllerError::WaitLimitReached { .. }) {
-        ErrorKind::Timeout
-    } else {
-        ErrorKind::Action
-    };
+    let kind = ErrorKind::Action;
     Error {
         kind,
         script: path.to_path_buf(),
@@ -628,7 +546,7 @@ mod tests {
     #[test]
     fn rejects_unknown_fields_with_a_source_position() {
         let error = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"text","text":"hello","response":{}}]}"#,
+            r#"{"version":1,"session":{},"steps":[{"type":"text","text":"hello","response":{}}]}"#,
         )
         .unwrap_err();
         assert!(error.to_string().contains("unknown field `response`"));
@@ -639,7 +557,7 @@ mod tests {
     #[test]
     fn rejects_unknown_actions_with_a_source_position() {
         let error = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"shell","command":"false"}]}"#,
+            r#"{"version":1,"session":{},"steps":[{"type":"shell","command":"false"}]}"#,
         )
         .unwrap_err();
         assert!(error.to_string().contains("unknown variant `shell`"));
@@ -648,19 +566,13 @@ mod tests {
     }
 
     #[test]
-    fn wait_limits_are_required_and_bounded() {
-        let missing = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"wait","condition":{"type":"screen","equals":"museum"}}]}"#,
-        )
-        .unwrap_err();
-        assert!(missing.to_string().contains("max_frames"));
-
+    fn step_frames_are_required_and_bounded() {
         let script = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"wait","condition":{"type":"screen","equals":"museum"},"max_frames":0}]}"#,
+            r#"{"version":1,"session":{},"steps":[{"type":"step","frames":0}]}"#,
         )
         .unwrap();
         let error = validate(Path::new("zero.json"), &script).unwrap_err();
-        assert!(error.to_string().contains("$.steps[0].max_frames"));
+        assert!(error.to_string().contains("$.steps[0].frames"));
     }
 
     #[test]
@@ -687,7 +599,7 @@ mod tests {
     #[test]
     fn raw_virtual_input_actions_are_part_of_the_script_format() {
         let script = parse(
-            r#"{"version":1,"session":{"mode":"logical"},"steps":[{"type":"pointer","action":{"type":"move","x":0.5,"y":0.25}},{"type":"pointer","action":{"type":"press","button":"left"}},{"type":"pointer","action":{"type":"release","button":"left"}},{"type":"pointer","action":{"type":"click","button":"right"}},{"type":"pointer","action":{"type":"scroll","x":0.0,"y":-1.0}},{"type":"keyboard","action":{"type":"press","key":"Escape"}},{"type":"keyboard","action":{"type":"release","key":"Escape"}},{"type":"text","text":"museum"}]}"#,
+            r#"{"version":1,"session":{},"steps":[{"type":"pointer","action":{"type":"move","x":0.5,"y":0.25}},{"type":"pointer","action":{"type":"press","button":"left"}},{"type":"pointer","action":{"type":"release","button":"left"}},{"type":"pointer","action":{"type":"click","button":"right"}},{"type":"pointer","action":{"type":"scroll","x":0.0,"y":-1.0}},{"type":"keyboard","action":{"type":"press","key":"Escape"}},{"type":"keyboard","action":{"type":"release","key":"Escape"}},{"type":"text","text":"museum"}]}"#,
         )
         .unwrap();
         assert_eq!(script.steps.len(), 8);

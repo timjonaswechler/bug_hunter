@@ -3,7 +3,7 @@ use super::{
     recording::Controller,
 };
 use crate::{
-    Command as WireCommand, Handle, RunMode,
+    Command as WireCommand, Handle,
     keyboard::{Command as KeyboardCommand, Key},
     observation::{Projection, Request as ObservationRequest, Selector},
     pointer::{Button as WireButton, Command as PointerCommand},
@@ -13,34 +13,6 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{fmt, path::PathBuf};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Mode {
-    Logical,
-    Rendered,
-}
-
-impl Mode {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Logical => "logical",
-            Self::Rendered => "rendered",
-        }
-    }
-
-    const fn wire(self) -> RunMode {
-        match self {
-            Self::Logical => RunMode::Logical,
-            Self::Rendered => RunMode::Rendered,
-        }
-    }
-}
-
-impl fmt::Display for Mode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SurfaceSize {
@@ -71,15 +43,9 @@ impl SurfaceSize {
     }
 }
 
-fn session_configuration(
-    profile: &Config,
-    mode: Mode,
-    surface: SurfaceSize,
-    paused: bool,
-) -> Value {
+fn session_configuration(profile: &Config, surface: SurfaceSize, paused: bool) -> Value {
     json!({
         "profile_id": profile.profile_id,
-        "mode": mode.as_str(),
         "surface": {"width": surface.width, "height": surface.height},
         "paused": paused,
     })
@@ -184,7 +150,6 @@ pub(crate) enum Observation {
     Pointers,
     VirtualInput,
     Clock,
-    ActiveScreen,
 }
 
 impl Observation {
@@ -206,7 +171,6 @@ impl Observation {
             Self::Pointers => "pointers",
             Self::VirtualInput => "input",
             Self::Clock => "clock",
-            Self::ActiveScreen => "screen",
         }
     }
 }
@@ -214,8 +178,7 @@ impl Observation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Status {
     pub(crate) instance: String,
-    pub(crate) mode: Mode,
-    pub(crate) active_screen: String,
+
     pub(crate) paused: bool,
     pub(crate) last_action: String,
 }
@@ -225,16 +188,8 @@ pub(crate) enum ControllerError {
     Launch(String),
     Communication(String),
     Child(String),
-    Request {
-        code: String,
-        message: String,
-    },
+    Request { code: String, message: String },
     Invalid(String),
-    PausedWait,
-    WaitLimitReached {
-        frames: u64,
-        last_observation: Value,
-    },
     Shutdown,
 }
 
@@ -251,15 +206,6 @@ impl fmt::Display for ControllerError {
             Self::Child(message) => write!(formatter, "Controlled Session ended: {message}"),
             Self::Request { code, message } => write!(formatter, "{code}: {message}"),
             Self::Invalid(message) => formatter.write_str(message),
-            Self::PausedWait => formatter.write_str(
-                "wait condition is not met and the session is paused; use step or resume",
-            ),
-            Self::WaitLimitReached { frames, .. } => {
-                write!(
-                    formatter,
-                    "wait condition was not met within {frames} controlled frames"
-                )
-            }
             Self::Shutdown => formatter.write_str("Controlled Session is already shut down"),
         }
     }
@@ -279,7 +225,6 @@ impl ControllerError {
 pub(crate) struct ControllerSession {
     driver: Option<DriverSession>,
     profile: Config,
-    mode: Mode,
     surface: SurfaceSize,
     instance: String,
     paused: bool,
@@ -289,7 +234,6 @@ pub(crate) struct ControllerSession {
 impl ControllerSession {
     pub(crate) fn start(
         profile: &Config,
-        mode: Mode,
         artifact_dir: PathBuf,
         record: Option<PathBuf>,
         recent_logs: RecentLogs,
@@ -301,13 +245,12 @@ impl ControllerSession {
         );
         let mut session = Self::start_with_configuration(
             profile,
-            mode,
             surface,
             artifact_dir,
             record,
             recent_logs,
             controller,
-            session_configuration(profile, mode, surface, false),
+            session_configuration(profile, surface, false),
             None,
         )?;
         session.advance(profile.session.startup_frames)?;
@@ -316,7 +259,6 @@ impl ControllerSession {
 
     pub(crate) fn start_replay(
         profile: &Config,
-        mode: Mode,
         artifact_dir: PathBuf,
         record: Option<PathBuf>,
         recent_logs: RecentLogs,
@@ -336,7 +278,6 @@ impl ControllerSession {
         }
         Self::start_with_configuration(
             profile,
-            mode,
             surface,
             artifact_dir,
             record,
@@ -349,7 +290,6 @@ impl ControllerSession {
 
     fn start_with_configuration(
         profile: &Config,
-        mode: Mode,
         surface: SurfaceSize,
         artifact_dir: PathBuf,
         record: Option<PathBuf>,
@@ -362,31 +302,22 @@ impl ControllerSession {
             .get("paused")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let mut launch = profile.application.launch();
-        launch
-            .arguments
-            .push(profile.application.mode_argument.clone());
-        launch.arguments.push(mode.as_str().into());
+        let launch = profile.application.launch();
         let mut options = SessionOptions::new()
             .with_recent_logs(recent_logs)
             .with_artifact_dir(artifact_dir)
             .with_record(record)
-            .with_recording_context(&profile.session.id, mode.wire(), configuration)
+            .with_recording_context(&profile.session.id, configuration)
             .with_controller(controller);
         if let Some(session_artifact_dir) = session_artifact_dir {
             options = options.with_session_artifact_dir(session_artifact_dir);
         }
         let mut driver = DriverSession::spawn(&launch, options).map_err(map_driver_error)?;
-        let ready = driver.ready().map_err(map_driver_error)?;
-        if ready.mode != mode.wire() {
-            return Err(ControllerError::Communication(
-                "child reported a different execution mode".into(),
-            ));
-        }
+        driver.ready().map_err(map_driver_error)?;
+
         Ok(Self {
             driver: Some(driver),
             profile: profile.clone(),
-            mode,
             surface,
             instance: profile.session.id.clone(),
             paused,
@@ -395,7 +326,7 @@ impl ControllerSession {
     }
 
     #[cfg(test)]
-    fn from_driver(driver: DriverSession, mode: Mode) -> Self {
+    fn from_driver(driver: DriverSession) -> Self {
         let profile = test_profile();
         Self {
             driver: Some(driver),
@@ -405,7 +336,6 @@ impl ControllerSession {
             ),
             instance: profile.session.id.clone(),
             profile,
-            mode,
             paused: false,
             last_action: "none".into(),
         }
@@ -473,40 +403,6 @@ impl ControllerSession {
         Ok(value)
     }
 
-    pub(crate) fn wait_for<F>(
-        &mut self,
-        observation: Observation,
-        frame_limit: u64,
-        mut predicate: F,
-    ) -> Result<Value, ControllerError>
-    where
-        F: FnMut(&Value) -> bool,
-    {
-        if frame_limit > MAX_FRAMES {
-            return Err(ControllerError::Invalid(format!(
-                "wait frame limit must be at most {MAX_FRAMES}"
-            )));
-        }
-        let mut value = self.observe_raw(observation)?;
-        if predicate(&value) {
-            return Ok(value);
-        }
-        if self.paused {
-            return Err(ControllerError::PausedWait);
-        }
-        for _ in 0..frame_limit {
-            self.advance(1)?;
-            value = self.observe_raw(observation)?;
-            if predicate(&value) {
-                return Ok(value);
-            }
-        }
-        Err(ControllerError::WaitLimitReached {
-            frames: frame_limit,
-            last_observation: value,
-        })
-    }
-
     pub(crate) fn pause(&mut self) -> Result<(), ControllerError> {
         self.driver_mut()?
             .capture_controller_action(json!({"type": "pause"}))
@@ -539,8 +435,7 @@ impl ControllerSession {
         &mut self,
         path: Option<PathBuf>,
     ) -> Result<PathBuf, ControllerError> {
-        let configuration =
-            session_configuration(&self.profile, self.mode, self.surface, self.paused);
+        let configuration = session_configuration(&self.profile, self.surface, self.paused);
         let driver = self.driver_mut()?;
         driver
             .configure_recording(configuration)
@@ -589,14 +484,6 @@ impl ControllerSession {
             ControllerError::Invalid(_) => {
                 ("invalid_controller_action", "Controller action was invalid")
             }
-            ControllerError::PausedWait => (
-                "paused_wait",
-                "Observation wait was blocked while the session was paused",
-            ),
-            ControllerError::WaitLimitReached { .. } => (
-                "wait_limit_reached",
-                "Observation wait reached its frame limit",
-            ),
             ControllerError::Shutdown => (
                 "session_shutdown",
                 "Controlled Session was already shut down",
@@ -613,12 +500,63 @@ impl ControllerSession {
         Ok(())
     }
 
+    pub(crate) fn observe_component_value(
+        &mut self,
+        target: &str,
+        component: &str,
+        field: &str,
+    ) -> Result<Value, ControllerError> {
+        if field.trim().is_empty() {
+            return Err(ControllerError::Invalid("field must not be empty".into()));
+        }
+        let targets = self.observe_raw(Observation::Targets)?;
+        let handle = TargetView::named(&targets, target)?.handle()?;
+        let result = self.request(WireCommand::Observe(ObservationRequest::new(
+            Selector::Entity(handle),
+            Projection::Components {
+                type_paths: vec![component.to_owned()],
+            },
+        )))?;
+        let component_value = result
+            .get("items")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("components"))
+            .and_then(|components| components.get(component))
+            .ok_or_else(|| {
+                ControllerError::Invalid("component observation is unavailable".into())
+            })?;
+        if component_value.get("status").and_then(Value::as_str) != Some("available") {
+            return Err(ControllerError::Invalid(format!(
+                "component {component:?} is not available: {}",
+                component_value
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            )));
+        }
+        let mut current = component_value.get("value").ok_or_else(|| {
+            ControllerError::Invalid(format!("component {component:?} has no value"))
+        })?;
+        for segment in field.split('.') {
+            if segment.is_empty() {
+                return Err(ControllerError::Invalid(format!(
+                    "field {field:?} contains empty segment"
+                )));
+            }
+            current = current.get(segment).ok_or_else(|| {
+                ControllerError::Invalid(format!(
+                    "field {field:?} not found in component {component:?}"
+                ))
+            })?;
+        }
+        let value = current.clone();
+        Ok(value)
+    }
+
     pub(crate) fn status(&mut self) -> Result<Status, ControllerError> {
-        let active_screen = self.active_screen()?;
         Ok(Status {
             instance: self.instance.clone(),
-            mode: self.mode,
-            active_screen,
             paused: self.paused,
             last_action: self.last_action.clone(),
         })
@@ -647,22 +585,20 @@ impl ControllerSession {
     }
 
     fn click(&mut self, button: Button) -> Result<Value, ControllerError> {
-        self.transition(PointerCommand::Press {
+        self.request(WireCommand::Pointer(PointerCommand::Press {
             button: button.wire(),
-        })?;
-        self.transition(PointerCommand::Release {
+        }))?;
+        self.request(WireCommand::Pointer(PointerCommand::Release {
             button: button.wire(),
-        })
+        }))
     }
 
     fn transition(&mut self, command: PointerCommand) -> Result<Value, ControllerError> {
-        self.settle(WireCommand::Pointer(command))
+        self.request(WireCommand::Pointer(command))
     }
 
     fn settle(&mut self, command: WireCommand) -> Result<Value, ControllerError> {
-        let result = self.request(command)?;
-        self.advance(1)?;
-        Ok(result)
+        self.request(command)
     }
 
     fn advance(&mut self, frames: u64) -> Result<Value, ControllerError> {
@@ -671,47 +607,24 @@ impl ControllerSession {
                 "step frames must be between 1 and {MAX_FRAMES}"
             )));
         }
-        self.request(WireCommand::Time(TimeCommand::advance(
+        self.request(WireCommand::Time(TimeCommand::step(
             frames,
             self.profile.session.frame_nanoseconds,
         )))
     }
 
     fn observe_raw(&mut self, observation: Observation) -> Result<Value, ControllerError> {
-        if observation == Observation::ActiveScreen {
-            let screen = self.active_screen()?;
-            return Ok(Value::Object(serde_json::Map::from_iter([(
-                self.profile.screen.result_field.clone(),
-                Value::String(screen),
-            )])));
-        }
         let selector = match observation {
             Observation::Targets => Selector::Targets,
             Observation::Ui => Selector::Ui,
             Observation::Pointers => Selector::Pointers,
             Observation::VirtualInput => Selector::VirtualInput,
             Observation::Clock => Selector::Clock,
-            Observation::ActiveScreen => unreachable!(),
         };
         self.request(WireCommand::Observe(ObservationRequest::new(
             selector,
             Projection::Summary,
         )))
-    }
-
-    fn active_screen(&mut self) -> Result<String, ControllerError> {
-        let target = self.profile.screen.target.clone();
-        let component = self.profile.screen.component.clone();
-        let pointer = self.profile.screen.value_pointer.clone();
-        let targets = self.observe_raw(Observation::Targets)?;
-        let handle = TargetView::named(&targets, &target)?.handle()?;
-        let result = self.request(WireCommand::Observe(ObservationRequest::new(
-            Selector::Entity(handle),
-            Projection::Components {
-                type_paths: vec![component.clone()],
-            },
-        )))?;
-        screen_value(&result, &component, &pointer)
     }
 
     fn request(&mut self, command: WireCommand) -> Result<Value, ControllerError> {
@@ -774,31 +687,6 @@ impl<'a> TargetView<'a> {
     }
 }
 
-fn screen_value(
-    observation: &Value,
-    component_name: &str,
-    value_pointer: &str,
-) -> Result<String, ControllerError> {
-    let component = observation
-        .get("items")
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("components"))
-        .and_then(|components| components.get(component_name))
-        .ok_or_else(|| ControllerError::Invalid("screen observation is unavailable".into()))?;
-    if component.get("status").and_then(Value::as_str) != Some("available") {
-        return Err(ControllerError::Invalid(
-            "screen observation is unavailable".into(),
-        ));
-    }
-    component
-        .get("value")
-        .and_then(|value| value.pointer(value_pointer))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| ControllerError::Invalid("screen observation is invalid".into()))
-}
-
 fn resolve_key(name: &str) -> Result<Key, ControllerError> {
     let wire_name = normalize_key_name(name);
     let key: Key = serde_json::from_value(json!(wire_name))
@@ -853,13 +741,6 @@ fn map_driver_error(error: DriverError) -> ControllerError {
         DriverError::Child(message) => ControllerError::Child(message),
         DriverError::Io(message) => ControllerError::Communication(message),
         DriverError::Protocol(message) => ControllerError::Communication(message),
-        DriverError::WaitLimitReached {
-            frame_limit,
-            last_observation,
-        } => ControllerError::WaitLimitReached {
-            frames: frame_limit,
-            last_observation,
-        },
     }
 }
 
@@ -915,9 +796,9 @@ mod tests {
     #[test]
     fn request_errors_hide_protocol_envelopes_and_sequences() {
         let driver = shell_session(
-            r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":["pointer","time"],"observation_scopes":[]}'; read line; printf '%s\n' '{"sequence":1,"status":"error","error":{"code":"pointer_failed","message":"no pointer location"}}'; sleep 1"#,
+            r#"printf '%s\n' '{"type":"ready","version":2,"controls":["pointer","time"],"observation_scopes":[]}'; read line; printf '%s\n' '{"sequence":1,"status":"error","error":{"code":"pointer_failed","message":"no pointer location"}}'; sleep 1"#,
         );
-        let mut session = ControllerSession::from_driver(driver, Mode::Logical);
+        let mut session = ControllerSession::from_driver(driver);
         let message = session
             .perform(Action::Pointer(PointerAction::Press(Button::Left)))
             .unwrap_err()
@@ -926,20 +807,5 @@ mod tests {
         assert!(!message.contains("sequence"));
         assert!(!message.contains("Response"));
         assert!(!message.contains("version"));
-    }
-
-    #[test]
-    fn paused_wait_observes_once_without_advancing() {
-        let driver = shell_session(
-            r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":["time"],"observation_scopes":["clock"]}'; read line; printf '%s\n' '{"sequence":1,"status":"completed","result":{"items":[{"ready":false}]}}'; sleep 1"#,
-        );
-        let mut session = ControllerSession::from_driver(driver, Mode::Logical);
-        session.pause().unwrap();
-        let error = session
-            .wait_for(Observation::Clock, 4, |value| {
-                value["items"][0]["ready"] == true
-            })
-            .unwrap_err();
-        assert!(matches!(error, ControllerError::PausedWait));
     }
 }

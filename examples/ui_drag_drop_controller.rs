@@ -40,7 +40,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         SessionOptions::new().with_artifact_dir(&artifact_root),
     )?;
     let ready = session.ready()?;
-    assert_eq!(ready.mode, bug_hunter::RunMode::Rendered);
     assert!(ready.controls.contains(&"pointer".into()));
     assert!(ready.controls.contains(&"time".into()));
     assert!(ready.controls.contains(&"screenshot".into()));
@@ -273,7 +272,7 @@ fn move_pointer(
 }
 
 fn advance(session: &mut Session, frames: u64) -> Result<(), Box<dyn std::error::Error>> {
-    session.request(Command::Time(TimeCommand::advance(frames, 16_666_667)))?;
+    session.request(Command::Time(TimeCommand::step(frames, 16_666_667)))?;
     Ok(())
 }
 

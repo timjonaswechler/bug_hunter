@@ -149,9 +149,6 @@ fn run_session(
         }
     };
     let ready = session.ready()?;
-    if ready.mode != bug_hunter::RunMode::Rendered {
-        return Err(format!("run {run_index} started in {:?} mode", ready.mode).into());
-    }
     if !ready.controls.contains(&"screenshot".into()) {
         return Err(format!("run {run_index} did not advertise screenshot capture").into());
     }
@@ -170,7 +167,7 @@ fn run_session(
         .map(|_| started.elapsed().as_millis());
 
     for _ in 0..frames {
-        session.request(Command::Time(TimeCommand::advance(1, STEP_NANOSECONDS)))?;
+        session.request(Command::Time(TimeCommand::step(1, STEP_NANOSECONDS)))?;
     }
     let scene_bounds_ready = observe_scene_bounds(&mut session)?;
     let mut post_frame_captures = Vec::new();

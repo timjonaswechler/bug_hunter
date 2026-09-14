@@ -1,9 +1,8 @@
 use super::{
-    Config, RecentLogs,
-    controller::{ControllerSession, Mode},
-    github, recording, repl, replay, report, script,
+    Config, RecentLogs, controller::ControllerSession, github, recording, repl, replay, report,
+    script,
 };
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use std::{
     ffi::OsString,
     path::PathBuf,
@@ -35,10 +34,6 @@ pub fn run_embedded(profile_source: &'static str) -> ! {
 
 #[derive(Debug, Parser)]
 struct Cli {
-    /// Controlled Session execution mode. Overrides a Session Script's configured mode.
-    #[arg(long, value_enum)]
-    mode: Option<ModeArgument>,
-
     /// Root for session diagnostics and artifacts.
     #[arg(long)]
     artifact_dir: Option<PathBuf>,
@@ -49,21 +44,6 @@ struct Cli {
 
     #[command(subcommand)]
     command: Option<CliCommand>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum ModeArgument {
-    Logical,
-    Rendered,
-}
-
-impl From<ModeArgument> for Mode {
-    fn from(value: ModeArgument) -> Self {
-        match value {
-            ModeArgument::Logical => Self::Logical,
-            ModeArgument::Rendered => Self::Rendered,
-        }
-    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -131,36 +111,20 @@ fn execute(profile: &Config, cli: Cli) -> Result<(), ExecuteError> {
         Some(CliCommand::Replay { recording }) => {
             replay_recording(profile, recording, artifact_dir, cli.record)
         }
-        Some(CliCommand::Run { script }) => session_script(
-            profile,
-            script,
-            cli.mode.map(Into::into),
-            artifact_dir,
-            cli.record,
-        ),
+        Some(CliCommand::Run { script }) => {
+            session_script(profile, script, artifact_dir, cli.record)
+        }
         Some(CliCommand::Report {
             artifact_dir,
             create,
             json,
         }) => report(profile, artifact_dir, create, json).map_err(ExecuteError::General),
-        None => controlled_repl(
-            profile,
-            cli.mode
-                .map(Into::into)
-                .unwrap_or_else(|| match profile.session.default_mode {
-                    super::DefaultMode::Logical => Mode::Logical,
-                    super::DefaultMode::Rendered => Mode::Rendered,
-                }),
-            artifact_dir,
-            cli.record,
-        )
-        .map_err(ExecuteError::General),
+        None => controlled_repl(profile, artifact_dir, cli.record).map_err(ExecuteError::General),
     }
 }
 
 fn controlled_repl(
     profile: &Config,
-    mode: Mode,
     artifact_dir: PathBuf,
     record: Option<PathBuf>,
 ) -> Result<(), String> {
@@ -175,7 +139,6 @@ fn controlled_repl(
         .and_then(|path| recording::path_below_artifact_root(&artifact_dir, path).ok());
     let result = ControllerSession::start(
         profile,
-        mode,
         artifact_dir.clone(),
         record,
         recent_logs.clone(),
@@ -203,17 +166,14 @@ fn replay_recording(
     let recent_logs = RecentLogs::default();
     let summary = replay::run(profile, &recording, artifact_dir, record, recent_logs)
         .map_err(ExecuteError::Replay)?;
-    println!(
-        "Session Replay passed: {} actions, mode={}",
-        summary.actions, summary.mode
-    );
+    println!("Session Replay passed: {} actions", summary.actions,);
     Ok(())
 }
 
 fn session_script(
     profile: &Config,
     path: PathBuf,
-    mode: Option<Mode>,
+
     artifact_dir: PathBuf,
     record: Option<PathBuf>,
 ) -> Result<(), ExecuteError> {
@@ -224,7 +184,6 @@ fn session_script(
     let result = script::run(
         profile,
         &path,
-        mode,
         artifact_dir.clone(),
         record,
         recent_logs.clone(),
@@ -238,8 +197,8 @@ fn session_script(
     );
     let summary = result.map_err(ExecuteError::Script)?;
     println!(
-        "Session Script passed: {} completed, {} skipped, mode={}",
-        summary.completed, summary.skipped, summary.mode
+        "Session Script passed: {} completed, {} skipped",
+        summary.completed, summary.skipped,
     );
     Ok(())
 }
@@ -291,15 +250,14 @@ mod tests {
         parse_cli(&profile(), args.iter().map(OsString::from)).unwrap()
     }
 
+    //todo: waht is this test for ?
     #[test]
     fn preserves_the_debug_host_command_line() {
         let cli = parse(&["star_sim_debug"]);
-        assert_eq!(cli.mode, None);
         assert!(cli.artifact_dir.is_none());
         assert!(cli.command.is_none());
 
-        let cli = parse(&["star_sim_debug", "--mode", "logical"]);
-        assert_eq!(cli.mode, Some(ModeArgument::Logical));
+        let cli = parse(&["star_sim_debug"]);
         assert!(cli.command.is_none());
         assert!(
             parse_cli(

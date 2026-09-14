@@ -344,21 +344,52 @@ pub(crate) fn spawn_helper(mut commands: Commands) {
             height: px(HELPER_DIAMETER),
             border_radius: BorderRadius::MAX,
             display: Display::None,
+            border: UiRect::all(Val::Px(3.0)),
             ..default()
         },
         BackgroundColor(Color::srgb(1.0, 0.0, 0.0)),
+        BorderColor::all(Color::srgb(1.0, 1.0, 1.0)),
+        Text::new(""),
+        TextFont {
+            font_size: FontSize::Px(10.0),
+            ..Default::default()
+        },
+        TextColor(Color::srgb(0.0, 0.0, 0.0)),
+        TextLayout::justify(Justify::Center),
     ));
 }
 
-pub(crate) fn update_helper(state: Res<State>, mut helpers: Query<&mut Node, With<Helper>>) {
-    for mut node in &mut helpers {
+pub(crate) fn update_helper(
+    state: Res<State>,
+    mut helpers: Query<(&mut Node, &mut BackgroundColor, &mut Text), With<Helper>>,
+) {
+    for (mut node, mut background_color, mut text) in &mut helpers {
         let Some([x, y]) = state.position else {
             node.display = Display::None;
             continue;
         };
+
         node.display = Display::Flex;
         node.left = px(x - HELPER_DIAMETER / 2.0);
         node.top = px(y - HELPER_DIAMETER / 2.0);
+        if state.is_pressed(Button::Primary)
+            || state.is_pressed(Button::Secondary)
+            || state.is_pressed(Button::Middle)
+        {
+            background_color.0 = Color::srgb(0.0, 0.8, 0.0);
+            if state.is_pressed(Button::Primary) {
+                if !text.0.contains("L") {
+                    text.0 = String::from("L");
+                }
+            } else if state.is_pressed(Button::Secondary) {
+                text.0 = String::from("R");
+            } else if state.is_pressed(Button::Middle) {
+                text.0 = String::from("M");
+            }
+        } else {
+            background_color.0 = Color::srgb(1.0, 0.0, 0.0);
+            text.0 = String::new();
+        }
     }
 }
 
@@ -384,12 +415,14 @@ mod tests {
         for command in commands {
             assert!(command.validate().is_ok());
         }
-        assert!(Command::Move {
-            surface: None,
-            position: [f32::NAN, 0.0]
-        }
-        .validate()
-        .is_err());
+        assert!(
+            Command::Move {
+                surface: None,
+                position: [f32::NAN, 0.0]
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

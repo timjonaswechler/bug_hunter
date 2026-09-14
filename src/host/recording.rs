@@ -10,7 +10,7 @@
 //! public [`Recording::entries`] can be mutated into an invalid value; call [`Recording::validate`]
 //! before consuming or publishing manually constructed recordings.
 
-use crate::{Command, PROTOCOL_VERSION, ProtocolError, ResponseStatus, RunMode, observation};
+use crate::{Command, PROTOCOL_VERSION, ProtocolError, ResponseStatus, observation};
 use cap_std::{ambient_authority, fs::Dir};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -112,8 +112,6 @@ pub enum Event {
 pub struct SessionContext {
     /// Host-chosen identity for one Controlled Session.
     pub session_id: String,
-    /// Expected or negotiated session mode.
-    pub mode: RunMode,
     /// Wire protocol version used by the session.
     pub protocol_version: u32,
     /// Opaque host-provided configuration snapshot.
@@ -122,10 +120,9 @@ pub struct SessionContext {
 
 impl SessionContext {
     /// Creates context using the crate's current wire protocol version.
-    pub fn new(session_id: impl Into<String>, mode: RunMode, configuration: Value) -> Self {
+    pub fn new(session_id: impl Into<String>, configuration: Value) -> Self {
         Self {
             session_id: session_id.into(),
-            mode,
             protocol_version: PROTOCOL_VERSION,
             configuration,
         }
@@ -147,11 +144,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            context: SessionContext::new(
-                "session",
-                RunMode::Logical,
-                Value::Object(Default::default()),
-            ),
+            context: SessionContext::new("session", Value::Object(Default::default())),
             context_explicit: false,
             controller: Controller::new("controller"),
         }
@@ -899,13 +892,13 @@ mod tests {
     use std::io::Cursor;
 
     fn context() -> SessionContext {
-        SessionContext::new("alpha", RunMode::Logical, json!({"surface": [640, 360]}))
+        SessionContext::new("alpha", json!({"surface": [640, 360]}))
     }
 
     #[test]
     fn parses_and_roundtrips_version_one_entries() {
         let source = concat!(
-            "{\"version\":1,\"sequence\":4,\"type\":\"session_started\",\"context\":{\"session_id\":\"alpha\",\"mode\":\"logical\",\"protocol_version\":2,\"configuration\":{}}}\n",
+            "{\"version\":1,\"sequence\":4,\"type\":\"session_started\",\"context\":{\"session_id\":\"alpha\",\"protocol_version\":2,\"configuration\":{}}}\n",
             "{\"version\":1,\"sequence\":5,\"type\":\"recording_stopped\"}\n"
         );
         let recording = Recording::parse_reader(Cursor::new(source)).unwrap();
@@ -926,7 +919,7 @@ mod tests {
         assert!(matches!(malformed, Error::Json(_)));
         let unknown_field = concat!(
             "{\"version\":1,\"sequence\":1,\"type\":\"session_started\",",
-            "\"context\":{\"session_id\":\"alpha\",\"mode\":\"logical\",",
+            "\"context\":{\"session_id\":\"alpha\",",
             "\"protocol_version\":2,\"configuration\":{}},\"secret\":true}\n"
         );
         assert!(matches!(

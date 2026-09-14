@@ -1,11 +1,11 @@
 use bug_hunter::{
-    driver::{
-        recording::{Controller, Event, Recording, SessionOutcome},
+    Command,
+    host::{
         RecentLogs, Session, SessionConfig, SessionOptions,
+        recording::{Controller, Event, Recording, SessionOutcome},
     },
     observation::{Projection, Request as ObservationRequest, Selector},
     time::Command as TimeCommand,
-    Command, RunMode,
 };
 use serde_json::json;
 use std::{fs, io::Cursor, path::PathBuf, process::Command as ProcessCommand};
@@ -30,7 +30,7 @@ fn records_canonical_events_across_repeated_segments_with_continuous_host_sequen
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":["pointer","time"],"observation_scopes":["clock"]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":["pointer","time"],"observation_scopes":["clock"]}'
 while IFS= read -r line; do
   sequence=$(printf '%s' "$line" | sed -n 's/.*"sequence":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
@@ -44,10 +44,10 @@ done"#,
     let options = SessionOptions::new()
         .with_artifact_dir(&artifact_root)
         .with_record(Some(PathBuf::from("first.jsonl")))
-        .with_recording_context("alpha", RunMode::Logical, json!({"surface": [640, 360]}))
+        .with_recording_context("alpha", json!({"surface": [640, 360]}))
         .with_controller(Controller::new("repl"));
     let mut session = Session::spawn_command(command, options).expect("child should start");
-    assert_eq!(session.ready().unwrap().mode, RunMode::Logical);
+    session.ready().unwrap();
     session
         .request(Command::Observe(ObservationRequest::new(
             Selector::Clock,
@@ -57,13 +57,13 @@ done"#,
     let first_path = session.stop_recording().unwrap();
 
     session
-        .request(Command::Time(TimeCommand::advance(1, 16_666_667)))
+        .request(Command::Time(TimeCommand::step(1, 16_666_667)))
         .unwrap();
     let second_path = session
         .start_recording(Some(PathBuf::from("second.jsonl")))
         .unwrap();
     session
-        .request(Command::Time(TimeCommand::advance(1, 16_666_667)))
+        .request(Command::Time(TimeCommand::step(1, 16_666_667)))
         .unwrap();
     session.shutdown().unwrap();
 
@@ -77,10 +77,12 @@ done"#,
         entry.event,
         Event::ControllerAction { ref controller, .. } if controller.origin == "repl"
     )));
-    assert!(first
-        .entries
-        .iter()
-        .any(|entry| matches!(entry.event, Event::Observation { .. })));
+    assert!(
+        first
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.event, Event::Observation { .. }))
+    );
     assert!(matches!(
         first.entries.last().unwrap().event,
         Event::RecordingStopped
@@ -113,7 +115,7 @@ fn recording_redacts_sensitive_values_and_bounds_entries() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":["time"],"observation_scopes":[]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":["time"],"observation_scopes":[]}'
 while IFS= read -r line; do
   sequence=$(printf '%s' "$line" | sed -n 's/.*"sequence":\([0-9][0-9]*\).*/\1/p')
   printf '{"sequence":%s,"status":"completed","result":{"api_key":"provider-key-value","raw_model_prompt":"private prompt body","auth":"neutral-auth-value","note":"sk-live-1234567890"}}\n' "$sequence"
@@ -123,11 +125,7 @@ done"#,
     let options = SessionOptions::new()
         .with_artifact_dir(&artifact_root)
         .with_record(Some(PathBuf::from("private.jsonl")))
-        .with_recording_context(
-            "alpha",
-            RunMode::Logical,
-            json!({"credential": "context-secret-value"}),
-        );
+        .with_recording_context("alpha", json!({"credential": "context-secret-value"}));
     let mut session = Session::spawn_command(command, options).unwrap();
     session.ready().unwrap();
     session
@@ -150,7 +148,7 @@ done"#,
         )
         .unwrap();
     session
-        .request(Command::Time(TimeCommand::advance(1, 16_666_667)))
+        .request(Command::Time(TimeCommand::step(1, 16_666_667)))
         .unwrap();
     session.shutdown().unwrap();
 
@@ -182,7 +180,7 @@ fn implicit_context_waits_for_ready_and_supports_config_and_late_start() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"rendered","controls":[],"observation_scopes":[]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":[],"observation_scopes":[]}'
 while IFS= read -r line; do
   sequence=$(printf '%s' "$line" | sed -n 's/.*"sequence":\([0-9][0-9]*\).*/\1/p')
   printf '{"sequence":%s,"status":"completed","result":{}}\n' "$sequence"
@@ -196,20 +194,19 @@ done"#,
         artifact_root.clone(),
     );
     let mut session = Session::spawn_command(command, options).unwrap();
-    assert_eq!(session.ready().unwrap().mode, RunMode::Rendered);
+    session.ready().unwrap();
     session.shutdown().unwrap();
 
     let recording = Recording::parse_path(artifact_root.join("from-config.jsonl")).unwrap();
     let Event::SessionStarted { context } = &recording.entries[0].event else {
         panic!("implicit recording must start with context")
     };
-    assert_eq!(context.mode, RunMode::Rendered);
     assert_eq!(context.protocol_version, 2);
 
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":[],"observation_scopes":[]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":[],"observation_scopes":[]}'
 while IFS= read -r line; do
   sequence=$(printf '%s' "$line" | sed -n 's/.*"sequence":\([0-9][0-9]*\).*/\1/p')
   printf '{"sequence":%s,"status":"completed","result":{}}\n' "$sequence"
@@ -265,7 +262,7 @@ fn error_observation_response_is_recorded_as_response_then_error() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":[],"observation_scopes":["clock"]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":[],"observation_scopes":["clock"]}'
 read line
 printf '%s\n' '{"sequence":1,"status":"error","result":{"partial":true},"error":{"code":"observe_failed","message":"safe failure"}}'
 sleep 30"#,
@@ -278,19 +275,23 @@ sleep 30"#,
     )
     .unwrap();
     session.ready().unwrap();
-    assert!(session
-        .request(Command::Observe(ObservationRequest::new(
-            Selector::Clock,
-            Projection::Summary,
-        )))
-        .is_err());
+    assert!(
+        session
+            .request(Command::Observe(ObservationRequest::new(
+                Selector::Clock,
+                Projection::Summary,
+            )))
+            .is_err()
+    );
     drop(session);
 
     let recording = Recording::parse_path(artifact_root.join("observe-error.jsonl")).unwrap();
-    assert!(!recording
-        .entries
-        .iter()
-        .any(|entry| matches!(entry.event, Event::Observation { .. })));
+    assert!(
+        !recording
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.event, Event::Observation { .. }))
+    );
     let response_index = recording
         .entries
         .iter()
@@ -316,7 +317,7 @@ fn direct_response_parse_and_shutdown_failures_are_recorded() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"mode\":\"logical\",\"controls\":[],\"observation_scopes\":[]}' ; read line; printf 'not-json\\n'; sleep 30",
+        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"controls\":[],\"observation_scopes\":[]}' ; read line; printf 'not-json\\n'; sleep 30",
     ]);
     let mut session = Session::spawn_command(
         command,
@@ -337,7 +338,7 @@ fn direct_response_parse_and_shutdown_failures_are_recorded() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        r#"printf '%s\n' '{"type":"ready","version":2,"mode":"logical","controls":[],"observation_scopes":[]}'
+        r#"printf '%s\n' '{"type":"ready","version":2,"controls":[],"observation_scopes":[]}'
 read line
 printf '%s\n' '{"sequence":1,"status":"completed","result":{}}'
 exit 7"#,
@@ -365,21 +366,22 @@ fn ready_mode_mismatch_records_a_parseable_abort() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"mode\":\"rendered\",\"controls\":[],\"observation_scopes\":[]}' ; sleep 30",
+        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"controls\":[],\"observation_scopes\":[]}' ; sleep 30",
     ]);
     let mut session = Session::spawn_command(
         command,
         SessionOptions::new()
             .with_artifact_dir(&artifact_root)
             .with_record(Some(PathBuf::from("mismatch.jsonl")))
-            .with_recording_context("alpha", RunMode::Logical, json!({})),
+            .with_recording_context("alpha", json!({})),
     )
     .unwrap();
-    assert!(session.ready().unwrap_err().to_string().contains("mode"));
+    // Mode is no longer part of SessionContext; ready should succeed regardless of child mode.
+    assert!(session.ready().is_ok());
     drop(session);
 
     let recording = Recording::parse_path(artifact_root.join("mismatch.jsonl")).unwrap();
-    assert!(recording.entries.iter().any(|entry| matches!(
+    assert!(!recording.entries.iter().any(|entry| matches!(
         entry.event,
         Event::Error { ref kind, .. } if kind == "ready_mode_mismatch"
     )));
@@ -398,14 +400,14 @@ fn dropping_a_live_recorded_session_writes_an_aborted_end() {
     let mut command = ProcessCommand::new("sh");
     command.args([
         "-c",
-        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"mode\":\"logical\",\"controls\":[],\"observation_scopes\":[]}' ; sleep 30",
+        "printf '%s\\n' '{\"type\":\"ready\",\"version\":2,\"controls\":[],\"observation_scopes\":[]}' ; sleep 30",
     ]);
     let mut session = Session::spawn_command(
         command,
         SessionOptions::new()
             .with_artifact_dir(&artifact_root)
             .with_record(Some(PathBuf::from("aborted.jsonl")))
-            .with_recording_context("alpha", RunMode::Logical, json!({})),
+            .with_recording_context("alpha", json!({})),
     )
     .unwrap();
     session.ready().unwrap();
