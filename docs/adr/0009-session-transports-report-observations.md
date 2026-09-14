@@ -4,6 +4,10 @@
 
 Angenommen.
 
+Die damalige Platzierung des gemeinsamen Report-Ablaufs unter `host::run` wird durch
+[ADR-0024](0024-separate-server-client-and-cli.md) ersetzt. Der Ablauf liegt nun in `server`;
+Markertransport, Fehlerdeutung und Provider-Regeln dieser ADR bleiben unverändert.
+
 ## Kontext
 
 `session::Session` besitzt den Kindprozess, seine Pipes, den Prozesslebenszyklus und die

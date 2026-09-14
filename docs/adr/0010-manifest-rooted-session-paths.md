@@ -4,6 +4,10 @@
 
 Angenommen.
 
+Die unten erwähnte `host::run`-Fassade entfällt nach
+[ADR-0024](0024-separate-server-client-and-cli.md). Die Pfadregeln gelten unverändert für
+direkte Rust-Session-Nutzung und für Sessions, die der Server erzeugt.
+
 ## Kontext
 
 Eine Controlled Session benötigt einen festen Ausgangspunkt für `cargo metadata`, `cargo run`, Git

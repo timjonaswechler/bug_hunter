@@ -783,41 +783,45 @@ mod session {
     }
 }
 
-#[cfg(feature = "host")]
-pub mod host {
-    // OPEN(HS1-HS4, H7): Gegen den persistenten Session-Host neu prüfen, ob ein Einstiegspunkt für
-    // Serverstart und alle Client-Aufrufe ausreicht. Config-, CLI- und
-    // Client-Typen bleiben privat.
-    pub fn run(config_source: &str) -> std::process::ExitCode;
+// OPEN(H7): Crates, ausführbare Programme, öffentliche Exports und Feature-Zuschnitt festlegen.
+// Die folgende Modulaufteilung entscheidet nur über Verantwortungen.
+mod server {
+    // Besitzt das Verzeichnis und die Handles mehrerer unabhängiger Sessions.
+    // Jede Session besitzt weiterhin ihre fachliche Ausführung und ihren Spielprozess.
+    // Leert Session-Events und führt den gemeinsamen Report-Ablauf unabhängig von Clients aus.
+    // OPEN(HS1): Start, Discovery, Session-ID, Erzeugen, Auflisten, Auswahl und Zustand.
+    // OPEN(HS1, HS4): Session-Shutdown und Serverende getrennt festlegen.
+    // OPEN(HS2, HS3): Routing, Zugriffsschutz und Session-Zuordnung von Activity und Cursor.
+}
 
-    mod server {
-        // Zunächst besitzt genau ein lokaler Serverprozess genau eine session::Session. Seine
-        // Lebensdauer ist von verbundenen Clients unabhängig. Start, Discovery, Transport,
-        // Activity-Stream und Shutdown werden in HS1 bis HS4 abgeschlossen.
-    }
+mod client {
+    // Gemeinsame Seam für Verwaltungsaufrufe, Commands und Activity.
+    // Kapselt Verbindung, Protokollkodierung und Antwortzuordnung, ohne Terminaldarstellung.
+    // Commands adressieren eine Session; ausstehende Arbeit und Activity bleiben serverseitig.
+    // OPEN(HS1, HS2): Session-Auswahl und Bindung der Aufrufe an eine Session festlegen.
+    pub struct Client {}
+}
 
-    mod client {
-        // Gemeinsame private Seam für REPL, Script und MCP. Der Server besitzt Pending-Arbeit und
-        // Activity-Cursor über einzelne Client-Verbindungen hinaus.
-        pub struct Client {}
-    }
+// OPEN(H4): Agent-Zugang und dessen Modulplatzierung festlegen. Ein CLI-nutzender Agent braucht
+// nicht zwingend ein eigenes Modul; eine eigene oder eingebundene Laufzeit ist noch nicht beschlossen.
 
-    mod mcp {
-        // Agent-Fassade aus begrenzten Tool-Aufrufen über host::client. Sie setzt kein dauerhaft
-        // stdout lesendes Sprachmodell voraus. Das konkrete Tool-Interface wird in H4 festgelegt.
-    }
+mod cli {
+    // Argumente, Terminaldarstellung und Auswahl des Ablaufs; keine Session-Regeln.
+    // CLI zuerst; Weboberflächen und weitere UIs sind nicht Teil des aktuellen Umfangs.
+    // OPEN(H7): Einstiegspunkte festlegen; die bisherige host::run-Fassade entfällt.
 
     mod repl {
         // Komplexe Inspect-Queries verwenden `inspect query <arguments-json>` und damit direkt den
         // gemeinsamen Inspect-Codec. Vier feste Kurzformen erzeugen lediglich häufige Commands;
         // die REPL besitzt kein eigenes Query-Modell und keine vollständige Inspect-Flag-Sprache.
+        // OPEN(HS1, HS2): Bindung an eine ausgewählte Session über client festlegen.
         pub enum Exit {
             Quit,
             InputClosed,
             Interrupted,
         }
 
-        pub fn run(client: &mut super::client::Client) -> Result<Exit, Error>;
+        pub fn run(client: &mut crate::client::Client) -> Result<Exit, Error>;
 
         pub enum Error {
             Terminal { message: String },
@@ -864,11 +868,12 @@ pub mod host {
             },
         }
 
+        // OPEN(HS1, HS2): Die ausgewählte Session kommt vom Aufrufer, nicht aus der Script-Datei.
         // OPEN(HS3, HS4): Einreichungs- und Wartefolge gegen Activity-Stream und Shutdown prüfen.
         // Ein ausdrücklicher Shutdown wird vom Server zu Session::shutdown geroutet; das Script
         // besitzt die Session nicht.
         pub fn run(
-            client: &mut super::client::Client,
+            client: &mut crate::client::Client,
             script: &Script,
         ) -> Result<Outcome, Error>;
 

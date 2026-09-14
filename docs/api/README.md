@@ -24,16 +24,27 @@
    - `session::launch`
    - `session::Session`
    - Controlled-Session-Integration mit `session::Plugin`
-   - `host::repl`
-   - `host::script`
+   - `cli::repl`
+   - `cli::script`
 
    Noch zu planen:
 
-   - Lebensdauer und Discovery eines persistenten lokalen Session-Hosts
+   - Lebensdauer und Discovery eines persistenten lokalen Servers für mehrere unabhängige Sessions
+   - Session-Verwaltung mit Identität, Erzeugen, Auflisten, Auswahl und Zustandsabfrage
    - lokaler Client-Transport und Zugriffsschutz
-   - gemeinsamer Activity-Stream mit wiederaufnehmbarem Cursor
-   - Client-Zugriff für REPL, Script und MCP-Agent
-   - die übrige Host-Struktur
+   - Session-Zuordnung und Cursor-Regeln des gemeinsamen Activity-Vertrags
+   - vollständige CLI-Bedienung sowie Client-Zugriff für REPL, Script und Agent
+   - getrennte Regeln für Session-Shutdown und Serverende
+   - Einstiegspunkte, öffentliche Exports, Feature- und Crate-Zuschnitt
+
+   Beschlossen ist ein lokaler Server für mehrere Sessions, siehe
+   [`ADR-0023`](../adr/0023-local-server-manages-multiple-sessions.md).
+   Weboberflächen und weitere UIs sind nicht Teil des aktuellen Umfangs; MCP entfällt.
+   Die Agent-Laufzeit und ihre Modellanbindung sind noch nicht festgelegt.
+
+   [`ADR-0024`](../adr/0024-separate-server-client-and-cli.md) trennt `server` für die
+   Bereitstellung, `client` für den Zugriff und `cli` für die Bedienung. Das Sammelmodul
+   `host` entfällt. Die Modulplatzierung des Agent-Zugangs bleibt offen.
 
    "Ausreichend skizziert" bedeutet nicht endgültig abgeschlossen. Neue Erkenntnisse dürfen einen
    Bereich wieder öffnen.

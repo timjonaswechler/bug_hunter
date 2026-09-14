@@ -4,6 +4,10 @@ Dieses Dokument beschreibt den Weg vom Ist-Stand in [`current.md`](current.md) z
 [`goal.rs`](goal.rs). Eine Zuordnung wird ergänzt, sobald der jeweilige Zielbereich ausreichend
 definiert ist; ungeklärte Teile bleiben ausdrücklich `open`.
 
+`hostseitig` bezeichnet in älteren Fachabschnitten die Ausführung außerhalb des Spielprozesses,
+nicht ein Zielmodul `host`. Session-Ausführung gehört zu `session`, die Bereitstellung mehrerer
+Sessions zu `server` und die Terminalbedienung zu `cli`.
+
 ## Ausgangslage
 
 Der Umbau ist kein sauberer "alt löschen, neu schreiben"-Schritt. Im Arbeitsbaum liegen bereits
@@ -52,20 +56,20 @@ Ein Status beschreibt den Übergang, nicht die Qualität des alten Codes.
 | [`failure`](../../src/failure/mod.rs) | `-` | `Detail`, `Kind` und das persistierte Zwischenformat `failure.json` entfernen; bestehende Nutzer verwenden die fachlichen Fehler- und Diagnosetypen ihrer jeweiligen Module | `delete` | keine `failure`-Exporte, `failure.json`-Zugriffe oder generischen `Detail`-Verwendungen verbleiben |
 | [`report`](../../src/report/mod.rs) und Fehleranteile aus [`session::diagnostics`](../../src/session/diagnostics.rs) | `report` | einen providerunabhängigen Report direkt aus dem beobachteten Fehler und der laufenden Session erzeugen; den reportspezifischen Diagnosekontext, Titel, Fehlersignatur, Provider-Ausführung und Duplikaterkennung dort besitzen | `rewrite` | Panic, Prozessabbruch, optionaler Tracing-Error, reportspezifischer Context und History-Auszug sowie lokale und GitHub-seitige Duplikaterkennung |
 | [`session::context`](../../src/session/context.rs) | `report::Context` und interner Zustand von `session::Session` | den eigenständigen Session-Context entfernen; `Report::create` stellt den benötigten Diagnosekontext bei der Report-Erzeugung direkt aus der Session zusammen | `replace` | kein `session::Context` oder doppelt gepflegter Session-Zustand; Report-Fixtures enthalten keine Wire-Request-IDs |
-| [`session::controller`](../../src/session/controller.rs) | `session::Session`, `host::server`, `host::client`, `host::repl`, `host::mcp`, `host::script` und `command::replay` | Session-Ausführung von der lokalen Client-Anbindung trennen; ein persistenter Host besitzt die Session und eine gemeinsame Client-Seam verbindet die konkreten Fassaden | `replace` | Client-Trennung ohne Session-Ende, gemeinsame Request-IDs, wiederaufnehmbare Activity sowie REPL, Script und MCP gegen dieselbe Session |
+| [`session::controller`](../../src/session/controller.rs) | `session::Session`, `server`, `client`, `cli::repl`, `cli::script` und `command::replay`; Agent-Zuordnung offen | Session-Ausführung von der lokalen Client-Anbindung trennen; ein persistenter Server verwaltet mehrere Sessions und eine gemeinsame Client-Seam verbindet die konkreten Fassaden | `replace` | Client-Trennung ohne Session-Ende, sessionlokale Request-IDs, eindeutig zugeordnete Activity und unabhängige Sessions |
 | [`session::diagnostics`](../../src/session/diagnostics.rs) | interne Prozessbeobachtung von `session`, `session::history` und `report` | das Modul auflösen: Session liest stderr und beobachtet den Prozesslebenszyklus, die History behält Command-Outcomes und `report` erkennt und dokumentiert Laufzeit- und Logikfehler | `replace` | stderr-Weiterleitung, History-Grenze, Panic-Erkennung samt Backtrace, Vorrang vor Prozessabbruch und optionaler Tracing-Error |
 | übrige Verantwortung aus [`session::driver`](../../src/session/driver.rs) | `session::Session` und interne Prozessverwaltung | Prozesslebenszyklus, Transport und ausstehende Commands hinter dem Session-Interface neu aufbauen | `rewrite` | Start, Ready, parallele Requests, Shutdown, Drop und unerwartetes Ende |
 | [`session::launch`](../../src/session/launch.rs) | `session::launch` und `session::Config::launch` | Cargo-only-Launch als `launch::Config` behalten, ein Package und ein Binary oder Example ausdrücklich verlangen und die Prozess-Command-Erzeugung intern halten | `rewrite` | Binary und Example, leere Package- und Target-Namen, Features, Anwendungsargumente und exakt erzeugter Cargo-Aufruf |
 | übrige Bevy-seitige Verantwortung aus [`client::plugin`](../../src/client/plugin.rs) | Controlled-Session-Integration unter `session` | Plugin, Command-Dispatcher und laufende Command-Arbeit aus dem irreführenden Modul `client` verschieben | `rewrite` | Bevy-Plugin, mehrere Requests, Render- und No-Tick-Verhalten |
 | [`client::transport`](../../src/client/transport.rs) | interne Session-Ein-/Ausgabe | öffentliche Transporttypen entfernen; JSONL über stdin/stdout auf beiden Prozessseiten intern implementieren und In-Memory-Ein-/Ausgabe nur als interne Test-Seam behalten | `rewrite` | JSONL-Framing, Flush, Transportende sowie Controlled-Session- und Host-Tests mit interner In-Memory-Ein-/Ausgabe |
-| [`host::command_line`](../../src/host/command_line.rs) | private CLI-Verarbeitung in `host` | das öffentliche Modul und seine CLI-Typen entfernen; Prozessargumente intern in Serverstart, Discovery oder einen konkreten Client-Aufruf übersetzen | `replace` | Server-, REPL-, Script-, MCP- und Report-Aufrufe, Parsefehler sowie keine öffentlichen CLI-Exporte |
-| [`host::config`](../../src/host/config.rs) | private Konfigurationsverarbeitung in `host::run` | öffentliche Config-Typen entfernen und den übergebenen versionierten TOML-Inhalt intern in `session::Config` übersetzen | `replace` | Version, unbekannte Felder, Session-Validierung, Artifact-Override und keine öffentlichen Config-Exporte |
-| [`host::repl`](../../src/host/repl.rs) | `host::repl` über `host::client` | menschliche Eingaben in gemeinsame Commands übersetzen und den Activity-Stream einer verbundenen Session darstellen | `rewrite` | Wiederverbindung, Cursor, gemeinsame Request-IDs, parallele Clients sowie Trennung ohne Session-Ende |
-| `-` | `host::server` und `host::client` | pro Session einen persistenten lokalen Host und eine gemeinsame versionierte Client-Seam ergänzen | `add` | Discovery, Zugriffsschutz, mehrere Clients, Cursor-Gaps, Client-Trennung und ausdrücklicher Shutdown |
-| `-` | `host::mcp` | begrenzte Agent-Tool-Aufrufe über `host::client` ergänzen, ohne ein dauerhaft stdout lesendes Sprachmodell vorauszusetzen | `add` | Command-Send, Activity-Poll und -Wait, Wiederaufnahme per Cursor und unabhängige Session-Lebensdauer |
-| [`host::runner`](../../src/host/runner.rs) | private Server- und Client-Orchestrierung in `host` | das eigenständige Runner-Konzept durch Session-Host, Discovery und konkrete Client-Aufrufe ersetzen | `replace` | Serverstart, REPL-, MCP-, Script- und Report-Client, Capability-Prüfung, ausdrücklicher Shutdown und Exit-Codes ohne `process::exit` |
-| [`host::script`](../../src/host/script.rs) | `host::script` über `host::client` | eine versionierte Liste gemeinsamer Commands vollständig validieren, über eine verbundene Session einreichen und ihre Outcomes einsammeln | `rewrite` | Parse- und Validierungs-Fixtures, gemeinsame Request-IDs, Wiederaufnahme, Shutdown und Fehlerpositionen |
-| [`host::mod`](../../src/host/mod.rs) | kleine `host`-Fassade | öffentliche Host-Einstiege nach HS1 bis HS4 und H7 auf Serverstart sowie notwendige Client-Aufrufe begrenzen | `rewrite` | Exporte mit und ohne Feature `host`; kein Feature-Alias `driver` |
+| [`host::command_line`](../../src/host/command_line.rs) | Argumentverarbeitung in `cli` | alte öffentliche CLI-Typen entfernen; Prozessargumente in Serverstart, Session-Verwaltung oder einen konkreten Client-Aufruf übersetzen | `replace` | vollständige CLI-Bedienung, Parsefehler und der in H7 festgelegte Exportvertrag |
+| [`host::config`](../../src/host/config.rs) | private Konfigurationsverarbeitung, Zuordnung in HS1/H6 offen | öffentliche Config-Typen entfernen; Dateizugriff, Persistenzformat und fachliche Server-/Session-Konfiguration trennen | `open` | Version, unbekannte Felder, Session-Validierung, Artifact-Override und keine doppelte Config-Validierung |
+| [`host::repl`](../../src/host/repl.rs) | `cli::repl` über `client` | menschliche Eingaben in gemeinsame Commands übersetzen und den Activity-Stream einer verbundenen Session darstellen | `rewrite` | Wiederverbindung, Cursor, gemeinsame Request-IDs, parallele Clients sowie Trennung ohne Session-Ende |
+| `-` | `server` und `client` | einen persistenten lokalen Server mit Session-Verzeichnis für mehrere unabhängige Sessions und eine gemeinsame versionierte Client-Seam ergänzen | `add` | Discovery, Session-Erzeugen und -Auflisten, Routing, Zugriffsschutz, Cursor-Gaps, Client-Trennung, Session-Shutdown unabhängig vom Server |
+| `-` | Agent-Zugang, Modulplatzierung offen | Zugriff über `client` oder maschinenlesbare CLI; eigene oder eingebundene Laufzeit und Modellanbindung in H4 entscheiden, ohne MCP | `open` | nach H4: Agent-Aufrufe, Session-Zuordnung, Command-Send, Activity-Poll und -Wait sowie unabhängige Session-Lebensdauer |
+| [`host::runner`](../../src/host/runner.rs) | Ablaufwahl in `cli`, laufender Betrieb in `server` | das eigenständige Runner-Konzept entfernen; CLI wählt den Ablauf, Server besitzt Sessions und die clientunabhängige Verarbeitung | `replace` | Serverstart, REPL-, Agent-, Script- und Report-Aufrufe, Capability-Prüfung, Session-Shutdown und Serverende sowie Exit-Codes ohne `process::exit` |
+| [`host::script`](../../src/host/script.rs) | `cli::script` über `client` | eine versionierte Liste gemeinsamer Commands vollständig validieren, über eine verbundene Session einreichen und ihre Outcomes einsammeln | `rewrite` | Parse- und Validierungs-Fixtures, gemeinsame Request-IDs, Wiederaufnahme, Shutdown und Fehlerpositionen |
+| [`host::mod`](../../src/host/mod.rs) | getrennte Module `server`, `client`, `cli` | Sammelfassade entfernen; Einstiegspunkte, Exports, Features und Crates nach HS1 bis HS4 in H7 festlegen | `replace` | kein `host`-Wrapper im Ziel; direkte Session-Nutzung ohne Server/CLI, Export- und Feature-Tests nach H7; kein Alias `driver` |
 | [`observe`](../../src/observe/mod.rs) | `command::inspect` | markergebundene und fachlich spezielle Beobachtungen durch allgemeine read-only Queries ersetzen | `replace` | Query-, Reflection-, Wire- und No-Tick-Tests |
 | [`target.rs`](../../src/target.rs) | `-` | `AutomationTarget` und das öffentliche Target-Modul ersatzlos entfernen | `delete` | Inspektion findet Entities ohne Marker; keine Target-Referenzen verbleiben |
 
@@ -383,7 +387,7 @@ Die technische Grundlage und die Grenzen der Orientierung an `bevy_inspector_egu
 - Der Controller gibt den vollständigen konkreten Dateipfad im `Capture`-Command an.
 - Der Pfad ist relativ zum konfigurierten Session-Artifact-Verzeichnis. Dieses Verzeichnis darf
   außerhalb des Git-Projekts liegen; der Command darf es jedoch nicht verlassen.
-- Der Debug Host oder die Einbettung bestimmt das gemeinsame Session-Artifact-Verzeichnis. Ein
+- Der Aufrufer bestimmt über `session::Config` das gemeinsame Session-Artifact-Verzeichnis. Ein
   relativer Root bezieht sich auf den Elternordner des konfigurierten Cargo-Manifests. Der Screenshot-
   Command bestimmt nur den Pfad darunter.
 - Der Pfad muss ein normalisierter UTF-8-Pfad mit Vorwärtsschrägstrichen und der Endung `.png` sein.
@@ -510,7 +514,7 @@ noch eine Pace-Einstellung.
   Zustand der laufenden Controlled Session.
 - `command::recording::Command::Stop` beendet und persistiert die aktive Aufzeichnung. Die Controlled
   Session bleibt aktiv.
-- Der Debug Host kann `Start` direkt nach dem Start einer Controlled Session ausführen und dadurch
+- Ein Aufrufer kann `Start` direkt nach dem Start einer Controlled Session einreichen und dadurch
   alle nachfolgenden Session-Commands aufzeichnen. Dasselbe Interface erlaubt einen beliebigen
   späteren Abschnitt.
 - Eine Session Recording ist eine geordnete Folge ausgeführter Session-Commands und ihrer
@@ -519,7 +523,7 @@ noch eine Pace-Einstellung.
   enthält keinen Bevy-World-Snapshot und keine Zusage über den Zustand zu Beginn oder am Ende.
 - Der Aufrufer entscheidet, ob eine Aufzeichnung eine Vorbereitung, eine Messung oder eine gesamte
   Sitzung beschreibt. Dafür werden keine unterschiedlichen Recording-Typen eingeführt.
-- Recording-Start und -Stop werden vom Debug Host ausgeführt und nicht über das Wire-Protokoll an
+- Recording-Start und -Stop werden von `session` ausgeführt und nicht über das Wire-Protokoll an
   die Controlled Session gesendet.
 - Recording- und Replay-Steuercommands werden nicht aufgezeichnet. Wird während einer aktiven
   Aufzeichnung ein Replay ausgeführt, zeichnet der Recorder stattdessen die vom Replay tatsächlich
@@ -530,7 +534,7 @@ noch eine Pace-Einstellung.
 - Recording kann nur an einer Grenze ohne ausstehende Requests gestartet oder gestoppt werden. Ein
   laufender Warp muss zuvor abgeschlossen oder ausdrücklich gestoppt werden. Recording stoppt ihn
   nicht automatisch.
-- Während Requests ausstehen, ordnet der Debug Host Responses über die Wire-Request-ID zu. Vor dem
+- Während Requests ausstehen, ordnet `session` Responses über die Wire-Request-ID zu. Vor dem
   Schreiben verbindet der Recorder den Session-Command mit seinem Outcome und verwirft die ID. Das
   Recording-Format verwendet die Wire-Request-ID weder als Identität noch als Reihenfolge.
 - `Start` antwortet, sobald der Recorder aktiv ist. `Stop` antwortet erst, nachdem der letzte
@@ -547,7 +551,7 @@ noch eine Pace-Einstellung.
   benachbarte Ereignisse verbunden. Der gemeinsame Ausführungspunkt korreliert sie zunächst intern
   und schreibt anschließend einen Session-Command mit seinem Outcome ohne Wire-Request-ID.
 - Änderungen am Recording-Format erhalten eine eigene Formatversion. Sie sind keine Wire-Änderung
-  zwischen Debug Host und Controlled Session.
+  zwischen `session::Session` und Controlled Application.
 
 ## Session Replay
 
@@ -645,7 +649,7 @@ die technische Replay-Blockierung und übernehmen keine wechselnden Fehlercodes 
   `Replay::Stop` zulässig; einen anderen Command lehnt die Session mit `replay_in_progress` ab. Er
   wird nicht in den Plan eingemischt. Die vom Replay-Plan abgeleiteten Session-Commands passieren
   weiterhin den gemeinsamen Session-Ausführungsweg.
-- Replay-Commands werden vom Debug Host verarbeitet. Die aus der Recording abgeleiteten
+- Replay-Commands werden von `session` verarbeitet. Die aus der Recording abgeleiteten
   Session-Commands laufen über denselben Ausführungsweg wie Commands eines menschlichen,
   agentischen oder geskripteten Controllers.
 - Replay besitzt keinen `Deviation`-Typ, veröffentlicht keine Abweichungen und erzeugt daraus keinen
@@ -686,7 +690,7 @@ die technische Replay-Blockierung und übernehmen keine wechselnden Fehlercodes 
 
 - Ein Report dokumentiert genau einen während einer Controlled Session beobachteten Laufzeit- oder
   Logikfehler.
-- Der Debug Host stellt den Report aus beobachtbaren Informationen zusammen. Die Bevy-Anwendung muss
+- `report` stellt den Report aus beobachtbaren Informationen zusammen. Die Bevy-Anwendung muss
   keine reportspezifischen Traits, Fehlercodes oder Meldeaufrufe implementieren.
 - Die Session liest stderr und beobachtet den Prozessstatus, interpretiert diese Daten aber nicht als
   fachliche Fehler. `report` erkennt daraus Panic, aktivierte Tracing-Errors oder ein unerwartetes
@@ -695,7 +699,7 @@ die technische Replay-Blockierung und übernehmen keine wechselnden Fehlercodes 
   Session reicht ihm gelesene Bytes und den unerwarteten finalen Prozessstatus zu, ohne Marker selbst
   fachlich zu deuten.
 - Normale Rust-Assertions und Panics können Logiklücken sichtbar machen. Schlägt beispielsweise
-  `assert!` fehl, verwendet der Debug Host die daraus entstehende Panic-Ausgabe als Report-Auslöser.
+  `assert!` fehl, verwendet der serverseitige Report-Ablauf die erkannte Panic als Report-Auslöser.
   Assertions bleiben normale Anwendungslogik und kennen `bug_hunter` nicht.
 - Ein Report besitzt einen menschenlesbaren Titel, die optional vorhandene unveränderte
   Fehlermeldung, deren Ursprung, eine normalisierte Fehlersignatur und einen reportspezifischen
@@ -723,7 +727,7 @@ die technische Replay-Blockierung und übernehmen keine wechselnden Fehlercodes 
 - Ein erkannter Panic oder ein unerwartetes Prozessende löst unabhängig von der
   Report-Konfiguration einen Report aus. Wird bei einem Prozessende bereits ein Panic erkannt,
   beschreibt der Report den Panic und nicht zusätzlich einen zweiten Prozessfehler.
-- Der gemeinsame private Ablauf unter `host::run` nimmt erkannte Fehler aus
+- Der gemeinsame private Ablauf in `server` nimmt erkannte Fehler aus
   `session::Event::Failure` entgegen. Er ruft `Report::create` und `report::submit` auf und behält den
   Report zusammen mit dem Provider-Outcome oder Submit-Fehler. REPL, Agent und Script besitzen keine
   eigene Report-Auslösung.
@@ -733,7 +737,7 @@ die technische Replay-Blockierung und übernehmen keine wechselnden Fehlercodes 
 - Eine Command-Ablehnung löst nicht automatisch einen Report aus. Sie kann durch einen unpassenden
   Command oder Ausgangszustand des Controllers verursacht worden sein.
 - Die Session-Konfiguration besitzt die standardmäßig deaktivierte Einstellung
-  `report.tracing_errors`. Bei Aktivierung behandelt der Debug Host die vom registrierten
+  `report.tracing_errors`. Bei Aktivierung behandelt der serverseitige Report-Ablauf die vom registrierten
   `session::tracing_error_layer` beobachteten dispatchten `tracing`-Events auf Error-Level als
   Report-Auslöser.
 - Eine beliebige Textausgabe auf `stderr`, die nur das Wort `error` enthält, gilt nicht als
@@ -803,8 +807,8 @@ die technische Replay-Blockierung und übernehmen keine wechselnden Fehlercodes 
   beschädigter oder unvollständiger Panic-Marker beweist keinen Panic; bei einem unerwarteten
   fehlgeschlagenen Prozessstatus bleibt `ProcessExit` der Rückfall.
 - `session::Event::Failure` transportiert erkannte Fehler zum gemeinsamen privaten Ablauf unter
-  `host::run`. Dieser ruft `Report::create` und `report::submit` auf und behält Report und
-  Submit-Ergebnis gemeinsam. Die konkrete Controller-Darstellung bleibt Teil des Host-Interfaces.
+  `server`. Dieser ruft `Report::create` und `report::submit` auf und behält Report und
+  Submit-Ergebnis gemeinsam. Terminaldarstellung gehört zu `cli`, nicht zur Report-Auslösung.
 - [ADR-0009](../adr/0009-session-transports-report-observations.md) hält Markertransport,
   Vorrangregel und Report-Auslösung fest.
 
@@ -1090,7 +1094,7 @@ Provider-Fehler und `report::submit` führt den lokalen Rückfall mit dem vollst
 
 ### Fehlersignatur
 
-- Die Fehlersignatur wird vom Debug Host aus den beobachteten Fehlerdaten abgeleitet. Der Nutzer
+- `report` leitet die Fehlersignatur aus den beobachteten Fehlerdaten ab. Der Nutzer
   konfiguriert weder Fehlercodes noch Regeln für einzelne Fehlermeldungen.
 - `Signature::value` besitzt die Form `v1:sha256:<digest>`. Der Digest besteht aus genau 64
   kleingeschriebenen Hex-Zeichen.
@@ -1219,7 +1223,7 @@ Die Fixture-Matrix prüft zusätzlich:
   maschinenlesbaren Panic-Marker auf stderr schreiben. Der Marker darf nicht erst über einen
   Hintergrundthread ausgegeben werden. Die technische Prüfung und Fixture-Matrix stehen in
   [`research/bevy-panic-observability.md`](research/bevy-panic-observability.md).
-- R2 legt fest, dass der Debug Host vor jedem Cargo-Start `RUST_BACKTRACE=1` setzt und
+- R2 legt fest, dass `session` vor jedem Cargo-Start `RUST_BACKTRACE=1` setzt und
   `session::Plugin` im Panic-Hook zusätzlich `Backtrace::force_capture` verwendet. Der
   maschinenlesbare Marker enthält den Erfassungsstatus und bei Erfolg die unveränderte
   `Display`-Ausgabe. Payload und Panic-Stelle bleiben getrennte strukturierte Felder. Stabiles Rust
@@ -1232,7 +1236,7 @@ Die Fixture-Matrix prüft zusätzlich:
   dispatchte Events mit `Level::ERROR` und übermittelt normalisierte Metadaten sowie strukturierte
   Felder in einem internen Marker. Direkte stderr-Ausgabe, Error-Spans ohne Event und gefilterte
   Events lösen keinen Tracing-Report aus. Eigene Formatter einschließlich ANSI-Ausgabe bleiben
-  möglich. Bei aktiviertem `report.tracing_errors` muss der Debug Host die Layer-Registrierung beim
+  möglich. Bei aktiviertem `report.tracing_errors` muss `Session::start` die Layer-Registrierung beim
   Session-Start bestätigen. Quellen und Fixtures stehen in
   [`research/bevy-tracing-error-observability.md`](research/bevy-tracing-error-observability.md).
 - R4 legt `v1:sha256:<digest>` als persistierte Signatur fest. SHA-256 verarbeitet die oben
@@ -1290,14 +1294,14 @@ Die Fixture-Matrix prüft zusätzlich:
 
 ### Festgelegtes Ziel
 
-- `session::protocol` besitzt den versionierten Wire-Vertrag zwischen Debug Host und Controlled
-  Session. Die fachlichen Commands bleiben im jeweiligen `command`-Modul; das Protokoll besitzt nur
+- `session::protocol` besitzt den versionierten Wire-Vertrag zwischen `session::Session` und
+  Controlled Application. Die fachlichen Commands bleiben im jeweiligen `command`-Modul; das Protokoll besitzt nur
   deren Wire-Abbildung, die Nachrichtenhüllen und die Request-Korrelation.
 - Bevy Remote und JSON-RPC gehören nicht zum Wire-Vertrag. Der interne Inspect-Adapter wird nicht
   durchgereicht: Die Wire-Nachrichten enthalten weder `jsonrpc`, BRP-Methodennamen und `params` noch
   BRP-IDs oder numerische BRP-Fehlercodes. `session::protocol` bleibt der einzige Owner der
   transportierten Request-ID, Command-Namen, Outputs und Fehlerformen.
-- Das Ziel ist Protokollversion 3 und nicht kompatibel mit dem aktuellen Protokoll v2. Der Debug Host
+- Das Ziel ist Protokollversion 3 und nicht kompatibel mit dem aktuellen Protokoll v2. `session`
   sendet keine Requests, bevor er genau eine `Ready`-Nachricht mit der erwarteten Version und die für
   die Report-Konfiguration nötige Layer-Bestätigung erhalten hat.
 - Input, Tick und Inspect gehören fest zur Protokollversion. `Ready` meldet nur Funktionen, deren
@@ -1323,7 +1327,7 @@ Die Fixture-Matrix prüft zusätzlich:
   `report.tracing_errors` einen `session::Error::Launch`; bei deaktivierter Beobachtung verhindert
   ein fehlender Layer den Start nicht.
 - Nur Input, Tick, Inspect, Screenshot und Shutdown überschreiten den Transport zur Controlled
-  Session. Recording und Replay werden vom Debug Host ausgeführt und sind keine Wire-Commands.
+  Session. Recording und Replay werden von `session` ausgeführt und sind keine Wire-Commands.
 - Rust verwendet typisierte Command-Enums. Der Protokoll-Codec bildet jeden konkreten Command auf
   einen vollständig qualifizierten Namen wie `input.keyboard.press`, `tick.warp.stop` oder
   `inspect.query` und ein immer vorhandenes `arguments`-Objekt ab.
@@ -1346,7 +1350,7 @@ Die Fixture-Matrix prüft zusätzlich:
   aber nicht zu diesen Wire-Commands.
 - `Session` vergibt für jeden angenommenen Command eine numerische Request-ID. Ein Controller
   liefert keine eigene ID. Für einen Wire-Command verwendet das Protokoll dieselbe ID; für einen
-  hostseitigen Recording- oder Replay-Command bleibt sie innerhalb des Debug Hosts.
+  hostseitigen Recording- oder Replay-Command bleibt sie innerhalb der Session-Ausführung.
 - Eine Request-ID ist innerhalb der laufenden Session eindeutig und dient ausschließlich dazu, ein
   möglicherweise später oder in anderer Reihenfolge eintreffendes Outcome dem Command zuzuordnen.
   Aus ihrem Wert wird weder eine fachliche Reihenfolge noch eine persistente Session-Identität
@@ -1743,8 +1747,8 @@ Daraus folgen diese Anforderungen:
   ihrem Abschluss gelesen werden.
 - Die konkrete Ausführung darf Bevy World nicht unkontrolliert von einem Hintergrundthread aus
   verändern.
-- REPL, MCP-Agent und Script erzeugen dieselbe Command-Darstellung aus qualifiziertem Command-Namen
-  und `arguments`. Die REPL übersetzt menschliche Eingaben in diese Form, MCP übergibt strukturierte
+- REPL, Agent und Script erzeugen dieselbe Command-Darstellung aus qualifiziertem Command-Namen
+  und `arguments`. Die REPL übersetzt menschliche Eingaben in diese Form, der Agent übergibt strukturierte
   Tool-Argumente und ein Script enthält eine versionierte Liste derselben Einträge.
 - `Session::send` nimmt hostseitig ausgeführte Commands sowie Wire-Commands für die Controlled
   Session über dasselbe Interface an. Es vergibt für jeden angenommenen Command eine
@@ -1793,9 +1797,10 @@ Daraus folgen diese Anforderungen:
 - Auch ein commandspezifisch unzulässiger Command, etwa während eines exklusiven Replays, ist bereits
   angenommen. Er erhält `pending` und danach ein terminales `rejected` mit dem zutreffenden stabilen
   Code.
-- Während eines Replays nimmt das öffentliche Session-Interface von einem Controller nur
-  `Replay::Stop` an. Die interne Replay-Ausführung reicht ihre Plan-Commands weiterhin durch
-  denselben gemeinsamen Ausführungspunkt und erhält für jeden davon ein normales `Pending`.
+- Während eines Replays ist von außen nur `Replay::Stop` fachlich zulässig. Andere normale
+  Requests werden angenommen und anschließend abgelehnt. Die interne Replay-Ausführung reicht
+  ihre Plan-Commands weiterhin durch denselben gemeinsamen Ausführungspunkt und erhält für
+  jeden davon ein normales `Pending`.
 - `try_receive` blockiert nicht und liefert `Ok(None)`, solange genau dieses `Pending` noch kein
   Ergebnis besitzt. Die Methode prüft nur bereits verfügbare interne Nachrichten und führt keine
   blockierende Datei-, Prozess- oder Netzwerkoperation aus. `receive` wartet auf genau dieses
@@ -1889,15 +1894,16 @@ Daraus folgen diese Anforderungen:
 - `session::Session` übernimmt aus dem bisherigen Controller nur allgemeine Session-Verantwortung:
   Start und Handshake, Command-Ausführung, Request-Korrelation, History, Recording, Capabilities,
   Session-Events, Shutdown und Prozesslebenszyklus.
-- `host::repl` besitzt Parsing und Darstellung menschlicher Eingaben, Terminal-Ein-/Ausgabe,
+- `cli::repl` besitzt Parsing und Darstellung menschlicher Eingaben, Terminal-Ein-/Ausgabe,
   REPL-spezifische Komfortbefehle und die Anzeige des gemeinsamen Activity-Streams. Ob normalisierte
   Pointer-Koordinaten oder vergleichbare Hilfen erhalten bleiben, wird ausschließlich mit der REPL
   entschieden.
-- `host::script` besitzt nur die versionierte Dateihülle, das Parsing der gemeinsamen
+- `cli::script` besitzt nur die versionierte Dateihülle, das Parsing der gemeinsamen
   Command-Einträge, deren asynchrone Einreichung und die Zuordnung der Outcomes zu den
-  ursprünglichen Array-Positionen. Es verwendet dieselbe `host::client`-Seam wie REPL und MCP.
-- `host::mcp` besitzt ausschließlich die agentengerechte Abbildung begrenzter Tool-Aufrufe auf
-  `host::client`. Das Modul besitzt weder Session, Pending-Arbeit noch Activity-Aufbewahrung.
+  ursprünglichen Array-Positionen. Es verwendet dieselbe `client`-Seam wie die REPL.
+- Agent-Zugang und Modulplatzierung werden in H4 geplant. Ob eine eigene oder eingebundene
+  Agent-Laufzeit nötig ist oder ein vorhandener Agent die CLI verwendet, bleibt offen.
+  Der Agent besitzt weder Spiel-Session, deren Pending-Arbeit noch Activity-Aufbewahrung.
 - `command::replay` besitzt das Lesen der Recording-Einträge, deren Ausführung über die bestehende
   Session, Stop und Abschlussstatus. Replay startet keine eigene Controlled Session mehr und
   vergleicht aufgezeichnete Outcomes nicht mit den neu entstandenen Outcomes.
@@ -2031,7 +2037,7 @@ Das öffentliche Session-Interface ist nach S2 abgeschlossen:
 - `Spec::command` entfällt aus dem öffentlichen Interface. Die interne Session-Prozessverwaltung
   baut daraus weiterhin den Cargo-Aufruf.
 - Die heutige zusätzliche Validierung von `application.package` und `application.target` in
-  `host::Config` entfällt. Der private Host-Config-Parser liest die Launch-Konfiguration unter
+  `host::Config` entfällt. Der private Config-Parser liest die Launch-Konfiguration unter
   `session.launch`; die fachliche Validierung besitzt ausschließlich `session::launch`.
 
 ### Session-Konfiguration und Report-Kontext
@@ -2074,9 +2080,11 @@ Das öffentliche Session-Interface ist nach S2 abgeschlossen:
 
 ### Controlled-Session-Integration
 
-- Der aktuelle Name `client` entfällt im Ziel. Das Bevy-Plugin implementiert die Controlled-Session-
-  Seite des Session-Interfaces und heißt öffentlich `session::Plugin`. Es ist unabhängig vom
-  `host`-Feature verfügbar und wird nicht zusätzlich an der Crate-Wurzel re-exportiert.
+- Die bisherige Bevy-seitige Bedeutung von `client` entfällt. Das Bevy-Plugin implementiert die
+  Controlled-Session-Seite des Session-Interfaces und heißt öffentlich `session::Plugin`.
+  Das neue Zielmodul `client` bezeichnet dagegen ausschließlich den Zugriff auf den lokalen Server.
+  `session::Plugin` bleibt unabhängig von Server-/CLI-Features verfügbar und wird nicht zusätzlich
+  an der Crate-Wurzel re-exportiert. Den genauen Feature-Zuschnitt legt H7 fest.
 - Diese Integration besitzt das Bevy-Plugin, den Command-Dispatcher, laufende Command-Arbeit und die
   Anbindung an die interne Session-Ein-/Ausgabe. Fachliche Command-Typen bleiben bei `command` und
   die Wire-Abbildung bei `session::protocol`.
@@ -2093,10 +2101,10 @@ Das öffentliche Session-Interface ist nach S2 abgeschlossen:
   für rendererfreie oder gerenderte Sessions ein. Rendererabhängige Prüfungen bleiben bei den
   betroffenen Funktionen. Ein späterer rendererfreier Anwendungsfall kann deshalb dieselbe Session-
   und Protokollstruktur mit einer anderen Bevy-Zusammensetzung verwenden.
-- JSONL über stdin/stdout bleibt die interne Ein-/Ausgabe zwischen Debug Host und Controlled
-  Session. Das Ziel besitzt kein öffentliches `transport`-Modul, kein öffentliches Transport-Trait
+- JSONL über stdin/stdout bleibt die interne Ein-/Ausgabe zwischen `session::Session` und Controlled
+  Application. Das Ziel besitzt kein öffentliches `transport`-Modul, kein öffentliches Transport-Trait
   und keine öffentliche Konfiguration benutzerdefinierter Ein-/Ausgabeadapter.
-- Die Controlled-Session-Seite liest intern stdin und schreibt stdout. Die Debug-Host-Seite besitzt
+- Die Controlled-Session-Seite liest intern stdin und schreibt stdout. Der Session-Koordinator besitzt
   intern die entsprechenden Pipes des Kindprozesses. Beide Seiten teilen nur den Codec und die
   Nachrichtentypen aus `session::protocol`, nicht eine gemeinsame Ein-/Ausgabeabstraktion.
 - Ein privater Leser nimmt stdin-Nachrichten entgegen, ohne den Bevy-Event-Loop zu blockieren, und
@@ -2127,81 +2135,133 @@ Das öffentliche Session-Interface ist nach S2 abgeschlossen:
   verarbeiten und darf den Bevy World nicht von einem unkontrollierten Hintergrundthread aus
   verändern; ihre konkrete Datenstruktur gehört nicht zum Ziel-Interface.
 
-## Debug Host
+## Server, Client-Zugriff und CLI
 
 [`ADR-0022`](../adr/0022-session-host-outlives-clients.md) ersetzt die bisherige unmittelbare
-Kopplung eines ausgewählten Controllers an `&mut session::Session`:
+Kopplung eines ausgewählten Controllers an `&mut session::Session`.
+[`ADR-0023`](../adr/0023-local-server-manages-multiple-sessions.md) ersetzt dessen
+Ein-Session-pro-Server-Regel und nimmt MCP aus dem aktuellen Ziel.
+[`ADR-0024`](../adr/0024-separate-server-client-and-cli.md) löst das Sammelmodul `host`
+in getrennte Module für Bereitstellung, Zugriff und Bedienung auf:
 
-- `host::server` ist die langlebige Entwickleranwendung um genau eine `session::Session`. Der
-  Serverprozess besitzt Session, Controlled Application und Prozesslebenszyklus unabhängig von
-  seinen Clients.
-- `host::client` ist die gemeinsame private Seam für lokale Verbindungen. REPL, Script und
-  MCP-Fassade senden darüber dieselben `command::Command`-Werte und beobachten denselben
-  Activity-Stream.
-- `host::mcp` bildet begrenzte Agent-Tool-Aufrufe auf `host::client` ab. Ein Sprachmodell muss weder
-  den Serverprozess starten noch eine Konsole dauerhaft lesen.
-- `host::repl` ist ein menschlicher Client. `host::script` ist ein endlicher Client für eine
+- `server` ist eine langlebige lokale Entwickleranwendung für mehrere unabhängige
+  `session::Session`-Werte. Er besitzt Session-Verzeichnis, Identitätszuordnung und Lebensdauer
+  der Session-Handles unabhängig von seinen Clients.
+- Jede Session behält ihren privaten Koordinator, ihren Spielprozess, dessen Pipes und ihre
+  fachliche Ausführung. Serververwaltung dupliziert keine Command-, Recording-, Replay-,
+  History- oder Shutdown-Regel.
+- Session-Erzeugen, -Auflisten, -Auswählen und -Zustandsabfrage gehören zum Serververtrag,
+  nicht zu `command::Command`. Die CLI muss diese Verwaltung sowie Command-Einreichung und
+  Beobachtung vollständig ermöglichen. Weboberflächen und weitere UIs bleiben vorerst draußen.
+- `client` kapselt Verbindung, Protokollkodierung und Antwortzuordnung für Verwaltungsaufrufe,
+  Commands und Activity, ohne Terminaldarstellung oder Spielregeln. Commands adressieren eine
+  bestimmte Session. Activity und Ergebnisse müssen dieser Session eindeutig zugeordnet werden.
+- `cli` besitzt Argumentverarbeitung, Terminaldarstellung und die Auswahl des Ablaufs.
+  Der Serverstart wird dort angestoßen; der laufende Betrieb und die Sessions gehören `server`.
+- Agent-Zugang, Laufzeit, Modellanbindung und Modulplatzierung bleiben bis H4 offen.
+  MCP entfällt; es wird auch kein optionaler MCP-Vertrag vorgeplant.
+- `cli::repl` ist ein menschlicher Client. `cli::script` ist ein endlicher Client für eine
   versionierte Command-Liste. Beide besitzen die Session nicht.
 - Clients dürfen sich unabhängig verbinden, trennen und erneut verbinden. Ein Client-Ende sendet
   weder Stop noch Shutdown und beendet weder laufende Commands noch Recording oder Replay.
 - Mehrere Clients dürfen gleichzeitig verbunden sein und Commands senden. Der Server übergibt sie
-  in eindeutiger Empfangsreihenfolge an den privaten dynamischen Session-Adapter; `Session` vergibt
-  weiterhin die globalen Request-IDs.
+  je Session in eindeutiger Empfangsreihenfolge an deren privaten dynamischen Session-Adapter.
+  `session::RequestId` bleibt sessionlokal. Serverweite Korrelation benötigt zusätzlich die
+  Session-Identität; ein neuer serverweiter Command-ID-Owner wird nicht eingeführt.
 - Der Server übernimmt Command-Annahmen, terminale Outcomes, Session-Events und später
   Report-Ergebnisse in einen begrenzt aufbewahrten Activity-Stream. Ein Transport-Cursor ermöglicht
-  `poll`, `wait` und Wiederaufnahme nach einer Client-Trennung.
-- `command::Command::Shutdown` ist für REPL, Script und MCP-Agent ein ausdrücklicher Client-Command.
-  Der Server routet ihn zu `Session::shutdown`; kein Client dupliziert dessen Vorbedingungen oder
-  sendet versteckte Stop-Commands.
+  `poll`, `wait` und Wiederaufnahme nach einer Client-Trennung. Ob Cursor serverweit oder je
+  Session gelten und wie Activity gefiltert wird, bleibt in HS3 offen.
+- `command::Command::Shutdown` ist für REPL, Script und Agent ein ausdrücklicher Client-Command.
+  Der Server routet ihn zu `Session::shutdown` der adressierten Session; kein Client dupliziert
+  dessen Vorbedingungen oder sendet versteckte Stop-Commands. Andere Sessions und der Server
+  bleiben davon unberührt. Das gilt auch bei einem unerwarteten Ende dieses Spielprozesses.
+- Serverende ist eine eigene Operation. Sein Verhalten gegenüber aktiven Sessions, die weitere
+  Sichtbarkeit beendeter Sessions und ihrer Ergebnisse sowie verwaiste Metadaten sind in HS1 offen.
 - Das Session Protocol v3 bleibt die ausschließlich interne Verbindung zwischen
   `session::Session` und Controlled Application. Das lokale Client-Protokoll besitzt eine getrennte
   Version und legt keine internen Prozess-Pipes offen.
-- Prozessstart und Discovery, Transport und Zugriffsschutz, Activity-Cursor sowie Client- und
-  Shutdown-Abläufe werden in HS1 bis HS4 festgelegt. Bis dahin bleiben konkrete Server- und
-  Client-Signaturen in `goal.rs` bewusst offen.
-- Die öffentliche Host-Fassade wird nach HS1 bis HS4 erneut geprüft. Insbesondere ist noch nicht
-  entschieden, ob `host::run(config_source)` allein Serverstart und alle Client-Aufrufe tief genug
-  kapselt.
-- Das Ziel besitzt weiterhin kein öffentliches `host::config`- oder `host::command_line`-Modul.
-  Persistenz-, CLI- und Discovery-Typen bleiben private Host-Details, soweit die später
-  festgelegten Einstiegspunkte sie nicht nach außen tragen müssen.
-- Host-Einstiege rufen nicht `std::process::exit` auf. Eine einbettende `main`-Funktion gibt den
+- Serverstart und Discovery, Session-Verwaltung und -Identität, Transport und Zugriffsschutz,
+  Activity-Cursor sowie Client- und Shutdown-Abläufe werden in HS1 bis HS4 festgelegt.
+  Die vorgeschlagene zufällige hexadezimale Session-ID mit Kurzform ist noch kein Formatvertrag.
+  Bis dahin bleiben konkrete Server- und Client-Signaturen in `goal.rs` bewusst offen.
+- Die bisherige `host::run(config_source)`-Sammelfassade entfällt. H7 legt die nötigen
+  Einstiegspunkte nach HS1 bis HS4 fest. Module auf oberster Ebene werden nicht allein durch
+  ihre Platzierung zu öffentlichen Exports oder eigenen Crates und Programmen.
+- Persistenz-, CLI- und Discovery-Typen bleiben privat, soweit die später festgelegten
+  Einstiegspunkte sie nicht nach außen tragen müssen. Die alten öffentlichen
+  `host::config`- und `host::command_line`-Module werden nicht bloß umbenannt re-exportiert.
+- CLI-Einstiege rufen nicht `std::process::exit` auf. Eine einbettende `main`-Funktion gibt den
   bestimmten `ExitCode` zurück.
-- `config_source` enthält das vollständige versionierte TOML-Dokument. Dessen Formatversion bleibt
-  ein privates Persistenzdetail und wird nicht Teil des Laufzeitmodells. Unbekannte Felder und nicht
-  unterstützte Versionen werden abgelehnt.
-- Der private Config-Parser liest keine Datei. Der Serverstart erhält den Inhalt vom Aufrufer und
-  erzeugt daraus die `session::Config`. Die CLI darf ausschließlich
-  `session.artifact_dir` überschreiben; andere Session-Werte erhalten keine allgemeinen CLI-
-  Overrides.
+- Der bisherige `config_source`-Parameter bezeichnete vollständigen versionierten TOML-Inhalt.
+  Die neuen Einstiegssignaturen und der Owner des privaten Parsers werden in HS1/H6/H7 festgelegt.
+  Formatversionen bleiben Persistenzdetails außerhalb des Laufzeitmodells; unbekannte Felder und
+  nicht unterstützte Versionen werden weiterhin abgelehnt.
+- Der private Config-Parser liest keine Datei. Wann Serverstart oder Session-Erzeugen welche
+  Konfiguration erhalten, wird in HS1 getrennt festgelegt; Serverstart erzeugt nicht mehr
+  voraussetzungslos genau eine `session::Config`. Der bisherige einzige CLI-Override für
+  Session-Werte bleibt `session.artifact_dir`. Server- und Session-Auswahl sind keine
+  allgemeinen Overrides der Launch-Konfiguration.
 - Die bisherigen Host-Felder `profile_id` und `tool` sowie die getrennte `application`-
   Konfiguration entfallen. Die Launch-Konfiguration besitzt mit `session.launch` genau einen Owner.
-- Das Cargo-Feature `host` schaltet ausschließlich das Modul `host` und dessen private
-  Abhängigkeiten für CLI, TOML und Ctrl-C frei. `command`, `report`, `session::Plugin`,
-  `session::Session` und die übrigen Session-Typen bleiben ohne dieses Feature verfügbar. Der
-  Kompatibilitätsalias `driver` entfällt.
-- Ohne das Feature `host` existiert das Modul `host` nicht. Die nach HS1 bis HS4 in H7 festgelegten
-  Host-Einstiege bleiben mit diesem Feature verfügbar; Config-, CLI-, Server-, Client-, Report- und
-  Orchestrierungstypen werden nicht unkontrolliert exportiert.
+- Die bisherige Zuordnung des Features `host` zum gleichnamigen Sammelmodul wird wieder geöffnet.
+  H7 entscheidet Namen und Zuschnitt der Features, Exports, Crates und ausführbaren Programme.
+  `command`, `report`, `session::Plugin`, `session::Session` und die übrigen Session-Typen
+  müssen weiterhin ohne Server-/CLI-Abhängigkeiten nutzbar sein. Der Alias `driver` bleibt gestrichen.
+- Im Serverbetrieb besitzt `server` den clientunabhängigen Ablauf für Session-Events und
+  Report-Auslösung. `report` besitzt weiterhin Erstellung, Signatur und Provider-Ausführung;
+  `cli` stellt deren Ergebnisse nur dar.
 
-### MCP-Agent und erneut zu prüfende JSON-Payloads
+### Prüfung der Multi-Session-Umstellung
 
-ADR-0022 ersetzt `host::agent` als langlebigen stdin/stdout-Controller durch begrenzte
-MCP-Tool-Aufrufe über `host::client`. Die folgenden Command-, Fehler- und Event-Objekte dokumentieren
-weiterhin die bereits beschlossenen Payload-Kandidaten. Ihre äußere Client-Hülle, Cursor und
-Fortsetzungsregeln werden nach HS2 und HS3 in H2 bis H4 neu festgelegt.
+- CLI-Fixtures erzeugen zwei Sessions, listen sie auf und adressieren Commands an die gewählte
+  Session. Dazu sind weder Weboberfläche noch MCP nötig.
+- Gleiche Request-ID-Werte in zwei Sessions bleiben über die Session-Zuordnung eindeutig.
+  Ein aktives Recording oder Replay in Session A verändert die fachlichen Regeln in Session B nicht.
+- Session-Shutdown oder Spielprozessverlust in A beendet weder B noch den Server. Das in HS1
+  festzulegende Serverende erhält eigene Prüfungen und verwendet nicht den Shutdown einer
+  beliebig ausgewählten Session als Ersatz.
+- Client-Trennung lässt ausstehende Arbeit weiterlaufen. Spätere Clients können Ergebnisse nach
+  dem in HS3 festgelegten Aufbewahrungs- und Gap-Vertrag zuordnen.
+- HS1 prüft gemeinsame Artifact-Pfade mehrerer Sessions sowie fehlgeschlagene Starts und beendete
+  Sessions. Es wird weder dauerhafte Speicherung noch Wiederherstellung nach Serverneustart
+  stillschweigend zugesagt.
+- Die öffentlichen Rust-Session-Tests bleiben ohne Server ausführbar. Das interne Session Protocol
+  v3 erhält keine serverseitige Session-ID oder Verwaltungsoperation.
+
+### Prüfung der Modultrennung
+
+- CLI, REPL und Script greifen über `client` auf den Server zu, nicht direkt auf Session-Handles.
+- Der Serverbetrieb braucht keine Terminal-Ein-/Ausgabe. Reports werden auch ohne verbundenen
+  Client ausgelöst; die CLI besitzt keine zweite Auslöseregel.
+- Wire-Typen und Versionierung des lokalen Client-Protokolls erhalten in HS2 genau einen Owner.
+  Client und Server erhalten keine getrennten Kopien derselben Kodierungs- und Validierungsregeln.
+- Die bestehende Bevy-Integration unter `client` wandert nach `session`; das neue `client`
+  wird ausschließlich auf Serverzugriff geprüft.
+- H7 ergänzt Export- und Feature-Builds, ohne die Modultrennung vorab in Crates aufzuteilen.
+
+### Agent-Zugang und erneut zu prüfende JSON-Payloads
+
+ADR-0022 verwirft den langlebigen stdin/stdout-Controller, dessen Ende die Session beendet.
+ADR-0023 entfernt außerdem die danach geplante MCP-Fassade. Der Agent-Zugang verwendet den
+gemeinsamen Client-Vertrag; seine Laufzeit und Modellanbindung bleiben in H4 offen.
+Die folgenden Command-, Fehler- und Event-Objekte dokumentieren bisherige Payload-Kandidaten,
+keinen vollständigen Multi-Session-Client-Vertrag. Session-Adressierung, äußere Client-Hülle,
+Cursor und Fortsetzungsregeln werden nach HS2 und HS3 in H2 bis H4 neu festgelegt.
 
 #### Festgelegte gemeinsame Command-Verarbeitung
 
-- `host::mcp` verwendet dieselbe gemeinsame Client-Seam und Command-Darstellung wie REPL und Script.
-  Die Fassade besitzt keine eigene Command-Sprache und keine eigene Request-ID-Vergabe.
+- Der Agent-Zugang verwendet denselben Client-Vertrag und dieselbe Command-Darstellung wie REPL
+  und Script. Seine noch offene Modulplatzierung erzeugt keine eigene Command-Sprache oder
+  Request-ID-Vergabe.
 - Jede Eingabezeile enthält genau einen qualifizierten Command-Namen und das immer vorhandene
   `arguments`-Objekt. Eine Agent-Eingabe enthält keine Request-ID und kein zusätzliches
   `type: "command"`-Feld.
 - Der gemeinsame Serveradapter validiert den Command und reicht ihn an die Session weiter. Mehrere
   Clients dürfen weitere Commands einreichen, während frühere Commands noch ausstehen.
-- Während eines exklusiven Replays nimmt die Session von Clients nur `Replay::Stop` an. Andere
-  Commands werden nicht zwischen Replay-Plan und Tick-Grenzen eingefügt.
+- Während eines exklusiven Replays ist in der betroffenen Session von außen nur `Replay::Stop`
+  fachlich zulässig. Andere normale Requests erhalten nach der Annahme ein `rejected` und werden
+  nicht zwischen Replay-Plan und Tick-Grenzen eingefügt. Andere Sessions sind davon nicht betroffen.
 - Für jeden angenommenen Command übernimmt der Activity-Stream zuerst eine `pending`-Meldung mit der
   von `Session` vergebenen Request-ID und dem qualifizierten Command-Namen. Später folgt genau eine
   `completed`-, `rejected`- oder `failed`-Meldung mit derselben ID und demselben Command-Namen.
@@ -2255,7 +2315,7 @@ es gibt keine weiteren stabilen Eingabefehlercodes.
 `input_line` beginnt bei eins und zählt jede physische Eingabezeile einschließlich leerer und
 ungültiger Zeilen. Der ursprüngliche Zeileninhalt wird nicht ausgegeben. `request_id: null` zeigt,
 dass die Session die Eingabe nie angenommen hat. Es entstehen keine `pending`-Meldung, kein History-
-oder Recording-Eintrag und kein Verbrauch einer Session-ID.
+oder Recording-Eintrag und kein Verbrauch einer Session-Request-ID.
 
 Nach einem `input_error` liest der Agent die nächste Zeile und bereits angenommene Commands laufen
 weiter. Ein vollständig dekodierter Command durchläuft dagegen immer die Session-Annahme.
@@ -2347,13 +2407,14 @@ steht in
 
 #### Noch zu planen
 
-- MCP-Tool-Runden für Command-Annahme sowie `poll` und `wait`,
-- Fehlerabbildung an der MCP- und Client-Grenze,
+- Agent-Bedienung und Entscheidung über eine eigene oder eingebundene Laufzeit,
+- Modellanbindung und Session-Auswahl, Command-Annahme sowie `poll` und `wait`,
+- Fehlerabbildung zwischen CLI, Agent und gemeinsamem Client-Vertrag,
 - Client-Trennung ohne Auswirkung auf ausstehende Arbeit oder Session-Lebensdauer.
 
 ### REPL
 
-- `host::repl::run` verwendet eine Verbindung über `host::client`. Die REPL startet und besitzt die
+- `cli::repl::run` verwendet eine Verbindung über `client`. Die REPL startet und besitzt die
   Session nicht. Eine getrennte REPL beendet weder Server noch Session.
 - Die REPL sendet Session-Commands grundsätzlich nicht blockierend und bleibt bei ausstehenden
   Commands ansprechbar. Insbesondere kann sie die Pace eines laufenden Warp ändern, ihn stoppen
@@ -2362,7 +2423,7 @@ steht in
   `replay stop` zu. Erst nach `completed`, `stopped` oder `blocked` kann sie wieder andere Commands
   einreichen.
 - Die REPL übersetzt jede gültige menschliche Eingabe in denselben qualifizierten Command-Namen und
-  dasselbe `arguments`-Objekt, die Client-Protokoll, MCP und Script verwenden. Sie erzeugt keine
+  dasselbe `arguments`-Objekt, die Client-Protokoll, Agent und Script verwenden. Sie erzeugt keine
   eigene Command-Darstellung und vergibt keine eigene Anzeigenummer.
 - Jeder gesendete Command wird mit der von `Session` vergebenen Request-ID und seinem Command-Namen
   als `pending` angezeigt. Activity-Einträge werden nach ihrem Eintreffen über den gemeinsamen Cursor
@@ -2398,7 +2459,7 @@ inspect query <arguments-json>
 `<arguments-json>` umfasst den gesamten Rest der Eingabezeile und ist genau das unter "JSON- und
 Wire-Form" festgelegte `arguments`-Objekt von `inspect.query`. Es enthält weder den Command-Namen noch
 eine Request-ID. Die REPL verwendet dafür denselben Inspect-Arguments-Codec wie Client-Protokoll,
-MCP, Script und Wire-Protokoll. Sie besitzt keinen zweiten Query-Typ und keine eigene Flag-Sprache
+Agent, Script und Wire-Protokoll. Sie besitzt keinen zweiten Query-Typ und keine eigene Flag-Sprache
 für Filter, Selektionen oder Projektionen.
 
 Eine kombinierte Entity-Query kann beispielsweise so eingegeben werden:
@@ -2446,14 +2507,14 @@ Entscheidung ist in
 
 #### Festgelegtes Ziel
 
-- `host::script` führt eine vorab beschriebene Liste von Commands über eine bestehende
-  `host::client`-Verbindung aus. Das Modul startet und besitzt keine Session. Ohne ausdrücklichen
+- `cli::script` führt eine vorab beschriebene Liste von Commands über eine bestehende
+  `client`-Verbindung aus. Das Modul startet und besitzt keine Session. Ohne ausdrücklichen
   Shutdown trennt sich der Script-Client nach seinem Ablauf, während die Session bestehen bleibt.
   `Script::parse` erhält den bereits gelesenen Dateiinhalt; Dateizugriff und Client-Verbindung
   bleiben außerhalb des Script-Moduls.
 - Das persistierte Format ist ein versioniertes JSON-Dokument mit einem `commands`-Array. Jeder
   Eintrag besitzt exakt dieselbe Form aus qualifiziertem Command-Namen und `arguments`-Objekt, die
-  MCP, Client-Protokoll und REPL verwenden.
+  Agent, Client-Protokoll und REPL verwenden.
 - Das Script-Format besitzt keine eigenen Step-Varianten, Namen, Request-IDs, Send-/Receive-Regeln,
   Erwartungen, Assertions, Bedingungen, Schleifen oder zeitbasierten Waits.
 - `Script::parse` liest und validiert das vollständige Dokument, bevor ein Command ausgeführt werden
@@ -2464,7 +2525,7 @@ Entscheidung ist in
 - Ein Script darf `command::Command::Shutdown` ausdrücklich enthalten. Der Serveradapter routet ihn
   zu `Session::shutdown`; das Script implementiert keine Shutdown-Regel. HS4 legt fest, an welcher
   Position Shutdown zulässig ist und wann vorherige Script-Commands terminal sein müssen.
-- `script::run` reicht Commands in Dateireihenfolge an `host::client` weiter. Die genaue
+- `script::run` reicht Commands in Dateireihenfolge an `client` weiter. Die genaue
   Einreichungs- und Wartefolge wird nach HS3 und HS4 erneut geprüft, damit der gemeinsame
   Activity-Stream und ein möglicher Shutdown nicht umgangen werden.
 - Nachdem alle Commands eingereicht wurden, sammelt `run` sämtliche noch ausstehenden Outcomes ein.
@@ -2513,7 +2574,9 @@ Die JSON-Form folgt diesem Muster:
 - Script-Parsing und strukturelle Validierung müssen vor der ersten Session-Mutation abgeschlossen
   sein. Dateipfade und Dateifehler ergänzt der aufrufende Host außerhalb des Script-Moduls.
 - Das Script besitzt keine eigene Korrelationslogik im persistierten Format. Es verwendet intern die
-  von `Session` vergebenen Request-IDs und denselben Activity-Stream wie MCP und REPL.
+  von `Session` vergebenen Request-IDs und denselben Activity-Vertrag wie Agent und REPL.
+  Die Session-Auswahl liegt außerhalb der persistierten Command-Liste; ihre genaue Bindung
+  an `script::run` bleibt bis HS1 und HS2 offen.
 - Das neue persistierte Format erhält eine eigene Formatversion. Seine Command-Einträge verwenden
-  jedoch dieselbe qualifizierte Command- und Argumentform wie Client-Protokoll, MCP und Wire-Codec,
+  jedoch dieselbe qualifizierte Command- und Argumentform wie Client-Protokoll, Agent und Wire-Codec,
   damit keine zweite Command-Sprache entsteht.

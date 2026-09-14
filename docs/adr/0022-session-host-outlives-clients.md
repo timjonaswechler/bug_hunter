@@ -2,7 +2,11 @@
 
 ## Status
 
-Angenommen.
+Teilweise ersetzt durch [ADR-0023](0023-local-server-manages-multiple-sessions.md).
+Die Ein-Session-pro-Server-Regel und die MCP-Präferenz sind nicht mehr das Ziel.
+Client-unabhängige Session-Lebensdauer, Session Protocol v3 und die fachlichen Regeln im
+Session-Modul bleiben gültig. Der folgende Text dokumentiert die ursprüngliche Entscheidung;
+für Multi-Session-Verwaltung und den aktuellen CLI-Umfang gilt ADR-0023.
 
 ## Kontext
 
