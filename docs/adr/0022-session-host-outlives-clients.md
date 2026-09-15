@@ -1,5 +1,7 @@
 # Ein persistenter Session-Host überlebt seine Clients
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Teilweise ersetzt durch [ADR-0023](0023-local-server-manages-multiple-sessions.md).

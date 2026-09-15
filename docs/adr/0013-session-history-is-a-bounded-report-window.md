@@ -1,5 +1,7 @@
 # Session-History ist ein begrenztes Report-Fenster
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.

@@ -1,5 +1,9 @@
 # Session-Pfade werden am Cargo-Manifest verankert
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+Die aktuelle Zuordnung unterscheidet direkte Rust-Roots von serverseitig erzeugten
+ID-Unterverzeichnissen.
+
 ## Status
 
 Angenommen.

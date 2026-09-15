@@ -1,3 +1,7 @@
+// Rust-ähnliche Interface-Skizze, kein kompilierbarer Quelltext.
+// Verhalten: target.md. Umsetzung: implementation-plan.md.
+// Fehlende Körper und ausgelassene Enum-Varianten sind Skizzen, keine leeren Implementierungen.
+
 mod handle {
     pub struct Handle {
         pub index: u32,
@@ -740,8 +744,7 @@ mod session {
         Stderr,
     }
 
-    // Synchroner, nicht klonbarer Handle zu einem privaten Session-Koordinator. Angenommene
-    // Commands und hostseitige Arbeit laufen unabhängig von receive-Aufrufen weiter.
+    // Synchroner, nicht klonbarer Handle. Der private Koordinator arbeitet ohne Empfangsaufrufe weiter.
     pub struct Session {}
 
     impl Session {
@@ -749,8 +752,7 @@ mod session {
 
         pub fn capabilities(&self) -> &Capabilities;
 
-        // Akzeptiert nur die versiegelten konkreten Request-Typen. Die dynamische Verarbeitung von
-        // command::Command für die eingebauten Host-Abläufe bleibt crate-intern bei session.
+        // Typgelöste Ausführung für den Server bleibt intern bei session.
         pub fn send<C>(&mut self, command: C) -> Result<Pending<C::Output>, Error>
         where
             C: crate::command::Request;
@@ -783,125 +785,46 @@ mod session {
     }
 }
 
-// OPEN(H7): Crates, ausführbare Programme, öffentliche Exports und Feature-Zuschnitt festlegen.
-// Die folgende Modulaufteilung entscheidet nur über Verantwortungen.
+// Modulverantwortungen; Paketierung und genaue äußere Signaturen folgen dem Umsetzungsplan.
 mod server {
-    // Besitzt das Verzeichnis und die Handles mehrerer unabhängiger Sessions.
-    // Startet ohne Session; jede Session wird anschließend ausdrücklich erstellt.
-    // Serverconfig enthält nur serverweite Werte, keine impliziten Spiel-Launch-Defaults.
-    // Session-Erzeugen erhält eine eigene vollständige Config, ohne Vererbung vom Server.
-    // Erste Version ohne Live-Neukonfiguration: Serverneustart bzw. neue Session erforderlich.
-    // Server leitet Artefaktverzeichnis als <Basisordner>/<vollständige Session-ID>/ ab.
-    // Beispiel: worktrees/<32-stellige ID>/; Kurzformen werden nicht als Pfadnamen verwendet.
-    // Basisordner aus Serverconfig, beim Start relativ zum Arbeitsverzeichnis absolut auflösen.
-    // Basisordner ist Pflicht und nicht leer; Anlage-/Auflösungsfehler verhindern Serverbereitschaft.
-    // Shutdown-Frist positiv und endlich, Standard 30 s; kein unbegrenzter Wert.
-    // Ungültige Serverconfig: Startfehler statt stillschweigender Korrektur.
-    // Vorhandene ID-Verzeichnisse nicht wiederverwenden; neue ID wählen vor ihrer Rückgabe.
-    // Anlage während Starting nach Annahme; Anlagefehler -> Failed unter der vergebenen ID.
-    // Keine automatische Löschung, kein Session-Artefakt-Override im Serverbetrieb.
-    // Freigabe erst nach aller Schreibarbeit inklusive Reports; vorhandene Dateien bleiben erhalten.
-    // Erste Version: Vordergrundbetrieb, kein eingebauter Hintergrundstart.
-    // CLI erhält die Serveradresse ausdrücklich; keine Discovery und kein impliziter Serverstart.
-    // Bereit nach Initialisierung und Annahmebereitschaft für Verwaltungsaufrufe, ohne Spielinstanz.
-    // Dann zeigt die CLI die tatsächliche Adresse; Startfehler beenden den Prozess mit Fehlerstatus.
-    // Kein stillschweigendes Ausweichen auf eine andere Adresse.
-    // Jede Session besitzt weiterhin ihre fachliche Ausführung und ihren Spielprozess.
-    // Leert Session-Events und führt den gemeinsamen Report-Ablauf unabhängig von Clients aus.
-    // Server vergibt im Session-Verzeichnis eindeutige IDs; Clients geben keine eigene ID vor.
-    // 128 zufällige Bits als 32 kleine Hex-Zeichen ohne Bindestriche; bei Kollision neu erzeugen.
-    // Maschinenantworten enthalten volle IDs; Anzeige ab 8 Zeichen bis zur Eindeutigkeit verlängern.
-    // Volle ID ist die Identität; Kurzform ist nur ein Präfix, keine eigene ID.
-    // Eingaben benötigen 8 bis 32 Hex-Zeichen; Eindeutigkeit wird zusätzlich geprüft.
-    // Server löst Präfixe über alle Einträge inklusive Ended/Failed auf.
-    // Genau ein Treffer bindet an die volle ID; kein/mehrere Treffer werden abgelehnt.
-    // Spätere neue Einträge verändern eine bestehende Bindung nicht.
-    // Annahme und Verzeichniseintrag liefern die ID, ohne auf Spielbereitschaft zu warten.
-    // Startfortschritt und Spielstartfehler bleiben über diese ID der Session zugeordnet.
-    // Unlesbare Anfrage oder fachlich ungültige Config: Ablehnung ohne Session-Eintrag.
-    // Vorbereitung und Spielstart folgen der Annahme; ihre Fehler gehören zur Session-ID.
-    // Ended/Failed bleiben bis Serverende im Verzeichnis, ohne automatische zeitliche Löschung.
-    // Das hält keine Spielprozesse am Leben und garantiert keine Activity-/Log-Aufbewahrung.
-    // Vor Annahme: Dekodierung, Pflichtwerte, Wertebereiche/Kombinationen und ID-Auswahl.
-    // Danach: Cargo-/Manifest-Auflösung, Dateien/Programme öffnen, Verzeichnisanlage und Start.
-    // Umgebungsfehler ergeben Failed unter der ID; fachliche Validierung bleibt beim bisherigen Owner.
-    // Erstellen bestätigt Anlage mit vollständiger ID, nicht Spielbereitschaft.
-    // Liste: alle Einträge mit voller ID, Zustand und Erstellungszeit, älteste zuerst.
-    // Detail: zusätzlich zugewiesener Artefaktpfad und bei Failed Fehlercode/Meldung.
-    // Liste/Detail sind Momentaufnahmen, keine automatische Ausgabe der Launch-Konfiguration.
-    // OPEN(HS1, HS2): Konkrete Signaturen, Zeitformat und Antwort-Hüllen.
-    // Ausdrückliches Serverende fährt alle Sessions herunter und beendet danach den Server.
-    // Dabei keine neuen Sessions/Spiel-Commands; stoppbare Arbeit stoppen, übrige abschließen.
-    // Danach Recording sauber beenden und Session-Shutdown ausführen, kein unmittelbarer harter Abbruch.
-    // Konfigurierbare Frist für gesamten Server-Shutdown; danach verbliebene Spielprozesse
-    // erzwungen beenden und Ressourcen aufräumen. Erzwingung wird als Fehler gemeldet.
-    // Standard 30 s ab Annahme des Serverendes, über Serverkonfiguration anpassbar.
-    // Sessions machen beim Herunterfahren unabhängig voneinander Fortschritt.
-    // Erstes Ctrl+C oder SIGTERM startet denselben Shutdown; zweites Ctrl+C erzwingt Abbruch.
-    // SIGKILL und Serverabsturz garantieren keinen geordneten Abschluss.
-    // Serverende beendet auch Sessions in Starting; sie werden nicht vom Shutdown ausgenommen.
-    // Fehler einer Session blockieren andere nicht; nach Bereinigung insgesamt Fehler melden.
-    // Verarbeitet Outcomes, Events und Reports bis zum Verbindungsende weiter, ohne Abholpflicht.
-    // Report-Arbeit einschließlich Reports echter Spielfehler nutzt dieselbe Shutdown-Frist.
-    // Sessions und Reports fertig: früher enden; absichtliches Beenden ist kein Spielbug.
-    // Abbruch meldet unvollständigen Abschluss; externer Provider-Ausgang kann unbekannt sein.
-    // HTTP-Verwaltung und gebundene WebSocket-Session-Verbindungen an derselben Loopback-Adresse.
-    // Gemeinsamer Zugriffsschlüssel schützt beide Zugänge; Session-ID ist keine Berechtigung.
-    // OPEN(HS2, HS3): Schlüsselbereitstellung/-prüfung, Routing, Activity und Cursor.
+    // Verzeichnis, Session-Handles, Activity und clientunabhängige Report-Orchestrierung.
+    // Verwaltung: Erstellen, Liste, Detail und Serverende. Erstellen bestätigt nur die Annahme.
+    // Der Server ergänzt den Artefaktpfad vor dem internen Session-Start.
+    struct CreateSession {
+        launch: crate::session::launch::Config,
+        tick: crate::command::tick::Config,
+        report: crate::report::Config,
+    }
 
-    // Sichtbarer Session-Lebenszyklus; Recording, Replay und Commands sind davon getrennt.
-    // Ein einzelner Command-Fehler bedeutet nicht automatisch Failed.
-    // Failed erhält stabilen maschinenlesbaren Fehlercode und verständliche Meldung.
-    // Starting/Ready -> Stopping bei Shutdown-Beginn; Ended/Failed bleiben unverändert.
-    // Stopping bleibt beobachtbar, nimmt aber keine neue Spielarbeit an.
-    // Sauberer Abschluss -> Ended, auch bei absichtlich beendetem Start.
-    // Shutdown-Fehler oder erzwungener Abbruch -> Failed nach Ressourcenbereinigung.
+    // Serverseitig vergebene Identität, getrennt von RequestId und Activity-Cursor.
+    struct SessionId {}
+
+    // Lebenszyklus des Verzeichniseintrags, nicht Recording-/Replay-Zustand.
     enum SessionState {
-        Starting, // Angelegt; Vorbereitung oder Spielstart läuft.
-        Ready,    // Spielstart und Verbindung abgeschlossen; bedeutet nicht untätig.
-        Stopping, // Geordnetes Herunterfahren läuft.
-        Ended,    // Regulär beendet.
-        Failed,   // Vorbereitung, Spielstart oder weiterer Session-Betrieb fehlgeschlagen.
+        Starting,
+        Ready,
+        Stopping,
+        Ended,
+        Failed,
     }
 }
 
 mod client {
-    // Gemeinsame Seam für Verwaltungsaufrufe, Commands und Activity.
-    // Kapselt Verbindung, Protokollkodierung und Antwortzuordnung, ohne Terminaldarstellung.
-    // Serververwaltung: Auflisten und Erstellen ohne Session-Bindung.
-    // Session-Verbindung: Steuerung und Beobachtung genau einer Session.
-    // Keine Umwandlung einer Verwaltungs- in eine Session-Verbindung; nach Erstellen
-    // wird mit der erhaltenen ID eine eigene Session-Verbindung geöffnet.
-    // HTTP für Verwaltung, WebSocket für gebundene Session-Verbindungen.
-    // OPEN(HS2, H7): Konkrete Interfaces der beiden Zugänge.
-    // Commands adressieren eine Session; ausstehende Arbeit und Activity bleiben serverseitig.
-    // Client verbindet sich und bindet sich zur Steuerung an genau eine Session gleichzeitig.
-    // Commands nutzen diese Bindung, ohne erneute Session-ID pro Command.
-    // Mehrere Clients dürfen dieselbe Session steuern; keine exklusive Bindung.
-    // Bindung bleibt für die Verbindung fest; andere Session benötigt eine neue Verbindung.
-    // Trennung beendet weder die Session noch ihre laufende Arbeit.
-    // Verbindung zu jedem vorhandenen Eintrag, auch Stopping, Ended oder Failed.
-    // Verbindung verspricht keine Steuerbarkeit; Beobachtung richtet sich nach Aufbewahrung.
-    // Commands mit Bereitschaftsvoraussetzung werden außerhalb Ready abgelehnt, nicht vorgemerkt.
-    // OPEN(HS1, HS4): Einzel-Session-Abbruch während Starting; genaue Command-Ablehnungsabbildung.
-    // OPEN(HS1, HS2): Anmeldung und Fehler beim Verbindungsaufbau.
-    // Platzhalter für den gebundenen Session-Zugang, den REPL und Script verwenden.
+    // HTTP-Verwaltung ohne Bindung; eigener WebSocket-Zugang fest an eine Session gebunden.
+    // Verbindungszugriff und Antwortzuordnung, ohne Spielregeln oder Terminaldarstellung.
+    // Client ist hier der gebundene Zugang für REPL und Script.
+    // Seine Methodensignaturen folgen dem Activity-Vertrag in target.md.
     pub struct Client {}
+
+    // Fehlerform wird mit dem äußeren Codec konkretisiert, nicht aus Session-Interna kopiert.
+    pub enum Error {}
 }
 
-// OPEN(H4): Agent-Zugang und dessen Modulplatzierung festlegen. Ein CLI-nutzender Agent braucht
-// nicht zwingend ein eigenes Modul; eine eigene oder eingebundene Laufzeit ist noch nicht beschlossen.
-
 mod cli {
-    // Argumente, Terminaldarstellung und Auswahl des Ablaufs; keine Session-Regeln.
-    // CLI zuerst; Weboberflächen und weitere UIs sind nicht Teil des aktuellen Umfangs.
-    // OPEN(H7): Einstiegspunkte festlegen; die bisherige host::run-Fassade entfällt.
+    // Argumente, Config-Dateizugriff, Terminaldarstellung und Ablaufwahl.
 
     mod repl {
-        // Komplexe Inspect-Queries verwenden `inspect query <arguments-json>` und damit direkt den
-        // gemeinsamen Inspect-Codec. Vier feste Kurzformen erzeugen lediglich häufige Commands;
-        // die REPL besitzt kein eigenes Query-Modell und keine vollständige Inspect-Flag-Sprache.
-        // Nutzt die Session-Bindung des Clients statt einer Session-ID pro Command.
+        // Menschliche Eingaben werden gemeinsame Commands; Ergebnisse kommen über client.
         pub enum Exit {
             Quit,
             InputClosed,
@@ -912,7 +835,7 @@ mod cli {
 
         pub enum Error {
             Terminal { message: String },
-            Session(crate::session::Error),
+            Client(crate::client::Error),
         }
     }
 
@@ -955,24 +878,20 @@ mod cli {
             },
         }
 
-        // OPEN(HS1, HS2): Die ausgewählte Session kommt vom Aufrufer, nicht aus der Script-Datei.
-        // OPEN(HS3, HS4): Einreichungs- und Wartefolge gegen Activity-Stream und Shutdown prüfen.
-        // Ein ausdrücklicher Shutdown wird vom Server zu Session::shutdown geroutet; das Script
-        // besitzt die Session nicht.
+        // Verwendet die bestehende Client-Bindung; Abschlussbarrieren siehe target.md.
         pub fn run(
             client: &mut crate::client::Client,
             script: &Script,
         ) -> Result<Outcome, Error>;
 
-        // OPEN(HS2, HS3): Client- und Cursorfehler ergänzen, ohne Session-Interna offenzulegen.
         pub enum Error {
             InvalidScript {
                 command_index: Option<usize>,
                 message: String,
             },
-            Session {
+            Client {
                 command_index: usize,
-                error: crate::session::Error,
+                error: crate::client::Error,
             },
         }
     }

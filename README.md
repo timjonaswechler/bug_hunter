@@ -1,7 +1,9 @@
 # `bug_hunter`
 
-The API architecture documents live in [`docs/api/README.md`](docs/api/README.md). They separate
-the target API, the current working-tree inventory, migration steps, and architecture decisions.
+The Rust rewrite is specified in [`docs/api/target.md`](docs/api/target.md).
+The [planning index](docs/api/README.md) links its interface sketch and
+implementation plan. The integration examples below describe the existing implementation,
+not the rewrite's target interface.
 
 `bug_hunter` is inspired by ThePrimeagen's video about he's become a game developer ([Youtube](https://www.youtube.com/watch?v=tYQyh1tjSFc)).
 He had build a system that lets AI Agents control a game.
@@ -98,19 +100,7 @@ result_field = "active_screen"
 
 
 
-## Roadmap
-
-- [ ] Test/add the functionality script, agent and human can control the game together. 
-  The host app is started with a script. After that is done the session waits for any input from a human or agent.
-
-- [ ] Add other issue reporting services
-  - [ ] local (fallback)
-  - [ ] gitlab
-  - [ ] discord
-  - [ ] ...
-
-- [ ] 
-
+## Existing command interface
 
 The public command groups are `Observe`, `Pointer`, `Keyboard`, `Text`, `Time`, `Screenshot`, and `Shutdown`. Pointer
 actions are `Move`, `Press`, `Release`, and `Scroll`; there is no wire-level click. Keyboard press
@@ -335,6 +325,3 @@ RENDER_STRESS_APP=target/debug/ui_drag_drop \
 Use `RENDER_STRESS_RUNS`, `RENDER_STRESS_FRAMES`, `RENDER_STRESS_ATTEMPTS`, and
 `RENDER_STRESS_DELAY_MS` to change the run. `RENDER_STRESS_CAPTURE_READY=true` also records the
 frame available immediately after `ready`.
-
-Replay, camera operations, screenshot comparison, video capture, persistent semantic IDs, and
-model adapters are follow-up work outside this slice.

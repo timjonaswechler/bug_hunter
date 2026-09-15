@@ -1,5 +1,7 @@
 # Unerwartetes Session-Ende ist ein typisiertes terminales Event
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.

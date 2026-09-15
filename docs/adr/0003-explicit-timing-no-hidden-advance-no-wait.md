@@ -1,5 +1,7 @@
 # Explicit timing with no hidden advance or wait
 
+Historical decision record. The current rewrite contract is [target.md](../api/target.md).
+
 ## Status
 
 Superseded by

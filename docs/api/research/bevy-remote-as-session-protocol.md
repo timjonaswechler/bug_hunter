@@ -1,5 +1,9 @@
 # Bevy Remote Protocol als Controlled-Session-Protokoll
 
+Historische technische Bewertung. Der gültige Vertrag steht in [target.md](../target.md).
+Nicht mehr vorhandene Quellpfade werden als damalige Referenzen bezeichnet; sie sind keine
+Beschreibung der aktuellen Dateistruktur.
+
 > **Nachgelagerte Projektentscheidung:** `command::inspect` wurde nach dieser Bewertung vollständig
 > auf read-only Entity- und Resource-Queries begrenzt. Alle im Bericht geprüften v3-`Set`- und
 > Asset-Anforderungen sind damit überholt; die Bewertung der BRP-Query- und
@@ -78,10 +82,10 @@ Korrelation und Lebensdauer von Streams definieren.
   sessionlokalen Objekt-Handle `{ "index": u32, "generation": u32 }` und prüft ihn gegen den
   aktuellen World.
   [`lib.rs`, Zeilen 13–25](https://github.com/bevyengine/bevy/blob/b56fc29d3016e641754765244b5ba3f9cc504671/crates/bevy_remote/src/lib.rs#L13-L25),
-  [`src/handle/mod.rs:1-106`](../../../src/handle/mod.rs#L1-L106)
+  damalige Quellreferenz `src/handle/mod.rs:1-106`
 - Der v3-Entwurf macht `RequestId` ausdrücklich ausschließlich von `Session` vergeben und trennt
   ihn vom Controller. Die Response nennt zusätzlich den qualifizierten Command-Namen.
-  [`docs/api/goal.rs`, Abschnitt `session::protocol` und `session::RequestId`](../../goal.rs#L480-L620)
+  [aktueller Vertrag für Annahme und Korrelation](../target.md#fortschritt-annahme-und-ergebnisse)
 
 **Severity: hoch.** Stock-BRP als Wire-Vertrag würde entweder Client-IDs und numerische Bevy-
 Entity-IDs übernehmen oder einen Adapter benötigen, der beide Identitätssysteme separat abbildet.
@@ -148,8 +152,8 @@ serielle Weltverarbeitung auf. Watch ist ein fortlaufender Stream, nicht die v3-
   gespeicherten Schedules aus und zählt erst danach die Clock. Der v3-Entwurf verlangt dagegen
   Warp-Steuerung ohne versteckte Ticks und will die Zeitbedeutung bei der Anwendung belassen.
   [`src/client/plugin.rs:580-650`](../../../src/client/plugin.rs#L580-L650),
-  [`src/command/tick.rs:1-116`](../../../src/command/tick.rs#L1-L116),
-  [`docs/api/migration.md`, Abschnitt „Tick-Warp“](../../migration.md#tick-warp)
+  damalige Quellreferenz `src/command/tick.rs:1-116`,
+  [aktueller Tick-Warp-Vertrag](../target.md#tick-warp)
 
 **Severity: hoch.** Wird BRP vor der Schedule-Umsortierung installiert, kann `RemoteLast` in die
 übernommene Simulationsreihenfolge geraten und mit jedem expliziten Frame ausgeführt werden. Wird
@@ -215,8 +219,8 @@ Die v3-Ziel-Queries sind anders geschnitten:
 - jede nicht lesbare Value bleibt als typisierter Status sichtbar;
 - `Set` besitzt getrennte Whole-Value-/Reflect-Path-Semantik und liest den neuen Wert zurück.
 
-[`docs/api/goal.rs`, Abschnitt `command::inspect`](../../goal.rs#command)
-[`docs/api/migration.md`, Abschnitt „Inspect“](../../migration.md#inspect)
+Diese Liste beschreibt den damaligen Prüfgegenstand.
+Der aktuelle [Inspect-Vertrag](../target.md#inspect) steht im konsolidierten Ziel.
 
 **Unbelegte, prototyppflichtige Einzelheit:** Der BRP-Quellcode legt bei `world.query` keinen
 expliziten Ausschluss interner Resource-Entities an. Er verwendet den allgemeinen
@@ -256,7 +260,7 @@ mit `TypeRegistry::get_with_type_path` aufgelöst; eine eigene, explizite Policy
 Pfade ist im Built-in-Code nicht sichtbar. Das lokale I1 bleibt daher für den v3-Vertrag offen,
 auch wenn BRP für unbekannte Query-Pfade eine `strict`-Policy besitzt.
 [`builtin_methods.rs`, Zeilen 1817–1855 und 1906–2004](https://github.com/bevyengine/bevy/blob/b56fc29d3016e641754765244b5ba3f9cc504671/crates/bevy_remote/src/builtin_methods.rs#L1817-L1855)
-[`src/observe/world/projection.rs:1-90`](../../../src/observe/world/projection.rs#L1-L90)
+Damals referenzierter Quellpfad: `src/observe/world/projection.rs:1-90`.
 
 ### 1.8 Input, Tick-Warp und Screenshot
 
@@ -271,9 +275,8 @@ Das ist nicht die v3-Virtual-Input-Semantik: Es gibt keine stabilen, layoutunabh
 Tokens, keine getrennten `MoveTo`-/`MoveBy`-Übergänge, keine sessionlokale Pointer-State-
 Validierung und keine IME-Grenze von 16 KiB. Die lokalen Adapter validieren Zustandsübergänge und
 queue'n Events erst für den nächsten kontrollierten Frame.
-[`src/command/input/keyboard.rs:1-220`](../../../src/command/input/keyboard.rs#L1-L220)
-[`src/command/input/pointer.rs:1-300`](../../../src/command/input/pointer.rs#L1-L300)
-[`src/command/input/text.rs:1-180`](../../../src/command/input/text.rs#L1-L180)
+Damals referenzierte Quellpfade: `src/command/input/keyboard.rs:1-220`,
+`src/command/input/pointer.rs:1-300`, `src/command/input/text.rs:1-180`.
 [`src/client/plugin.rs:267-530`](../../../src/client/plugin.rs#L267-L530)
 
 **Tick-Warp**
@@ -300,8 +303,8 @@ PNG-Verifikation oder ein v3-Output garantiert.
 
 Die lokale Screenshot-Integration koppelt dagegen asynchronen GPU-Readback, Artifact-Root,
 Traversal-/Symlink-Prüfung und PNG-Schreiben an den ausstehenden Session-Request.
-[`src/screenshot/plugin.rs:1-122`](../../../src/screenshot/plugin.rs#L1-L122)
-[`src/screenshot/capture.rs:1-150`](../../../src/screenshot/capture.rs#L1-L150)
+Damals referenzierte Quellpfade: `src/screenshot/plugin.rs:1-122`,
+`src/screenshot/capture.rs:1-150`.
 
 **Severity: hoch.** Ohne eigene Session-Schicht lassen sich Tick-Warp und Screenshot nicht in den
 v3-Vertrag einpassen. Eine BRP-Watch-Response ist kein belastbarer Ersatz für „pending bis
@@ -313,7 +316,7 @@ terminal, genau eine Response“.
   Nachricht und optionales `data`. v3 verlangt stabile fachliche String-Codes sowie die
   Unterscheidung von `Completed`, `Rejected` und `ProtocolFailed`.
   [`lib.rs`, Zeilen 1302–1428](https://github.com/bevyengine/bevy/blob/b56fc29d3016e641754765244b5ba3f9cc504671/crates/bevy_remote/src/lib.rs#L1302-L1428)
-  [`docs/api/goal.rs`, Abschnitt `session::protocol`](../../goal.rs#L530-L610)
+  [aktueller Spielprotokoll-Vertrag](../target.md#gemeinsame-command-kodierung-und-spielprotokoll)
 - `rpc.discover` stellt ein OpenRPC-Dokument mit Methoden und `openrpc: "1.3.2"` bereit; es ist
   kein v3-Ready-Handshake und meldet weder Session-Fähigkeiten wie „Screenshot wartet auf PNG“
   noch Tick-/Recording-/Replay-Zustand.
@@ -345,7 +348,7 @@ Default-Mutationsliste nicht als Controlled Session exponiert werden.
   [`bevy_internal/Cargo.toml`](https://raw.githubusercontent.com/bevyengine/bevy/v0.19.1/crates/bevy_internal/Cargo.toml)
 - `bug_hunter` verwendet derzeit Bevy `0.19.0`, `default-features = false` und führt `bevy_remote`
   noch nicht als Abhängigkeit.
-  [`crates/bug_hunter/Cargo.toml:1-18`](../../Cargo.toml#L1-L18)
+  [`Cargo.toml:1-18`](../../../Cargo.toml#L1-L18)
 
 **Folgerung:** Für Variante 1/A wäre eine optionale direkte `bevy_remote`-Abhängigkeit mit
 `default-features = false` und einer festgelegten Bevy-0.19.1-Lock-/Versionsbaseline zu prüfen.
@@ -374,10 +377,8 @@ aufgaben. Eine tatsächliche Feature-/Compile-Messung bleibt Prototypfrage.
 | JSONL über stdin/stdout | nur HTTP plus SSE für Watch | **nicht erfüllt** |
 | Session Recording/Replay/Shutdown über denselben v3-Ausführungsweg | keine Session-Recording-/Replay-Verben; generisches AppExit per Message möglich | **nicht erfüllt** |
 
-Die maßgebliche Zielbeschreibung steht in `goal.rs` und `migration.md`, insbesondere bei
-`session::protocol`, `command::inspect`, `command::tick`, Screenshot sowie Recording/Replay.
-[`docs/api/goal.rs`](../../goal.rs)
-[`docs/api/migration.md`](../../migration.md)
+Die Matrix beschreibt den damaligen Prüfgegenstand. Die maßgebliche aktuelle Zielbeschreibung
+steht in [target.md](../target.md), die Interface-Skizze in [goal.rs](../goal.rs).
 
 ---
 
@@ -587,7 +588,12 @@ ist das ein Argument für A, nicht für Stock-BRP als vollständigen Vertrag.
 - [Bevy `bevy_app/main_schedule.rs`, v0.19.1](https://raw.githubusercontent.com/bevyengine/bevy/v0.19.1/crates/bevy_app/src/main_schedule.rs) — Main-/Render-Schedule-Reihenfolge.
 - [Bevy Remote Client-Beispiel, v0.19.1](https://raw.githubusercontent.com/bevyengine/bevy/v0.19.1/examples/remote/client.rs) — Query, Schema-/Entity-ID-Nutzung und Message-Beispiel.
 - [Bevy Remote Integration-Test, v0.19.1](https://raw.githubusercontent.com/bevyengine/bevy/v0.19.1/examples/remote/integration_test.rs) — Screenshot-Entity, Event-Watch und WindowEvent-Input als praktische Referenz.
-- Lokale Ziel- und Ist-Quellen: [`goal.rs`](../../goal.rs), [`migration.md`](../../migration.md), [`src/client/plugin.rs`](../../../src/client/plugin.rs), [`src/client/transport.rs`](../../../src/client/transport.rs), [`src/protocol.rs`](../../../src/protocol.rs), [`src/handle/mod.rs`](../../../src/handle/mod.rs), [`src/observe/world/mod.rs`](../../../src/observe/world/mod.rs), [`src/observe/world/projection.rs`](../../../src/observe/world/projection.rs), [`src/screenshot/plugin.rs`](../../../src/screenshot/plugin.rs), [`src/screenshot/capture.rs`](../../../src/screenshot/capture.rs).
+- Lokale Quellen der Untersuchung: `goal.rs`, die damalige Migrationsplanung,
+  [`src/client/plugin.rs`](../../../src/client/plugin.rs),
+  [`src/client/transport.rs`](../../../src/client/transport.rs),
+  [`src/protocol.rs`](../../../src/protocol.rs) sowie die damaligen Pfade
+  `src/handle/mod.rs`, `src/observe/world/mod.rs`, `src/observe/world/projection.rs`,
+  `src/screenshot/plugin.rs` und `src/screenshot/capture.rs`.
 
 ### Bewusst nicht als Baseline verwendet
 

@@ -1,5 +1,7 @@
 # Session-Fortschritt läuft auf einem privaten Koordinator
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.

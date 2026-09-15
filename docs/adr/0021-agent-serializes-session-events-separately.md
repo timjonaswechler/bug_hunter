@@ -1,5 +1,8 @@
 # Agent gibt Session-Events getrennt von Command-Outcomes aus
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+Die damalige äußere JSONL-Hülle ist kein beschlossener Activity-Vertrag.
+
 ## Status
 
 Teilweise wieder geöffnet durch ADR-0022.

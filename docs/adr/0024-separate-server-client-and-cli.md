@@ -1,5 +1,7 @@
 # Server, Client-Zugriff und CLI sind getrennte Module
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen. Ersetzt die `host`-Sammelstruktur und deren gemeinsame `host::run`-Fassade

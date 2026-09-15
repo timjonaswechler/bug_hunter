@@ -1,5 +1,8 @@
 # Ein lokaler Server verwaltet mehrere unabhängige Sessions
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+Die unten genannten offenen Punkte beschreiben den damaligen Stand.
+
 ## Status
 
 Angenommen. Ersetzt die Ein-Session-pro-Server-Regel und die MCP-Präferenz aus

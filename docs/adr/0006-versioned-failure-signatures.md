@@ -1,5 +1,7 @@
 # Fehlerart und bereinigte Meldung bestimmen die Duplikatidentität
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.
@@ -38,7 +40,7 @@ würde dagegen fachlich verschiedene Meldungen wie `HTTP 404` und `HTTP 500` zus
    ändert bestehende Reports nicht rückwirkend.
 
 Die genaue Binärdarstellung, Feldreihenfolge und die Golden Vectors stehen im Abschnitt
-"Fehlersignatur" von `docs/api/migration.md`.
+[Titel, Markdown und Fehlersignatur](../api/target.md#titel-markdown-und-fehlersignatur).
 
 ## Folgen
 

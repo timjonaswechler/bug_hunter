@@ -1,5 +1,7 @@
 # Tick-Warp erhält die explizite Simulationssteuerung
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.

@@ -1,5 +1,8 @@
 # Ungültige Agent-Eingaben bleiben lokal
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+Die damalige äußere JSONL-Hülle ist kein beschlossener Client-Vertrag.
+
 ## Status
 
 Teilweise wieder geöffnet durch ADR-0022.

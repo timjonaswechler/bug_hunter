@@ -1,5 +1,7 @@
 # Report-Kontext ist eine unveränderliche Session-Momentaufnahme
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.

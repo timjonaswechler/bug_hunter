@@ -1,5 +1,7 @@
 # Session transportiert Report-Beobachtungen
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.

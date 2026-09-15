@@ -1,5 +1,7 @@
 # REPL verwendet JSON für komplexe Inspect-Queries
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.

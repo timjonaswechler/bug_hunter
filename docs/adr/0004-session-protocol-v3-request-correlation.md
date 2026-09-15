@@ -1,5 +1,7 @@
 # Session protocol v3 uses transport-local request correlation
 
+Historical decision record. The current rewrite contract is [target.md](../api/target.md).
+
 ## Status
 
 Accepted.

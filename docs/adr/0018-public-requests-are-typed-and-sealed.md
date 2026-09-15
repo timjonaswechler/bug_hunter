@@ -1,5 +1,7 @@
 # Öffentliche Requests bleiben typisiert und versiegelt
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.

@@ -1,5 +1,7 @@
 # Replay validiert Recordings vollständig vor der Ausführung
 
+Historischer Entscheidungsstand. Für den Rewrite gilt [target.md](../api/target.md).
+
 ## Status
 
 Angenommen.
