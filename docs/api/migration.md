@@ -2137,6 +2137,18 @@ Das öffentliche Session-Interface ist nach S2 abgeschlossen:
 
 ## Server, Client-Zugriff und CLI
 
+HS1 ist für den aktuellen Planungsstand abgeschlossen. Die Verhaltensregeln unten bleiben
+maßgeblich; offene Protokoll-, Ausgabe-, Konfigurationsformat- und Plattformdetails werden
+in HS2/H6 weitergeführt. Das markiert keine vorweggenommene Entscheidung dieser Details.
+
+Die Transport-Grundentscheidung in HS2 verwendet HTTP für Serververwaltung und WebSocket
+für dauerhaft an eine Session gebundene Steuerung und Beobachtung, an derselben Serveradresse.
+Der Server ist ausschließlich über Loopback erreichbar. Ein gemeinsamer Zugriffsschlüssel
+schützt beide Zugänge; die Session-ID ist kein Berechtigungsnachweis. Sichere Bereitstellung
+und Übergabe des Schlüssels, Protokollhüllen und konkrete Fehler bleiben in HS2 offen.
+Transporttests müssen beide Zugänge mit gültigem und fehlendem/ungültigem Schlüssel prüfen
+sowie sicherstellen, dass der Listener nicht auf einer Netzwerkschnittstelle freigegeben wird.
+
 [`ADR-0022`](../adr/0022-session-host-outlives-clients.md) ersetzt die bisherige unmittelbare
 Kopplung eines ausgewählten Controllers an `&mut session::Session`.
 [`ADR-0023`](../adr/0023-local-server-manages-multiple-sessions.md) ersetzt dessen
@@ -2166,8 +2178,34 @@ in getrennte Module für Bereitstellung, Zugriff und Bedienung auf:
   weder Stop noch Shutdown und beendet weder laufende Commands noch Recording oder Replay.
 - Mehrere Clients dürfen gleichzeitig verbunden sein und Commands senden. Der Server übergibt sie
   je Session in eindeutiger Empfangsreihenfolge an deren privaten dynamischen Session-Adapter.
+  Ein Client verbindet sich mit dem Server und meldet sich zur Steuerung an genau einer Session
+  gleichzeitig an. Seine Commands verwenden diese Bindung statt einer erneut angegebenen
+  Session-ID pro Command. Die Auswahl gilt je Client; es gibt keine serverweit aktuelle Session.
+  Mehrere Clients dürfen dieselbe Session steuern, die Bindung ist nicht exklusiv.
+  Die Bindung bleibt für die gesamte Verbindung fest; ein Session-Wechsel ist nicht erlaubt.
+  Für eine andere Session trennt der Client die Verbindung und meldet sich über eine neue an.
+  Dies beendet weder die bisherige Session noch deren laufende Arbeit.
+  Anmeldung und die konkreten Zugangsinterfaces bleiben in HS1/HS2 offen.
   `session::RequestId` bleibt sessionlokal. Serverweite Korrelation benötigt zusätzlich die
   Session-Identität; ein neuer serverweiter Command-ID-Owner wird nicht eingeführt.
+- Der Client-Zugang trennt Serververwaltung von gebundenen Session-Verbindungen.
+  Auflisten und Erstellen benötigen keine Session-Bindung. Steuerung und Beobachtung einer
+  Session verwenden eine eigene, fest gebundene Verbindung. Eine Verwaltungsverbindung wird
+  nicht nachträglich zur Session-Verbindung; nach Erstellen kann der Client mit der erhaltenen
+  ID eine eigene Session-Verbindung öffnen. `cli` wählt den Zugang passend zur Aufgabe,
+  `client` kapselt dessen Verbindungszugriff und `server` besitzt Verwaltung und Routing.
+  Diese Aufgabentrennung verlangt weder getrennte Server noch unterschiedliche Transporte.
+  Konkrete Interfaces und ihre öffentlichen Namen bleiben offen.
+- Eine Session-Verbindung darf zu jedem vorhandenen Session-Eintrag aufgebaut werden,
+  auch während `Starting` und nach `Ended` oder `Failed`. Sie ermöglicht Startbeobachtung
+  beziehungsweise die Abfrage des Endzustands und noch verfügbarer Ergebnisse, garantiert
+  aber keine Steuerbarkeit und verlängert keine Aufbewahrung. Commands mit
+  Bereitschaftsvoraussetzung werden außerhalb von `Ready` abgelehnt, nicht für später
+  vorgemerkt. Ein ausdrücklicher Einzel-Session-Abbruch während `Starting` bleibt offen;
+  Serverende beendet auch startende Sessions.
+  Die genaue Abbildung dieser Ablehnungen im Client-Vertrag bleibt in HS2/HS4 offen;
+  die bestehenden Annahme- und Request-ID-Regeln der direkten Session-API werden dadurch
+  nicht stillschweigend geändert.
 - Der Server übernimmt Command-Annahmen, terminale Outcomes, Session-Events und später
   Report-Ergebnisse in einen begrenzt aufbewahrten Activity-Stream. Ein Transport-Cursor ermöglicht
   `poll`, `wait` und Wiederaufnahme nach einer Client-Trennung. Ob Cursor serverweit oder je
@@ -2176,14 +2214,50 @@ in getrennte Module für Bereitstellung, Zugriff und Bedienung auf:
   Der Server routet ihn zu `Session::shutdown` der adressierten Session; kein Client dupliziert
   dessen Vorbedingungen oder sendet versteckte Stop-Commands. Andere Sessions und der Server
   bleiben davon unberührt. Das gilt auch bei einem unerwarteten Ende dieses Spielprozesses.
-- Serverende ist eine eigene Operation. Sein Verhalten gegenüber aktiven Sessions, die weitere
-  Sichtbarkeit beendeter Sessions und ihrer Ergebnisse sowie verwaiste Metadaten sind in HS1 offen.
+- Serverende ist eine eigene Verwaltungsoperation. Sie leitet das Herunterfahren aller Sessions
+  ein und beendet anschließend den Server; aktive Sessions sind kein pauschaler Ablehnungsgrund.
+  `server` besitzt diesen Ablauf, die fachlichen Shutdown-Regeln bleiben bei `session`.
+  Der Server nimmt dabei keine neuen Sessions oder Spiel-Commands mehr an. Er stoppt Replay
+  und andere ausdrücklich stoppbare Arbeit über die bestehenden fachlichen Operationen,
+  lässt nicht stoppbare laufende Commands abschließen und beendet Recording sauber.
+  Anschließend führt er den Session-Shutdown aus und beendet den Server. Der Verwaltungsaufruf
+  erlaubt diese Stop-Schritte ausdrücklich; sie sind keine Änderung des normalen
+  Einzel-Session-Shutdowns. Ein unmittelbarer harter Prozessabbruch ist nicht der gewählte Ablauf.
+  Für den gesamten Server-Shutdown gilt eine konfigurierbare Frist, nicht eine neue volle
+  Frist je Session. Nach Ablauf werden verbliebene Spielprozesse erzwungen beendet und ihre
+  Ressourcen aufgeräumt. Der Server meldet diesen Ausgang als Fehler statt als erfolgreichen
+  geordneten Abschluss; vollständige Command-Ergebnisse und sauberer Recording-Abschluss
+  sind dann nicht garantiert. `server` besitzt diese zeitliche Ablaufregel, `session` weiterhin
+  die Prozessbereinigung. Der direkte Session-Shutdown erhält dadurch keinen eigenen Timeout.
+  Standard sind 30 Sekunden ab Annahme des Verwaltungsaufrufs, anpassbar über die
+  Serverkonfiguration. Das Herunterfahren der Sessions macht unabhängig voneinander Fortschritt;
+  eine hängende Session darf nicht die Gelegenheit der anderen zum sauberen Abschluss blockieren.
+  Sessions in `Starting` werden beim Serverende ebenfalls beendet und unterliegen derselben
+  gemeinsamen Frist. Der Server nimmt sie nicht vom Shutdown aus.
+  Darstellung und Validierung der Frist in der Konfiguration sowie
+  konkrete Fehlercodes bleiben in HS1/HS4 offen.
+  Die Entscheidung hebt die Vorbedingungen von
+  `Session::shutdown` nicht auf und setzt kein hartes Beenden per Drop voraus.
+  Weitere Ergebnisverfügbarkeit nach Serverende und verwaiste Endpoint-Ressourcen bleiben offen.
+- Während des geordneten Herunterfahrens verarbeitet `server` Command-Ergebnisse, Session-Events
+  und Report-Ergebnisse weiter. Verbundene Clients können sie bis zum Verbindungsende innerhalb
+  der geltenden Activity-Aufbewahrung abrufen. Der Server wartet nicht auf vollständiges Abholen
+  durch alle Clients; langsame oder verschwundene Clients blockieren das Serverende nicht.
+  Daraus folgt keine dauerhafte Speicherung.
+  Laufende Report-Erstellung und Provider-Aufrufe dürfen innerhalb derselben gemeinsamen
+  Shutdown-Frist abschließen, ebenso Reports echter Spielfehler, die währenddessen erkannt werden.
+  Sind Sessions und Report-Arbeit fertig, kann der Server vor Fristende enden. `report` behält
+  seine fachlichen Regeln; `server` orchestriert deren Abschluss.
+  Absichtliches Beenden eines Spielstarts oder Spielprozesses erzeugt keinen Spielfehler-Report.
+  Bei Fristablauf oder zweitem `Ctrl+C` meldet der Server unvollständigen Abschluss und behauptet
+  keine erfolgreiche Report-Erstellung oder Übertragung. Der externe Ausgang eines unterbrochenen
+  Provider-Aufrufs kann unbekannt sein; lokaler Abbruch bedeutet keine externe Rücknahme.
 - Das Session Protocol v3 bleibt die ausschließlich interne Verbindung zwischen
   `session::Session` und Controlled Application. Das lokale Client-Protokoll besitzt eine getrennte
   Version und legt keine internen Prozess-Pipes offen.
 - Serverstart und Discovery, Session-Verwaltung und -Identität, Transport und Zugriffsschutz,
   Activity-Cursor sowie Client- und Shutdown-Abläufe werden in HS1 bis HS4 festgelegt.
-  Die vorgeschlagene zufällige hexadezimale Session-ID mit Kurzform ist noch kein Formatvertrag.
+  ID-Format, zulässige Eingabelängen und Präfixauflösung sind unten festgelegt.
   Bis dahin bleiben konkrete Server- und Client-Signaturen in `goal.rs` bewusst offen.
 - Die bisherige `host::run(config_source)`-Sammelfassade entfällt. H7 legt die nötigen
   Einstiegspunkte nach HS1 bis HS4 fest. Module auf oberster Ebene werden nicht allein durch
@@ -2197,13 +2271,136 @@ in getrennte Module für Bereitstellung, Zugriff und Bedienung auf:
   Die neuen Einstiegssignaturen und der Owner des privaten Parsers werden in HS1/H6/H7 festgelegt.
   Formatversionen bleiben Persistenzdetails außerhalb des Laufzeitmodells; unbekannte Felder und
   nicht unterstützte Versionen werden weiterhin abgelehnt.
-- Der private Config-Parser liest keine Datei. Wann Serverstart oder Session-Erzeugen welche
-  Konfiguration erhalten, wird in HS1 getrennt festgelegt; Serverstart erzeugt nicht mehr
-  voraussetzungslos genau eine `session::Config`. Der bisherige einzige CLI-Override für
-  Session-Werte bleibt `session.artifact_dir`. Server- und Session-Auswahl sind keine
+- Der private Config-Parser liest keine Datei. Serverstart erhält nur serverweite Konfiguration,
+  insbesondere Adresse und Shutdown-Frist, keine impliziten Spiel-Launch-Defaults.
+  Session-Erzeugen erhält jeweils eine eigene vollständige Session-Konfiguration ohne Vererbung
+  vom Server. Die CLI darf dieselbe Datei mehrfach einlesen; daraus entsteht keine gemeinsame
+  veränderliche Laufzeitkonfiguration. Der Server startet ohne Session;
+  jede Session wird anschließend ausdrücklich erstellt. Anders als beim bisherigen Start
+  einer einzelnen Session sind Serverstart und Session-Erzeugen getrennte Operationen.
+  Ein fehlgeschlagener Spielstart ist deshalb kein fehlgeschlagener Serverstart.
+  Der bisherige CLI-Override `session.artifact_dir` entfällt im Serverbetrieb zugunsten
+  des unten festgelegten ID-Unterverzeichnisses. Server- und Session-Auswahl sind keine
   allgemeinen Overrides der Launch-Konfiguration.
+- Die erste Version startet den Server im Vordergrund und bietet keinen eingebauten
+  Hintergrundstart. Die CLI zeigt die Server-Logs im startenden Terminal; Clients greifen
+  aus anderen Aufrufen darauf zu. Hintergrundbetrieb bleibt externen Werkzeugen wie `tmux`
+  oder einem Prozessmanager überlassen. Client-Trennung beendet den Server nicht.
+  Erstes `Ctrl+C` oder ein reguläres Beendigungssignal wie `SIGTERM` startet denselben
+  geordneten Shutdown wie der Verwaltungsaufruf, einschließlich der gemeinsamen Frist.
+  Ein zweites `Ctrl+C` während des Herunterfahrens erzwingt den Abbruch ohne Warten auf das
+  Fristende, mit denselben Ergebnis- und Recording-Einschränkungen und Fehlerausgang wie
+  bei Fristablauf. Die Signalanbindung löst den gemeinsamen Serverablauf aus und dupliziert
+  keine Session-Shutdown-Regeln. `SIGKILL` und Serverabstürze garantieren keinen geordneten
+  Abschluss; die plattformspezifische Signalanbindung bleibt offen.
+- Die CLI erhält die Serveradresse ausdrücklich. Die erste Version sucht keinen Server
+  automatisch und startet bei fehlender Verbindung auch keinen. Nach erfolgreichem Serverstart
+  zeigt die CLI dessen Adresse an. Ein nicht erreichbarer Server führt zu einem Verbindungsfehler.
+  Transport und Adressformat bleiben in HS2 offen; Discovery-Metadaten werden nicht benötigt.
+- `server` bestimmt die Startbereitschaft: Die Initialisierung ist abgeschlossen und
+  Verwaltungsaufrufe können angenommen werden. Eine Spielinstanz ist dafür nicht nötig.
+  Erst dann zeigt `cli` die tatsächlich verwendete Adresse an. Scheitert der Serverstart,
+  meldet die CLI den Fehler und der Prozess endet mit einem Fehlerstatus. Eine belegte Adresse
+  führt nicht zum stillschweigenden Ausweichen auf eine andere Adresse.
+  Die Darstellung des Bereitschaftssignals für Menschen und Skripte bleibt im CLI-Vertrag offen.
+- `server` vergibt die Session-ID und stellt ihre Eindeutigkeit im eigenen Session-Verzeichnis
+  sicher, auch bei gleichzeitigen Erstellungsaufrufen. Clients übergeben die Launch-Konfiguration
+  und erhalten eine zugewiesene ID; sie können keine eigene ID vorgeben.
+  Die ID besteht aus 128 zufälligen Bits und wird als 32 kleingeschriebene Hex-Zeichen ohne
+  Bindestriche dargestellt. Bei einer Kollision im Verzeichnis erzeugt der Server eine neue ID.
+  Menschenlesbare Anzeigen beginnen mit den ersten 8 Zeichen und verlängern bei Mehrdeutigkeit
+  bis zur Eindeutigkeit. Maschinenlesbare Antworten enthalten immer die vollständige ID.
+  Eingaben müssen 8 bis 32 Hex-Zeichen enthalten. Kürzere Eingaben werden auch dann abgelehnt,
+  wenn sie eindeutig wären. Die zulässige Länge ersetzt nicht die Eindeutigkeitsprüfung.
+  Frei wählbare Namen sind damit nicht als Funktion beschlossen.
+- Die vollständige Session-ID ist die Identität. Die Kurzform ist ausschließlich ein Präfix,
+  keine separat vergebene ID. `server` löst es bei der Anmeldung gegen alle Verzeichniseinträge
+  einschließlich `Ended` und `Failed` auf: Genau ein Treffer bindet an die vollständige ID,
+  kein Treffer ergibt eine unbekannte Session und mehrere Treffer eine mehrdeutige Auswahl.
+  Bei Mehrdeutigkeit muss der Client mehr Zeichen angeben. Die Bindung wird danach nicht erneut
+  anhand des Präfixes ausgewählt; später hinzukommende Sessions verändern sie nicht.
+- Sobald `server` das Erstellen angenommen und die Session in sein Verzeichnis aufgenommen hat,
+  liefert er die ID zurück, ohne auf Spielbereitschaft zu warten. Die Antwort bestätigt
+  "Session angelegt", nicht "Spiel bereit". Der Client kann den Start über diese ID verfolgen;
+  auch ein späterer Spielstartfehler bleibt der angelegten Session zugeordnet.
+  Anders als ein abgeschlossener synchroner Spielstart benötigt der Verwaltungsvertrag damit
+  getrennte Beobachtung von Annahme und Startausgang.
+- Vor der Annahme prüft der Erstellungsablauf die Verständlichkeit der Anfrage und die fachliche
+  Gültigkeit der Konfiguration. Unlesbare Anfragen und ungültige Konfigurationen werden ohne
+  Session-Eintrag abgelehnt. Vorbereitung und tatsächlicher Spielstart folgen der Annahme;
+  Fehler dabei, etwa beim Prozessstart oder Verbindungsaufbau zum Spiel, gehören zur Session-ID.
+  Die bestehenden fachlichen Owner behalten ihre Konfigurationsregeln. `server` nutzt diese
+  Regeln, statt eine zweite Validierung zu implementieren. Vor Annahme erfolgen Dekodierung,
+  Pflichtangaben-, Wertebereichs- und Kombinationsprüfung sowie ID-Auswahl. Nach Annahme folgen
+  Cargo-/Manifest-Auflösung, tatsächliches Öffnen benötigter Dateien und Programme,
+  Artefaktverzeichnisanlage, Prozessstart und Verbindungsaufbau. Ein fehlender erforderlicher
+  Manifestpfad wird direkt abgelehnt; ein angegebener, aber fehlender oder unlesbarer Manifestpfad
+  ergibt `Failed` unter der vergebenen ID. Innere Konfigurationsgültigkeit wird vor Annahme
+  geprüft, Ausführbarkeit in der Umgebung danach. Die bestehende Prüfung vorhandener
+  ID-Verzeichnisse bleibt Teil der ID-Auswahl vor ihrer Rückgabe.
+  Der dafür nötige interne Interface-Zuschnitt folgt diesen fachlichen Ownern;
+  der direkte synchrone Rust-Einstieg `Session::start` wird dadurch nicht automatisch ersetzt.
+- `server` stellt den Session-Lebenszyklus mit fünf Grundzuständen dar: `Starting` für die
+  angelegte Session während Vorbereitung und Spielstart, `Ready` nach abgeschlossenem Spielstart
+  und Verbindungsaufbau, `Ended` für reguläres Ende und `Failed` für Fehler bei Vorbereitung,
+  Spielstart oder weiterem Session-Betrieb. `Stopping` bezeichnet das laufende Herunterfahren.
+  Bei `Failed` kommen ein stabiler maschinenlesbarer Fehlercode und eine verständliche Meldung
+  hinzu; die konkreten Codes bleiben offen. Einzelne Command-Fehler machen die Session nicht automatisch
+  fehlerhaft. Recording, Replay und laufende Commands bleiben getrennte fachliche Zustände;
+  `Ready` verspricht keine Untätigkeit. Der Server bildet den Lebenszyklus aus der Session ab,
+  ohne deren Ausführungsregeln zu duplizieren.
+- Beim Beginn des Herunterfahrens wechseln `Starting` und `Ready` nach `Stopping`. Der Client
+  kann weiter beobachten, aber keine neue Spielarbeit einreichen. Bereits beendete Sessions
+  bleiben unverändert. Sauberer Abschluss ergibt `Ended`, auch bei absichtlich beendetem Start,
+  sofern die Bereinigung gelingt. Shutdown-Fehler oder erzwungener Abbruch ergeben `Failed`.
+  Verbliebene Laufzeitressourcen werden bereinigt; ein Fehler blockiert nicht das Herunterfahren
+  der anderen Sessions. Nach Abschluss der Bereinigung endet der Server. Mindestens eine nicht
+  sauber heruntergefahrene Session führt insgesamt zum Fehlerausgang des Server-Shutdowns.
+  Die gemeinsame Frist bleibt wirksam.
+- In der ersten Version bewahrt `server` Einträge mit `Ended` oder `Failed` samt Zustand und
+  gegebenenfalls Fehlergrund bis zum Serverende im Session-Verzeichnis auf. Eine automatische
+  zeitliche Löschung findet nicht statt. Spielprozesse und andere Laufzeitressourcen werden
+  trotzdem freigegeben. Die Regel betrifft nur den Verzeichniseintrag, nicht die Aufbewahrung
+  von Activity, ausführlichen Logs oder Artefakten. Wiederherstellung nach Serverneustart ist
+  nicht zugesagt. Das Verzeichnis kann während der Serverlaufzeit wachsen; eine ausdrückliche
+  Entfernen-Operation oder Begrenzung ist für diese Version nicht beschlossen.
 - Die bisherigen Host-Felder `profile_id` und `tool` sowie die getrennte `application`-
   Konfiguration entfallen. Die Launch-Konfiguration besitzt mit `session.launch` genau einen Owner.
+- Konfiguration gilt in der ersten Version für die jeweilige Lebensdauer, ohne Live-Neukonfiguration.
+  Andere Servereinstellungen benötigen einen Serverneustart, andere Session-Einstellungen eine
+  neue Session. Spiel-Commands verändern weiterhin Spielzustand, nicht Launch-Konfiguration.
+- Die Server-Shutdown-Frist muss positiv und endlich sein, ohne Angabe gilt der Standard
+  von 30 Sekunden. Null, negative Werte und unbegrenztes Warten werden abgelehnt.
+  Ungültige Serverkonfiguration führt zu Fehlermeldung und Fehlerstatus, nicht zu
+  stillschweigender Korrektur. Die fachliche Prüfung serverweiter Werte gehört `server`;
+  Persistenzdarstellung und Feldnamen bleiben in H6, transportabhängige Werte in HS2 offen.
+- Erstellen bestätigt die Anlage mit der vollständigen Session-ID, ohne Spielbereitschaft
+  zu versprechen. Die Verwaltungsliste enthält alle vorhandenen Einträge einschließlich `Ended`
+  und `Failed` mit vollständiger ID, aktuellem Lebenszykluszustand und Erstellungszeitpunkt,
+  sortiert nach Erstellungszeitpunkt, älteste zuerst. Die Einzelabfrage ergänzt den tatsächlich
+  zugewiesenen Artefaktpfad und bei `Failed` Fehlercode und Meldung. Die Launch-Konfiguration,
+  insbesondere Umgebungsvariablen und Zugangsdaten, wird nicht automatisch ausgegeben.
+  `server` liefert die Momentaufnahmen, `client` kapselt den Zugriff und `cli` stellt sie dar.
+  Fortlaufende Änderungen verwenden den Beobachtungsvertrag. Konkrete Signaturen, Hüllen,
+  Zeitformat und Reihenfolge bei gleichen Erstellungszeitpunkten bleiben offen.
+- Im Serverbetrieb bildet `server` das Artefaktverzeichnis als
+  `<Basisordner>/<vollständige Session-ID>/`, etwa `worktrees/<32-stellige ID>/`.
+  Dies ersetzt ausdrücklich die zuvor beschlossene manuelle Wahl getrennter Verzeichnisse
+  ohne automatische Unterverzeichnisse. Unterschiedliche Session-IDs ergeben getrennte
+  Geschwisterverzeichnisse; Kurzformen werden nicht als Verzeichnisnamen verwendet.
+  Der Basisordner kommt aus der Serverkonfiguration und wird beim Serverstart einmal absolut
+  aufgelöst; relative Angaben beziehen sich auf das Arbeitsverzeichnis beim Serverstart.
+  Er ist eine Pflichtangabe ohne versteckten Standardpfad. Leere Angaben und Fehler beim
+  Anlegen oder Auflösen verhindern den Serverstart vor dem Bereitschaftssignal.
+  Im Serverbetrieb entfällt der bisherige Session-Artefakt-Override; der Server bestimmt den Pfad.
+  Direkte Rust-Nutzung behält ihren eigenen Artefaktpfad. Eine Git-Worktree-Erstellung ist nicht beschlossen.
+  Die Reservierung endet erst nach Abschluss aller Schreibarbeit einschließlich Reports,
+  nicht allein mit dem Spielprozess. Ihre Freigabe löscht keine vorhandenen Dateien und
+  erlaubt nicht automatisch deren Überschreiben. Vorhandene ID-Verzeichnisse werden nicht
+  wiederverwendet oder überschrieben; vor Rückgabe der ID wird stattdessen eine neue gewählt.
+  Die Anlage erfolgt nach Annahme während `Starting`; Anlagefehler ergeben `Failed` unter der
+  vergebenen ID. Eine bereits zurückgegebene ID wird nicht nachträglich geändert.
+  Beim Session-Ende bleiben Artefakte erhalten; es gibt keine automatische Verzeichnislöschung.
 - Die bisherige Zuordnung des Features `host` zum gleichnamigen Sammelmodul wird wieder geöffnet.
   H7 entscheidet Namen und Zuschnitt der Features, Exports, Crates und ausführbaren Programme.
   `command`, `report`, `session::Plugin`, `session::Session` und die übrigen Session-Typen
@@ -2214,17 +2411,113 @@ in getrennte Module für Bereitstellung, Zugriff und Bedienung auf:
 
 ### Prüfung der Multi-Session-Umstellung
 
+- Ein frisch gestarteter Server besitzt keine Session und startet keinen Spielprozess.
+  Erst ausdrückliches Session-Erzeugen startet eine Session. Ein fehlgeschlagener Spielstart
+  beendet den bereits laufenden Server nicht.
+- Der Serverstart bleibt im Vordergrund, statt nach dem Start eines Hintergrundprozesses
+  zurückzukehren. Server-Logs sind im startenden Terminal sichtbar.
+- Die CLI zeigt nach erfolgreichem Serverstart die Adresse an. Client-Aufrufe verwenden die
+  ausdrücklich angegebene Adresse; eine nicht erreichbare Adresse liefert einen Verbindungsfehler,
+  ohne einen Ersatzserver zu suchen oder zu starten.
+- Das Bereitschaftssignal erscheint erst nach abgeschlossener Initialisierung und
+  Annahmebereitschaft für Verwaltungsaufrufe, auch ohne Spielinstanz. Eine belegte Adresse
+  liefert eine Fehlermeldung und einen Fehlerstatus, kein Bereitschaftssignal für eine Ersatzadresse.
 - CLI-Fixtures erzeugen zwei Sessions, listen sie auf und adressieren Commands an die gewählte
   Session. Dazu sind weder Weboberfläche noch MCP nötig.
+- Gleichzeitige Session-Erstellungsaufrufe erhalten unterschiedliche serverseitig vergebene
+  IDs. Der Erstellungsvertrag erlaubt keine vom Client vorgegebene Session-ID.
+- Serverstart benötigt keine Spielkonfiguration. Zwei aus derselben Datei erstellte Sessions
+  besitzen unabhängige Konfigurationen ohne serverseitige Launch-Vererbung. Änderungen an der
+  Datei verändern laufende Sessions nicht; Live-Neukonfiguration ist nicht Teil des Vertrags.
+- IDs haben genau 32 kleingeschriebene Hex-Zeichen ohne Bindestriche. Ein gezielt wiederholter
+  Zufallswert führt zur erneuten Erzeugung statt zur doppelten Vergabe. Die Anzeige verwendet
+  8 Zeichen bei Eindeutigkeit und verlängert kollidierende Präfixe; Maschinenantworten liefern
+  unabhängig davon immer die vollständige ID.
+- Präfixauflösung prüft eindeutige, unbekannte und mehrdeutige Auswahl unter Einbeziehung von
+  `Ended` und `Failed`. Eine über ein zunächst eindeutiges Präfix aufgebaute Verbindung bleibt
+  an dieselbe vollständige ID gebunden, wenn später ein weiterer passender Eintrag hinzukommt.
+- Eingabelängen von 8 und 32 Hex-Zeichen sind zulässig, 7 und 33 werden abgelehnt.
+  Ein eindeutiges Präfix mit weniger als 8 Zeichen wird ebenfalls abgelehnt; ein mehrdeutiges
+  Präfix mit 8 Zeichen wird nicht allein wegen seiner zulässigen Länge akzeptiert.
+- Zwei Clients können dieselbe Session steuern; ihre Commands werden dort eindeutig geordnet.
+  Ein an Session A gebundener Client adressiert seine Commands ohne erneute Session-ID.
+  Die Bindung eines anderen Clients an Session B verändert dieses Ziel nicht.
+- Eine bestehende Verbindung kann nicht von Session A zu Session B wechseln. Der Client muss
+  sich über eine neue Verbindung an B anmelden; ausstehende Arbeit in A läuft unabhängig weiter.
+- Auflisten und Erstellen funktionieren über die Serververwaltung ohne Session-Bindung.
+  Mit der zurückgegebenen ID lässt sich eine eigene Session-Verbindung öffnen. Der Vertrag
+  bietet keine Umwandlung einer Verwaltungsverbindung in eine Session-Verbindung.
+- Verbindungsaufbau gelingt zu vorhandenen Einträgen in `Starting`, `Ready`, `Ended` und
+  `Failed`. Startfortschritt beziehungsweise Endzustand sind beobachtbar. Ein während
+  `Starting` abgelehnter Command mit Bereitschaftsvoraussetzung wird beim späteren Übergang
+  zu `Ready` nicht nachträglich ausgeführt; auch `Ended` und `Failed` erlauben ihn nicht.
+- Bei einem verzögerten Spielstart liefert das Erstellen bereits nach Annahme und
+  Verzeichniseintrag die ID. Startfortschritt und ein anschließender Startfehler lassen sich
+  unter derselben ID abfragen; die Erstellungsantwort behauptet keine Spielbereitschaft.
+- Unlesbare Erstellungsanfragen und fachlich ungültige Konfigurationen hinterlassen keinen
+  Session-Eintrag. Fehlende Pflichtangaben und ungültige Wertebereiche oder Kombinationen
+  werden vor Annahme abgelehnt. Fehlende oder unlesbare angegebene Manifestdateien sowie
+  Anlage- und Prozessstartfehler führen nach Annahme zu `Failed` unter derselben ID.
+- Unlesbare Erstellungsanfragen und fachlich ungültige Konfigurationen hinterlassen keinen
+  Session-Eintrag. Ein Fehler bei Vorbereitung oder Spielstart nach Annahme bleibt dagegen
+  unter der vergebenen ID sichtbar. Direkte Rust-Nutzung und Serverzugriff verwenden dieselben
+  fachlichen Konfigurationsregeln.
+- Zustandsabfragen zeigen während eines verzögerten Starts `Starting` und erst nach Spielstart
+  und Verbindungsaufbau `Ready`. Reguläres Ende ergibt `Ended`, ein Start- oder Betriebsfehler
+  `Failed` mit Fehlergrund. Recording, Replay oder ein einzelner Command-Fehler verändern den
+  Lebenszyklus nicht allein durch ihr Auftreten.
+- Nach Client-Trennung und erneutem Zugriff bleiben `Ended`- und `Failed`-Einträge mit Zustand
+  und gegebenenfalls Fehlergrund bis zum Serverende auffindbar, auch nach längerer Wartezeit.
+  Die Aufbewahrung der Einträge verhindert nicht die Freigabe ihrer Laufzeitressourcen und
+  verlängert nicht automatisch die getrennte Activity-Aufbewahrung.
 - Gleiche Request-ID-Werte in zwei Sessions bleiben über die Session-Zuordnung eindeutig.
   Ein aktives Recording oder Replay in Session A verändert die fachlichen Regeln in Session B nicht.
 - Session-Shutdown oder Spielprozessverlust in A beendet weder B noch den Server. Das in HS1
-  festzulegende Serverende erhält eigene Prüfungen und verwendet nicht den Shutdown einer
+  geplante Serverende erhält eigene Prüfungen und verwendet nicht den Shutdown einer
   beliebig ausgewählten Session als Ersatz.
+- Ausdrückliches Serverende leitet bei mehreren aktiven Sessions das Herunterfahren aller ein
+  und beendet erst anschließend den Server. Neue Sessions und Spiel-Commands werden nicht mehr
+  angenommen. Stoppbare Arbeit erhält ihren fachlichen Stop; nicht stoppbare laufende Commands
+  schließen ab. Recording wird vor dem Session-Shutdown sauber beendet.
+  Eine hängende Session verhindert nicht die Eskalation nach der gemeinsamen konfigurierten
+  Frist: Verbliebene Spielprozesse werden erzwungen beendet und aufgeräumt, der Ausgang als
+  Fehler gemeldet. Mehrere Sessions erhalten nicht jeweils eine neue volle Frist.
+  Ohne Override beträgt die Frist 30 Sekunden ab Annahme; ein konfigurierter Wert ersetzt diesen
+  Standard. Eine hängende Session hindert andere Sessions nicht am geordneten Herunterfahren
+  innerhalb derselben Frist.
+  Eine während der Vorbereitung oder des Spielstarts befindliche Session wird beim Serverende
+  ebenfalls beendet; ihre Laufzeitressourcen werden im gemeinsamen Shutdown-Ablauf bereinigt.
+  Zustandsprüfungen decken Starting/Ready -> Stopping -> Ended sowie Stopping -> Failed ab.
+  In Stopping bleibt Beobachtung möglich, neue Spielarbeit wird abgelehnt. Ein Shutdown-Fehler
+  in A verhindert nicht den Abschluss von B; der Server meldet insgesamt einen Fehler.
+  Bereits beendete Einträge bleiben unverändert. Konkrete Fehlercodes und Konfiguration folgen HS1/HS4.
+- Erstes `Ctrl+C` und `SIGTERM` verwenden den gemeinsamen geordneten Shutdown mit Frist.
+  Währenddessen bleiben Ergebnisse innerhalb der Activity-Aufbewahrung abrufbar, ohne dass
+  ein nicht abholender Client das Ende blockiert. Laufende Reports erhalten keine zusätzliche
+  Frist; abgeschlossene Sessions und Reports erlauben ein früheres Ende.
+  Absichtliches Beenden erzeugt keinen Spielfehler-Report. Ein unterbrochener Provider-Aufruf
+  wird nicht als erfolgreich übertragen dargestellt; sein externer Ausgang darf unbekannt sein.
+  Ein zweites `Ctrl+C` währenddessen erzwingt die Bereinigung ohne Warten auf das Fristende
+  und führt zum Fehlerausgang statt zur Meldung eines erfolgreichen geordneten Abschlusses.
 - Client-Trennung lässt ausstehende Arbeit weiterlaufen. Spätere Clients können Ergebnisse nach
   dem in HS3 festgelegten Aufbewahrungs- und Gap-Vertrag zuordnen.
-- HS1 prüft gemeinsame Artifact-Pfade mehrerer Sessions sowie fehlgeschlagene Starts und beendete
-  Sessions. Es wird weder dauerhafte Speicherung noch Wiederherstellung nach Serverneustart
+- Verwaltungslisten enthalten aktive und beendete Einträge mit ID, Zustand und Erstellungszeit,
+  älteste zuerst. Einzelabfragen ergänzen Artefaktpfad und bei `Failed` Code und Meldung.
+  Fixtures mit Launch-Umgebungsvariablen und Zugangsdaten prüfen, dass diese nicht automatisch
+  ausgegeben werden. Die Erstellungsbestätigung behauptet keine Spielbereitschaft.
+- Zwei Sessions erhalten unter demselben Basisordner unterschiedliche Unterverzeichnisse
+  mit ihren vollständigen IDs; parallele Starts benötigen keine manuell getrennten Zielpfade.
+  Ein noch schreibender Report hält die Reservierung auch nach Spielprozessende.
+  Nach Abschluss aller Schreibarbeit wird sie freigegeben, vorhandene Dateien bleiben unverändert
+  und unterliegen weiterhin ihren bisherigen Schreibregeln.
+- Relative Basisordner werden gegen das Arbeitsverzeichnis beim Serverstart aufgelöst.
+  Fehlende oder leere Basisordner-Angaben und Anlage-/Auflösungsfehler verhindern
+  das Bereitschaftssignal. Eine fehlende Shutdown-Frist verwendet 30 Sekunden;
+  Null, negative und unbegrenzte Werte werden mit Startfehler abgelehnt.
+  Ein vorhandenes ID-Verzeichnis bleibt unverändert und führt vor ID-Rückgabe zur Neuwahl.
+  Anlagefehler nach Annahme ergeben `Failed` unter der bereits vergebenen ID.
+  Im Serverbetrieb ist kein Session-Artefakt-Override vorgesehen; direkte Rust-Nutzung bleibt unabhängig.
+- Es wird weder dauerhafte Speicherung des Session-Verzeichnisses noch Wiederherstellung nach Serverneustart
   stillschweigend zugesagt.
 - Die öffentlichen Rust-Session-Tests bleiben ohne Server ausführbar. Das interne Session Protocol
   v3 erhält keine serverseitige Session-ID oder Verwaltungsoperation.

@@ -29,7 +29,7 @@
 
    Noch zu planen:
 
-   - Lebensdauer und Discovery eines persistenten lokalen Servers für mehrere unabhängige Sessions
+   - weitere Start- und Lebensdauerregeln eines persistenten lokalen Servers für mehrere unabhängige Sessions
    - Session-Verwaltung mit Identität, Erzeugen, Auflisten, Auswahl und Zustandsabfrage
    - lokaler Client-Transport und Zugriffsschutz
    - Session-Zuordnung und Cursor-Regeln des gemeinsamen Activity-Vertrags
