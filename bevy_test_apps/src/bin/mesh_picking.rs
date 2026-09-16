@@ -6,9 +6,6 @@ use bevy::{
     window::{Window, WindowResolution},
 };
 
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
-
 #[derive(Component)]
 struct RotatingMesh;
 
@@ -127,7 +124,7 @@ fn spawn_test_mesh(
     transform: Transform,
     materials: &MaterialPalette,
 ) {
-    let entity = commands
+    commands
         .spawn((
             Name::new(name),
             Mesh3d(mesh),
@@ -154,9 +151,7 @@ fn spawn_test_mesh(
             materials.hover.clone(),
             MeshEvent::Release,
         ))
-        .observe(rotate_on_drag)
-        .id();
-    mark_automation_target(commands, entity);
+        .observe(rotate_on_drag);
 }
 
 fn update_on<E: EntityEvent>(
@@ -194,11 +189,3 @@ fn rotate_meshes(mut meshes: Query<&mut Transform, With<RotatingMesh>>, time: Re
         transform.rotate_y(time.delta_secs() / 2.0);
     }
 }
-
-#[cfg(feature = "automation")]
-fn mark_automation_target(commands: &mut Commands, entity: Entity) {
-    commands.entity(entity).insert(AutomationTarget);
-}
-
-#[cfg(not(feature = "automation"))]
-fn mark_automation_target(_commands: &mut Commands, _entity: Entity) {}

@@ -4,9 +4,6 @@ use bevy::{camera::Hdr, color::palettes::css::ORANGE, prelude::*, window::Window
 use bevy_test_apps::composition;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
-
 const COLOR_SEED: u64 = 0x5eed_b1e5;
 const INITIAL_ALPHA: f32 = 0.9;
 const CAMERA_POSITION: Vec3 = Vec3::new(0.0, 2.5, 10.0);
@@ -120,8 +117,6 @@ fn setup(
                     color_slot: slot,
                     unlit: true,
                 },
-                #[cfg(feature = "automation")]
-                AutomationTarget,
             ))
             .id();
         spheres.push((entity, name));
@@ -171,8 +166,6 @@ fn setup(
         SceneState::default(),
         Camera3d::default(),
         Transform::from_translation(CAMERA_POSITION).looking_at(Vec3::ZERO, Vec3::Y),
-        #[cfg(feature = "automation")]
-        AutomationTarget,
         #[cfg(target_arch = "wasm32")]
         Msaa::Off,
     ));

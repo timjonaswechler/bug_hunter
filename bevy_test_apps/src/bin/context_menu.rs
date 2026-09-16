@@ -10,9 +10,6 @@ use bevy::{
 use bevy_test_apps::composition;
 use std::fmt::Debug;
 
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
-
 /// Event opening a new context menu at a pointer position.
 #[derive(Event)]
 struct OpenContextMenu {
@@ -104,8 +101,6 @@ fn setup(mut commands: Commands) {
                 key_a_releases: 0,
                 text: String::new(),
             },
-            #[cfg(feature = "automation")]
-            AutomationTarget,
             background_and_button(),
         ))
         .observe(|_: On<Pointer<Press>>, mut commands: Commands| {
@@ -198,8 +193,6 @@ fn context_item(text: &'static str, color: Srgba) -> impl Bundle {
     (
         Name::new(format!("item-{text}")),
         ContextMenuItem { name: text, color },
-        #[cfg(feature = "automation")]
-        AutomationTarget,
         Button,
         Node {
             padding: UiRect::all(px(5)),
@@ -233,8 +226,6 @@ fn background_and_button() -> impl Bundle {
             parent
                 .spawn((
                     Name::new("button"),
-                    #[cfg(feature = "automation")]
-                    AutomationTarget,
                     Button,
                     Node {
                         width: px(250),
@@ -268,8 +259,6 @@ fn background_and_button() -> impl Bundle {
             parent.spawn((
                 Name::new("text-input"),
                 DummyTextInput,
-                #[cfg(feature = "automation")]
-                AutomationTarget,
                 EditableText {
                     visible_width: Some(20.0),
                     allow_newlines: false,

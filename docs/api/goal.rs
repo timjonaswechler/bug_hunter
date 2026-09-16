@@ -14,7 +14,7 @@ mod command {
         pub trait Sealed {}
     }
 
-    // Nur die von bug_hunter definierten konkreten Command-Typen implementieren dieses Trait.
+    // Nur die von woodpecker definierten konkreten Command-Typen implementieren dieses Trait.
     pub trait Request: private::Sealed + Into<Command> {
         type Output;
     }
@@ -406,7 +406,7 @@ mod report {
 
     pub struct Context {
         pub application: Application,
-        pub bug_hunter_version: String,
+        pub woodpecker_version: String,
         pub protocol_version: u32,
         pub capabilities: crate::session::Capabilities,
         pub tick: crate::command::tick::Config,

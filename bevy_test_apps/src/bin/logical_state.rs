@@ -1,12 +1,6 @@
 use bevy::{prelude::*, time::Fixed};
 use bevy_test_apps::composition;
-#[cfg(feature = "automation")]
-use bevy_test_apps::LogicalSurface;
-
-#[cfg(not(feature = "automation"))]
 use bevy::window::WindowResolution;
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
 
 const SURFACE_WIDTH: u32 = 640;
 const SURFACE_HEIGHT: u32 = 360;
@@ -34,9 +28,6 @@ fn main() {
 
 fn build_app() -> App {
     let mut app = App::new();
-    #[cfg(feature = "automation")]
-    composition::logical(&mut app, LogicalSurface::new(SURFACE_WIDTH, SURFACE_HEIGHT));
-    #[cfg(not(feature = "automation"))]
     composition::rendered(
         &mut app,
         Window {
@@ -63,8 +54,6 @@ fn setup(mut commands: Commands) {
     commands.spawn((
         Name::new("logical-state"),
         SessionObservation::default(),
-        #[cfg(feature = "automation")]
-        AutomationTarget,
     ));
     commands
         .spawn((
@@ -78,8 +67,6 @@ fn setup(mut commands: Commands) {
                 height: px(100),
                 ..default()
             },
-            #[cfg(feature = "automation")]
-            AutomationTarget,
         ))
         .observe(
             |_: On<Pointer<Press>>, mut state: Single<&mut SessionObservation>| {

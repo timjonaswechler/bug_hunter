@@ -29,7 +29,7 @@ keinen Renderer und keinen externen Report-Provider.
    wie Serverende, lässt aber Server und andere Sessions weiterlaufen. Tests prüfen
    den Aufruf während `Starting` und `Ready`, später auch mit aktivem Replay und Recording.
 3. **Client und Activity.** Den getrennt versionierten äußeren Vertrag
-   einmal implementieren: authentisierte HTTP-Verwaltung und gebundene WebSocket-Verbindung,
+   einmal implementieren: lokale HTTP-Verwaltung und gebundene WebSocket-Verbindung,
    Annahme, Ergebnis, Events, Cursor und erkennbare Lücken. Mehrere Clients verwenden
    denselben Ausführungsweg; ein Client-Verlust beendet keine Spielarbeit.
 4. **CLI und Prozessabschluss.** Explizite Adresse, Config-Dateizugriff, Erstellen,
@@ -62,7 +62,7 @@ den gesamten Zielvertrag. Ein Testdurchstich darf gezielt den beschriebenen Teil
 Die konkrete CLI-Syntax wird mit den ausführbaren Einstiegen festgelegt. Der Abnahmelauf
 muss ohne Testadapter folgende Schritte erlauben:
 
-1. Server mit expliziter Loopback-Adresse, Zugriffsschlüssel und temporärem Basisordner starten.
+1. Server mit expliziter Loopback-Adresse und temporärem Basisordner starten.
    Erst nach Bereitschaft erscheint die Adresse; die Liste ist leer.
 2. Session mit Manifest, Package und benanntem Test-Binary erstellen. Die Antwort enthält
    sofort die volle ID; ein verzögerter Start bleibt über Detail als `Starting` sichtbar.
@@ -88,33 +88,65 @@ muss ohne Testadapter folgende Schritte erlauben:
 | Direkte Session | Fortschritt ohne Polling, Pending-Drop ohne Abbruch, genau einmalige Entnahme, fremdes Pending, History-Grenze, Event-Ende |
 | Prozessverwaltung | Echte Kindprozesse mit vollen Pipes, Startfehlern, verzögertem Ready, unerwartetem Exit, hängendem Shutdown und Prozessgruppenbereinigung |
 | Server | Frühe Annahme, intrinsische Ablehnung ohne Eintrag, Umgebungsfehler unter ID, Kollisionen und Anlage-Rennen, alle fünf Lebenszykluszustände |
-| Äußerer Zugriff | Fehlender/falscher Schlüssel, Loopback-Bindung, feste Session-Auswahl, parallele Clients, Trennung, Cursor-Lücke und unbekannter Einreichungsausgang |
+| Äußerer Zugriff | Zugang ohne Zugangsdaten, Loopback-Bindung, Origin-Prüfung, feste Session-Auswahl, parallele Clients, Trennung, Cursor-Lücke und unbekannter Einreichungsausgang |
 | Serverende | Gemeinsame Frist statt serieller Einzelfristen; Starting-Abbruch; Fehler einer Session blockiert andere nicht; erstes/zweites Ctrl+C und SIGTERM |
 | Paketierung | Direkte Rust-Session und Plugin ohne Server-/CLI-Abhängigkeiten; separate Builds der tatsächlich gewählten Feature-Kombinationen |
 
 Test-Doubles dienen gezielter Fehlerauslösung. Der reale CLI-/Bevy-Prozesslauf bleibt ein
 eigenständiger Abnahmenachweis.
 
-## Wiederverwendung aus dem Repository
+## Migration und Bereinigung
 
-Die folgenden Verweise sind technische Ausgangspunkte, keine Zielanforderungen:
+Entscheidung und Umsetzungsstatus sind getrennt: `überarbeiten` bedeutet nicht
+`bereits vollständig ersetzt`. Maßgeblich bleibt `target.md`.
+Die historische Zuordnung steht in `de32d09:docs/api/migration.md`, Zeilen 43–74.
+Ihre Dateipfade beschrieben teilweise einen anderen Arbeitsbaum. Die folgende
+Tabelle ordnet deshalb die tatsächlichen v2-Dateien ihren heutigen Verantwortlichkeiten zu.
 
-| Vorhandener Code | Verwendung beim Rewrite |
+Die entfernten Dateien und Tests bleiben unter Commit `5e9552e` verfügbar, beispielsweise
+mit `git show 5e9552e:src/keyboard.rs`. Es gibt keinen parallel gebauten Legacy-Bereich.
+Die Entfernung des v2-Einstiegs schließt die noch fehlenden v3-Funktionen nicht ab.
+
+| Bisherige Dateien und Nutzer | Ziel-Owner | Entscheidung | Aktueller Status und Nachweis |
+| --- | --- | --- | --- |
+| `src/entity.rs`, alte Beobachtung und Controller | [handle](../../src/handle.rs) | übernehmen | Handle und Lebensdauertests übernommen; Fehler heißt `handle::Error`. Kein Root-Re-Export der alten Fassade. |
+| `src/client/plugin.rs`, `src/client/transport.rs`, `src/protocol.rs` | [session](../../src/session/mod.rs), [session::protocol](../../src/session/protocol.rs) | ersetzen | v2 entfernt. Neue Integration und privater Transport tragen den ersten Durchstich; Codec-, Pending-, Event- und Prozessfixtures prüfen ihn. Input und Entity-Inspect bleiben offen. |
+| `src/time.rs`, alte Step-Commands | [command::tick](../../src/command/tick.rs), [session::Plugin](../../src/session/plugin.rs) | überarbeiten | Step/Clock entfernt. Warp-, Pace-, Stop- und No-Tick-Nachweise vorhanden; Zeitkonfiguration bleibt bei der Anwendung. |
+| `src/host/session.rs`, `launch.rs`, `controller.rs`, `diagnostics.rs` | `session`, `session::history`, `report` | ersetzen | Alter Session-Owner entfernt. Neue Prozessverwaltung und History geprüft; Fehlerbeobachtung und Report-Snapshots noch offen. |
+| `src/host/mod.rs`, `command_line.rs`, `config.rs`, `runner.rs`; alte Controller-Beispiele | `server`, `client`, `cli` | ersetzen | Fassade, `host`/`driver`-Features und alte Beispiele entfernt. Neue CLI mit privaten Config-Typen ist der einzige unterstützte Einstieg. |
+| `src/target.rs`; alte Queries und Bevy-Testapps | kein Ersatz | löschen | Marker, Exports, Inserter und Nutzungen entfernt. Bevy-Anwendungen behalten normale Entity-Namen und ihre fachlichen Systeme. |
+| `src/keyboard.rs`, `pointer.rs`, `text.rs` | `command::input`, private Bevy-Adapter unter `session` | überarbeiten | Alte API entfernt; neue Input-Commands fehlen noch. Key-Abbildung, Zustands- und Fokusregeln beim Input-Durchstich aus der Historie prüfen. |
+| `src/observation.rs` | `command::inspect`, privater Inspect-Adapter | ersetzen | Alte Spezialabfragen entfernt. Resource-Inspect implementiert; Entity-, Component- und Hierarchievarianten offen. |
+| `src/screenshot.rs` | `command::screenshot`, privater Capture-Adapter | überarbeiten | Alte API und ihre allein benötigten Abhängigkeiten entfernt. PNG-/Pfad-/Readback-Mechanik beim Screenshot-Durchstich prüfen. |
+| `src/host/recording.rs`, `replay.rs`; `tests/driver_recording.rs` und alte JSONL-Fixture | `command::recording`, `command::replay`, `session` | überarbeiten | v2 entfernt; neue Zustände, Datei- und Replay-Verträge noch offen. Die alte Fixture ist kein gültiger Nachweis für das neue v1-Dateiformat. |
+| `src/host/report.rs`, `issue_report.rs`, `github.rs`, Fehleranteile von `diagnostics.rs`; alte Report-Tests | `report`, privater Session-Observer | überarbeiten / Zwischenformat löschen | `failure.json`-Architektur entfernt. `report` enthält bislang nur Konfiguration, noch keinen Report- oder Provider-Ablauf. |
+| `src/host/repl.rs`, `script.rs` | `cli::repl`, `cli::script` über `client` | überarbeiten | Alte direkte Session-Owner entfernt; neue REPL und Script-Ausführung offen. |
+| `bevy_test_apps` mit `automation`, `tests/logical_state.rs`, `examples/*_controller.rs` | normale Testanwendungen; neue Client-Abnahmen | ersetzen | v2-Anbindung und Controller entfernt. Native Bevy-Anwendungen, eigene fachliche Unit-Tests und die datenbasierte UI-Komposition bleiben erhalten. `counter` mit `slice` prüft den neuen Durchstich. |
+
+### Fachliche Testfälle für die offenen Durchstiche
+
+Folgende Nachweise sind nicht durch die Entfernung alter Tests erledigt. Die
+Quellpfade beziehen sich auf `5e9552e`, nicht auf Dateien im aktuellen Arbeitsbaum.
+
+| Offener Durchstich | Zu übernehmende Prüfungen und Referenzen |
 | --- | --- |
-| [entity.rs](../../src/entity.rs) | Handle-Abbildung und Tests für Generation/Lebensdauer |
-| [keyboard.rs](../../src/keyboard.rs), [pointer.rs](../../src/pointer.rs), [text.rs](../../src/text.rs) | Stabile Key-Tokens, Bevy-Input- und Fokusabbildung gezielt übernehmen |
-| [client/plugin.rs](../../src/client/plugin.rs) | Trennung von Anwendungsschedules und äußerem Event-Loop prüfen; Dispatch und Tick-Ausführung gegen das Ziel neu aufbauen |
-| [host/session.rs](../../src/host/session.rs), [host/launch.rs](../../src/host/launch.rs) | Cargo-Argumentbildung, Pipe-Leser und Prozessgruppenbereinigung als technische Referenz |
-| [observation.rs](../../src/observation.rs) | Reflection- und Hierarchiezugriffe für den privaten Inspect-Adapter prüfen |
-| [screenshot.rs](../../src/screenshot.rs) | GPU-Readback, PNG und `cap-std`-Pfadzugriff für späteren Screenshot-Durchstich |
-| [tests/logical_state.rs](../../tests/logical_state.rs), [logical_state.rs](../../bevy_test_apps/src/bin/logical_state.rs) | Vorhandene Testfälle und Bevy-Testanwendung auf Ziel-Commands umstellen |
-| [host/recording.rs](../../src/host/recording.rs), [host/replay.rs](../../src/host/replay.rs), [host/github.rs](../../src/host/github.rs) | Datei- und Prozessmechanik prüfen; Zielzustände und Formate eigenständig umsetzen |
+| Input | `src/keyboard.rs`: Key-Token-Roundtrip und Press/Release-Zustände. `src/pointer.rs`: endliche Koordinaten, relative/absolute Bewegung, Grenzen und Button-Zustände. `src/text.rs`: UTF-8-Byte-Grenze, eindeutiger lebender editierbarer Fokus. `src/client/plugin.rs`: Input vormerken, gehaltene Tasten und Verarbeitung erst beim Tick, Session-Isolation. Neue Outputs und Ablehnungscodes verwenden. |
+| Entity-Inspect | `src/observation.rs`: Reflection-/Opaque-Status und Hierarchietiefe. Das heutige [handle](../../src/handle.rs) bewahrt die Generationstests. Markerfilter, Clock-Spezialabfragen, Pagination und alte Größenkürzungen werden nicht übernommen. Die neuen vollständigen Type Paths und Value-Statusregeln gelten. |
+| Screenshot | `src/screenshot.rs`: normalisierte PNG-Pfade, Symlink-Ausbruch, Root-Isolation, lesbares PNG nach Abschluss. Zusätzlich nach neuem Vertrag: Überschreiben, eindeutiges primäres Fenster, kein Tick und keine simulierte Zeitänderung. |
+| Recording/Replay | `tests/driver_recording.rs`, `src/host/recording.rs`, `replay.rs`: Reihenfolge, Dateibarrieren, Ausschlüsse, Abschluss und Fehlerfälle fachlich übertragen. Alte redigierte/gekürzte Outputs, eigene Controller-Aktionen und Outcome-Gleichheit nicht als Ziel übernehmen. |
+| Reports | `tests/issue_report.rs`, `github_report.rs`: Fehlerdarstellung und Prozessfixtures für Provider prüfen. Kein `failure.json`-Lader, kein vorheriger Session-Abschluss als Voraussetzung; Snapshot und Signatur-Golden-Vectors aus dem aktuellen Zielvertrag ergänzen. |
+| UI-Abnahmen | `tests/logical_state.rs`, `examples/*_controller.rs`: Fokus/Text, gehaltene Tasten, Pointer-/Drag-Lebenszyklus, Timer, Layout, tote Handles und Bilder auf neue Commands übertragen. Die vorhandenen nativen Bevy-Anwendungen liefern weiterhin die fachlichen Szenen. |
 
-`bevy_test_apps` ist ein eigenes Package mit Pfadabhängigkeit auf `bug_hunter`; das
+Die erhaltenen fachlichen Bevy-Tests bleiben ausführbar. Die neuen Session- und
+Prozessfixtures decken laufenden Warp, Korrelation, Pending-Drop, Event-Überlauf und
+Bereinigung ab. Nach jeder weiteren Portierung wird die zugehörige Zeile erst nach
+dem tatsächlichen Nachweis abgeschlossen.
+
+`bevy_test_apps` ist ein eigenes Package mit Pfadabhängigkeit auf `woodpecker`; das
 Root-Manifest enthält keine Workspace-Memberliste. Der Durchstich verwendet daher explizit
 `bevy_test_apps/Cargo.toml` als Launch-Manifest statt Package-Auswahl vom Repository-Root.
 Das Testpackage verlangt Bevy 0.19.1; die Root-Abhängigkeit nennt 0.19.0 als kompatible
-Untergrenze. Die konkrete Auflösung wird vor Reflection-Fixtures geprüft und festgehalten.
+Untergrenze. Die Lockfiles halten die geprüfte Auflösung auf 0.19.1 fest.
 
 ## Während der Implementation entscheiden
 
@@ -122,12 +154,8 @@ Diese Punkte brauchen keine vorgelagerte Bestätigungsschleife:
 
 - Private Thread-/Kanalstruktur, Warp-Budget, Testadapter und plattformspezifische
   Prozess-/Signalanbindung innerhalb der festgelegten Fortschritts- und Abschlussregeln.
-- Sichere Schlüsselzuführung. Für den Durchstich aus einem explizit benannten
-  Umgebungseintrag lesen, über Authentisierungsheader übertragen, bei fehlendem Wert
-  abbrechen; nicht in URL, Argumentlisten, Logs, Config-Beispielen oder Artefakten ablegen.
-  Den Zugriffsschlüssel nicht in die Umgebung gestarteter Cargo-, Spiel- oder Provider-Prozesse
-  übernehmen. Loopback- und Origin-Prüfungen vor authentisierten Operationen testen.
-  Kein echter Schlüssel wird mit Tests oder Dokumentation eingecheckt.
+- Lokale Clients ohne Zugangsdaten zulassen. Loopback- und Origin-Prüfungen testen;
+  keine optionale Auth-Schicht oder automatische Schlüsselverwaltung ergänzen.
 - HTTP-Routen, WebSocket-Framing, Versionsprüfung und stabile Fehlerabbildung aus den
   vorhandenen fachlichen Fehlergruppen. Vor Implementierung als gemeinsame Codec-Fixtures
   festhalten. Ein Verbindungsfehler darf keinen Command-Erfolg behaupten.

@@ -5,9 +5,6 @@ use bevy::{
     window::{Window, WindowResolution},
 };
 
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
-
 const TILE_SIZE: f32 = 120.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Reflect)]
@@ -126,7 +123,6 @@ fn setup(mut commands: Commands) {
                     SceneState::default(),
                 ))
                 .id();
-            mark_automation_target(&mut root.commands(), grid);
             root.commands().entity(grid).with_children(|grid| {
                 for (index, tile, color) in [
                     (0, TileId::Amber, Color::from(AMBER_500)),
@@ -145,7 +141,7 @@ fn spawn_tile(parent: &mut ChildSpawnerCommands, index: i16, tile: TileId, color
     let column = index % 2 + 1;
     let border = color.darker(0.12);
     let (name, label) = tile.metadata();
-    let entity = parent
+    parent
         .spawn((
             Name::new(name),
             Tile(tile),
@@ -200,9 +196,7 @@ fn spawn_tile(parent: &mut ChildSpawnerCommands, index: i16, tile: TileId, color
             TextFont::from_font_size(20.0),
             TextColor(Color::WHITE),
             Pickable::IGNORE,
-        ))
-        .id();
-    mark_automation_target(&mut parent.commands(), entity);
+        ));
 }
 
 mod drag {
@@ -295,11 +289,3 @@ mod drag {
         }
     }
 }
-
-#[cfg(feature = "automation")]
-fn mark_automation_target(commands: &mut Commands, entity: Entity) {
-    commands.entity(entity).insert(AutomationTarget);
-}
-
-#[cfg(not(feature = "automation"))]
-fn mark_automation_target(_commands: &mut Commands, _entity: Entity) {}

@@ -1,0 +1,78 @@
+//! Commands implemented by the experimental v3 vertical slice.
+pub mod inspect;
+pub mod tick;
+
+use serde::{Deserialize, Serialize};
+
+pub(crate) mod private {
+    pub trait Sealed {}
+}
+
+pub trait Request: private::Sealed + Into<Command> {
+    type Output: serde::de::DeserializeOwned;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "command", content = "arguments", deny_unknown_fields)]
+pub enum Command {
+    #[serde(rename = "tick.warp.start")]
+    Start(tick::warp::Start),
+    #[serde(rename = "tick.warp.set_pace")]
+    SetPace(tick::warp::SetPace),
+    #[serde(rename = "tick.warp.stop")]
+    Stop(tick::warp::Stop),
+    #[serde(rename = "inspect.query")]
+    Inspect(inspect::Command),
+    #[serde(rename = "shutdown")]
+    Shutdown(Empty),
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Empty {}
+
+impl Command {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Start(_) => "tick.warp.start",
+            Self::SetPace(_) => "tick.warp.set_pace",
+            Self::Stop(_) => "tick.warp.stop",
+            Self::Inspect(_) => "inspect.query",
+            Self::Shutdown(_) => "shutdown",
+        }
+    }
+
+    pub(crate) fn validate_output(&self, output: &serde_json::Value) -> bool {
+        fn valid<T: serde::de::DeserializeOwned>(v: &serde_json::Value) -> bool {
+            serde_json::from_value::<T>(v.clone()).is_ok()
+        }
+        match self {
+            Self::Start(start) => serde_json::from_value::<tick::warp::Completion>(output.clone())
+                .is_ok_and(|c| {
+                    c.requested_ticks == start.ticks
+                        && c.executed_ticks <= c.requested_ticks
+                        && (c.outcome == tick::warp::Outcome::Stopped
+                            || c.executed_ticks == c.requested_ticks)
+                }),
+            Self::SetPace(_) => valid::<tick::warp::PaceChanged>(output),
+            Self::Stop(_) => valid::<tick::warp::Stopped>(output),
+            Self::Inspect(_) => valid::<inspect::Output>(output),
+            Self::Shutdown(_) => output.is_null(),
+        }
+    }
+}
+
+macro_rules! request {
+    ($ty:ty, $variant:ident, $output:ty) => {
+        impl crate::command::private::Sealed for $ty {}
+        impl crate::command::Request for $ty {
+            type Output = $output;
+        }
+        impl From<$ty> for crate::command::Command {
+            fn from(value: $ty) -> Self {
+                Self::$variant(value)
+            }
+        }
+    };
+}
+pub(crate) use request;

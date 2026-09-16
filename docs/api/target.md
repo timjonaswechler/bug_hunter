@@ -1,6 +1,6 @@
-# Ziel von bug_hunter
+# Ziel von woodpecker
 
-`bug_hunter` kontrolliert und beobachtet ein Spiel, damit Menschen und Agenten nach Fehlern
+`woodpecker` kontrolliert und beobachtet ein Spiel, damit Menschen und Agenten nach Fehlern
 suchen können. Recording, Replay und Reports unterstützen reproduzierbare Untersuchungen.
 Ein lokaler Server hält mehrere unabhängige Spiel-Sessions bereit; die CLI macht Verwaltung,
 Steuerung und Beobachtung zugänglich.
@@ -22,7 +22,7 @@ einen zusätzlich zu pflegenden Zielstand.
 | `session::protocol` | Gemeinsamer Codec für qualifizierte Command-Namen, Argumente und Outputs sowie das interne Spielprotokoll v3 |
 | `session::Plugin` | Bevy-Integration, Dispatch und kontrollierte Ausführung der Anwendungsschedules |
 | `report` | Fehlererkennung, Marker-Framing, Report-Konstruktion, Titel, Signatur, Kontextauswahl, Darstellung und Provider |
-| `server` | Session-Verzeichnis, IDs, Client-Routing, Activity-Aufbewahrung, Zugriffsschutz, Serverende und clientunabhängiger Report-Ablauf |
+| `server` | Session-Verzeichnis, IDs, Client-Routing, Activity-Aufbewahrung, Loopback-Bindung, Serverende und clientunabhängiger Report-Ablauf |
 | `client` | Verbindungszugriff, Nutzung des gemeinsamen Codecs und Zuordnung von Antworten für Verwaltung und gebundene Session-Verbindungen |
 | `cli` | Argumente, Konfigurationsdateien, Terminaldarstellung und Auswahl des Bedienablaufs |
 | `cli::repl` | Menschliche Command-Eingabe und laufende Ergebnisdarstellung |
@@ -48,7 +48,6 @@ Ein Spielstartfehler beendet den Server nicht.
 Der Server erhält serverweite Konfiguration:
 
 - eine ausschließlich über Loopback erreichbare Adresse,
-- einen gemeinsamen Zugriffsschlüssel für beide Zugänge,
 - einen nicht leeren Artefakt-Basisordner als Pflichtangabe,
 - eine positive, endliche Shutdown-Frist, standardmäßig 30 Sekunden.
 
@@ -103,8 +102,12 @@ Zeichen und verlängern kollidierende Präfixe bis zur Eindeutigkeit. Eingaben u
 beendete Sessions. Genau ein Treffer ist nötig; unbekannte und mehrdeutige Auswahl sind Fehler.
 
 HTTP dient der Verwaltung, WebSocket der fest an eine Session gebundenen Steuerung und
-Beobachtung. Beide verwenden dieselbe Serveradresse und denselben Zugriffsschlüssel.
-Eine Session-ID ist kein Berechtigungsnachweis.
+Beobachtung. Beide verwenden dieselbe ausschließlich lokale Serveradresse.
+Lokalen Clients wird vertraut; es gibt keine Schlüssel-Authentisierung, keine
+Zugangsdaten-Konfiguration und keinen automatisch erzeugten Ersatzschlüssel.
+Jeder lokale Prozess, der den Port erreicht, darf die API verwenden.
+Remote-Betrieb wird nicht unterstützt. Browser-Origin-Anfragen bleiben ausgeschlossen.
+Die Session-ID wählt eine Session aus und ist kein Berechtigungsnachweis.
 
 Erstellen, Auflisten und Einzelabfrage benötigen keine Session-Bindung. Nach Erstellen öffnet
 der Client mit der erhaltenen ID eine eigene Session-Verbindung. Diese Bindung gilt für die
@@ -251,7 +254,7 @@ Ein leerer Root oder ein Root, der selbst ein Symlink ist, ergibt `InvalidConfig
 Die Session legt ihn bei Bedarf an und kanonisiert ihn. Anlage-/Kanonisierungsfehler ergeben `Io`.
 Alle einzelnen Artefakte bleiben unter diesem gemeinsamen Root.
 
-Die Session übergibt den kanonischen Root intern als `BUG_HUNTER_ARTIFACT_DIR` und setzt
+Die Session übergibt den kanonischen Root intern als `WOODPECKER_ARTIFACT_DIR` und setzt
 `RUST_BACKTRACE=1` für den Kindprozess. Das Plugin liest den Root vor Ready.
 Ein fehlender oder ungültiger Root verhindert Ready.
 
@@ -383,7 +386,7 @@ und keine Reports.
 Nur `tick.warp.start` führt Ticks aus. Ein Tick führt die von der Anwendung konfigurierten
 Simulations-Schedules einmal in ihrer vorhandenen Reihenfolge aus und erhöht nach Erfolg
 den Tick-Zähler um eins. Die Anwendung besitzt Zeitkonfiguration und Bedeutung eines Ticks;
-`bug_hunter` überschreibt keine simulierte Tick-Dauer.
+`woodpecker` überschreibt keine simulierte Tick-Dauer.
 
 Input-Erfolg bedeutet Annahme, Prüfung und Vormerkung für den nächsten ausgeführten Tick,
 nicht bereits erfolgte Verarbeitung durch Anwendungssysteme. Mehrere Inputs vor einem Tick
@@ -659,7 +662,7 @@ Metadaten:
   Git-Revision aus dem Repository des ausgewählten Package-Manifests,
 - Git: `HEAD` und Dirty einschließlich vorgemerkter, geänderter und nicht ignorierter
   unversionierter Dateien; ohne Git oder HEAD keine Revision,
-- Version des laufenden `bug_hunter`-Builds, bestätigte Protokollversion und Capabilities,
+- Version des laufenden `woodpecker`-Builds, bestätigte Protokollversion und Capabilities,
   Tick-Konfiguration vom Start, OS und Architektur,
 - optionale getrimmte Cargo-/Rustc-Versionsausgaben aus demselben Startarbeitsordner,
 - die begrenzten korrelierten History-Einträge.
@@ -723,6 +726,10 @@ Big-Endian-`u64`, Wert. SHA-256 liefert den Digest.
 Provider vergleichen die volle Signatur einschließlich Version und Algorithmus.
 Eine Änderung von Normalisierung oder Feldbelegung benötigt eine neue Version;
 bestehende Reports werden nicht rückwirkend neu berechnet.
+
+Die Umbenennung in `woodpecker` ändert weder den v1-Hash-Namensraum
+`bug_hunter.signature` noch den Marker `bug_hunter-signature`. Diese Bezeichner
+gehören zum versionierten Dateivertrag, nicht zum aktuellen Produktnamen.
 
 ### Provider
 
@@ -891,13 +898,13 @@ werden nicht in Laufzeitmodelle übernommen. Fachliche Config-Prüfung bleibt be
 CLI-Einstiege geben Ergebnisse zurück; die einbettende `main` gibt den ExitCode zurück.
 
 Die Verwaltungs-CLI folgt grundsätzlich der Docker-artigen Form
-`bug_hunter <ressource> <aktion> [optionen] [id]`. Die Session-Verwaltung verwendet:
+`woodpecker <ressource> <aktion> [optionen] [id]`. Die Session-Verwaltung verwendet:
 
 ```text
-bug_hunter session create …
-bug_hunter session ls
-bug_hunter session inspect <id>
-bug_hunter session stop <id>
+woodpecker session create …
+woodpecker session ls
+woodpecker session inspect <id>
+woodpecker session stop <id>
 ```
 
 Diese Syntax organisiert Verwaltungsoperationen. Ihr Verhalten folgt dem Session-Vertrag:
