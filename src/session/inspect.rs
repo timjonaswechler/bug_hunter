@@ -7,6 +7,9 @@ use bevy::{
 mod entities;
 mod value;
 
+#[cfg(test)]
+mod reflection_tests;
+
 pub(super) fn query(world: &World, query: Command) -> std::result::Result<Output, Diagnostic> {
     match query {
         Command::Entities {

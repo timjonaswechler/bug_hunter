@@ -107,3 +107,29 @@ fn key(value: &serde_json::Value) -> Vec<u8> {
     }
     serde_json::to_vec(&ordered(value)).unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::key;
+    use serde_json::{Map, Value, json};
+
+    #[test]
+    fn set_sort_keys_order_objects_recursively_without_reordering_arrays() {
+        // Explicit insertion order also exercises serde_json/preserve_order builds.
+        let object = |entries: Vec<(&str, Value)>| {
+            let mut map = Map::new();
+            for (name, value) in entries {
+                map.insert(name.into(), value);
+            }
+            Value::Object(map)
+        };
+        let value = object(vec![
+            ("z", json!(0)),
+            (
+                "a",
+                json!([object(vec![("z", json!(2)), ("a", json!(1))]), 10, 2]),
+            ),
+        ]);
+        assert_eq!(key(&value), br#"{"a":[{"a":1,"z":2},10,2],"z":0}"#);
+    }
+}
