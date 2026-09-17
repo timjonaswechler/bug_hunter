@@ -2,7 +2,10 @@ use super::protocol::Message;
 use super::*;
 use std::time::Duration;
 
-fn launch(config: &Config, cancel: &Arc<AtomicBool>) -> Result<process::Process, Error> {
+fn launch(
+    config: &Config,
+    cancel: &Arc<AtomicBool>,
+) -> Result<(process::Process, cap_std::fs::Dir), Error> {
     let (project, mut command) = config.launch.resolve(cancel)?;
     if cancel.load(Ordering::Acquire) {
         return Err(Error::ended());
@@ -20,6 +23,8 @@ fn launch(config: &Config, cancel: &Arc<AtomicBool>) -> Result<process::Process,
     }
     std::fs::create_dir_all(&root).map_err(Error::io)?;
     let root = root.canonicalize().map_err(Error::io)?;
+    let directory = cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority())
+        .map_err(Error::io)?;
     command
         .env("WOODPECKER_ARTIFACT_DIR", root)
         .env("RUST_BACKTRACE", "1")
@@ -27,7 +32,7 @@ fn launch(config: &Config, cancel: &Arc<AtomicBool>) -> Result<process::Process,
             "WOODPECKER_TICK_PACE",
             serde_json::to_string(&config.tick.pace).unwrap(),
         );
-    process::Process::spawn(command)
+    Ok((process::Process::spawn(command)?, directory))
 }
 
 pub(super) fn run(
@@ -47,7 +52,7 @@ pub(super) fn run(
     }
     let _end = EndOnDrop(shared.clone());
     let result = launch(&config, &cancel);
-    let mut process = match result {
+    let (mut process, root) = match result {
         Ok(process) => process,
         Err(e) => {
             let _ = ready.send(Err(e));
@@ -63,7 +68,10 @@ pub(super) fn run(
     let mut closed = 0;
     let mut exit_status = None;
     let mut diagnostics = String::new();
+    let mut recorder = recording::Recorder::new(root);
+    let mut deferred = VecDeque::<(u64, Command)>::new();
     loop {
+        recording_notices(&shared, &mut reason, recorder.poll());
         if cancel.load(Ordering::Acquire) {
             break;
         }
@@ -162,6 +170,7 @@ pub(super) fn run(
                         if id == u64::MAX {
                             shutdown = Some(outcome);
                         } else {
+                            recorder.terminal(id, &outcome);
                             complete(&shared, id, outcome);
                         }
                     } else {
@@ -175,23 +184,7 @@ pub(super) fn run(
                                 "response has no open request".into(),
                             ),
                         };
-                        let mut state = shared.state.lock().unwrap();
-                        if state.events.len() < 256 {
-                            state
-                                .events
-                                .push_back(Event::ProtocolError { code, message });
-                        } else if let Some(EndReason::EventQueueOverflow {
-                            dropped_events, ..
-                        }) = &mut reason
-                        {
-                            *dropped_events += 1;
-                        } else if reason.is_none() {
-                            reason = Some(EndReason::EventQueueOverflow {
-                                capacity: 256,
-                                dropped_events: 1,
-                            });
-                        }
-                        shared.changed.notify_all();
+                        push_event(&shared, &mut reason, Event::ProtocolError { code, message });
                     }
                 }
             }
@@ -234,6 +227,23 @@ pub(super) fn run(
             break;
         }
         if initialized {
+            // File transitions hold execution, not acceptance or pipe/event progress.
+            if !recorder.transitioning() {
+                for _ in 0..64 {
+                    let Some((id, command)) = deferred.pop_front() else {
+                        break;
+                    };
+                    if let Err(error) =
+                        send_game(&process, &mut active, &mut recorder, &shared, id, command)
+                    {
+                        reason = Some(error);
+                        break;
+                    }
+                }
+            }
+            if reason.is_some() {
+                continue;
+            }
             for _ in 0..64 {
                 let Ok(Operation::Send(command, response)) = input.try_recv() else {
                     break;
@@ -241,10 +251,17 @@ pub(super) fn run(
                 let is_shutdown = matches!(command, Command::Shutdown(_));
                 let id = if stopping {
                     Err(Error::ended())
-                } else if is_shutdown && !active.is_empty() {
+                } else if is_shutdown
+                    && (!active.is_empty() || !deferred.is_empty() || recorder.transitioning())
+                {
                     Err(Error::new(
                         "shutdown_commands_pending",
                         "commands are still pending",
+                    ))
+                } else if is_shutdown && recorder.busy() {
+                    Err(Error::new(
+                        "shutdown_recording_active",
+                        "stop recording before shutdown",
                     ))
                 } else if is_shutdown {
                     stopping = true;
@@ -276,18 +293,28 @@ pub(super) fn run(
                             },
                         ));
                         drop(state);
-                        active.insert(id, command.clone());
                         let _ = response.send(Ok(id));
-                        if process
-                            .writer
-                            .as_ref()
-                            .unwrap()
-                            .send(protocol::encode(id, &command))
-                            .is_err()
+                        if matches!(
+                            command,
+                            Command::RecordingStart(_) | Command::RecordingStop(_)
+                        ) {
+                            if let Err(error) = recorder.control(
+                                id,
+                                &command,
+                                !active.is_empty() || !deferred.is_empty(),
+                            ) {
+                                complete(&shared, id, Err(error));
+                            }
+                            continue;
+                        }
+                        if recorder.transitioning() || !deferred.is_empty() {
+                            deferred.push_back((id, command));
+                            continue;
+                        }
+                        if let Err(error) =
+                            send_game(&process, &mut active, &mut recorder, &shared, id, command)
                         {
-                            reason = Some(EndReason::TransportClosed {
-                                channel: "stdin".into(),
-                            });
+                            reason = Some(error);
                             break;
                         }
                     }
@@ -310,6 +337,7 @@ pub(super) fn run(
         let _ = ready.send(Err(error));
     }
     drop(process);
+    recording_notices(&shared, &mut reason, recorder.end(&cancel));
     if stopping {
         let result = if reason.is_some() || cancel.load(Ordering::Acquire) {
             Err(Error::ended())
@@ -326,6 +354,36 @@ pub(super) fn run(
     shared.changed.notify_all();
 }
 
+fn send_game(
+    process: &process::Process,
+    active: &mut BTreeMap<u64, Command>,
+    recorder: &mut recording::Recorder,
+    shared: &Shared,
+    id: u64,
+    command: Command,
+) -> Result<(), EndReason> {
+    recorder.record(id, &command);
+    active.insert(id, command.clone());
+    if process
+        .writer
+        .as_ref()
+        .unwrap()
+        .send(protocol::encode(id, &command))
+        .is_err()
+    {
+        active.remove(&id);
+        if id != u64::MAX {
+            let outcome = Err(Error::io("game stdin writer disconnected"));
+            recorder.terminal(id, &outcome);
+            complete(shared, id, outcome);
+        }
+        return Err(EndReason::TransportClosed {
+            channel: "stdin".into(),
+        });
+    }
+    Ok(())
+}
+
 fn complete(shared: &Shared, id: u64, result: Outcome) {
     let mut state = shared.state.lock().unwrap();
     if let Some((_, entry)) = state.history.iter_mut().find(|(key, _)| *key == id) {
@@ -338,6 +396,9 @@ fn complete(shared: &Shared, id: u64, result: Outcome) {
                 code: code.clone(),
                 message: message.clone(),
             },
+            Err(Error::Io { message }) => history::Outcome::IoFailed {
+                message: message.clone(),
+            },
             Err(e) => history::Outcome::Rejected {
                 code: e.code().into(),
                 message: e.message().into(),
@@ -346,6 +407,34 @@ fn complete(shared: &Shared, id: u64, result: Outcome) {
     }
     if !state.abandoned.remove(&id) {
         state.results.insert(id, result);
+    }
+    shared.changed.notify_all();
+}
+
+fn recording_notices(
+    shared: &Shared,
+    reason: &mut Option<EndReason>,
+    notices: Vec<recording::Notice>,
+) {
+    for notice in notices {
+        match notice {
+            recording::Notice::Complete { id, outcome } => complete(shared, id, outcome),
+            recording::Notice::Event(value) => push_event(shared, reason, value),
+        }
+    }
+}
+
+fn push_event(shared: &Shared, reason: &mut Option<EndReason>, value: Event) {
+    let mut state = shared.state.lock().unwrap();
+    if state.events.len() < 256 {
+        state.events.push_back(value);
+    } else if let Some(EndReason::EventQueueOverflow { dropped_events, .. }) = reason {
+        *dropped_events += 1;
+    } else if reason.is_none() {
+        *reason = Some(EndReason::EventQueueOverflow {
+            capacity: 256,
+            dropped_events: 1,
+        });
     }
     shared.changed.notify_all();
 }

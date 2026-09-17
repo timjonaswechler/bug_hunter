@@ -30,11 +30,20 @@ the reflected key counters. Keyboard events do not insert text.
 The test then focuses each text field with its virtual pointer and submits different
 Unicode strings through `input.text.input`. The reflected text is sampled after
 Bevy applies text edits, so a single explicit tick shows the resulting value.
+`slice` also enables `woodpecker/screenshot`. The test captures the closed and open
+menu, validates PNG chunks and pixel data, and checks that capture changes neither
+the reflected tick counter nor simulated time. It covers overwrite, concurrent
+requests, symlink escape rejection and separate session artifact roots.
+The first session is also recorded. The test validates its JSONL header, footer,
+command count, input and screenshot entries, and exclusions for recording controls
+and commands from the second session.
 
 ```sh
 cargo build --features cli --bin woodpecker
 cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin context_menu
 python3 tests/ui.py
+# Retain the screenshots for visual inspection:
+python3 tests/ui.py --capture-dir target/ui-captures
 ```
 
 This test opens a real window and requires a desktop session.

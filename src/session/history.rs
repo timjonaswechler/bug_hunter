@@ -13,4 +13,5 @@ pub enum Outcome {
     Completed { output: serde_json::Value },
     Rejected { code: String, message: String },
     ProtocolFailed { code: String, message: String },
+    IoFailed { message: String },
 }

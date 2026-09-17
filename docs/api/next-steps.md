@@ -18,9 +18,10 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
 3. Für den ausgewählten Durchstich dessen fachliche Regeln und
    [zu portierende Testfälle](implementation-plan.md#fachliche-testfälle-für-die-offenen-durchstiche)
    prüfen. Research und ADRs nur für die jeweilige technische Frage hinzunehmen.
-4. Mit dem unten beschriebenen UI-Durchstich beginnen, sofern der Nutzer keine
-   andere Priorität vorgibt. Der fehlende Umfang ist beschlossen; reversible
-   Implementierungsdetails selbstständig entscheiden.
+4. Den aktuellen Stand unter „Konkreter nächster Durchstich“ beachten.
+   Screenshot und Recording sind umgesetzt; als Nächstes folgt Replay.
+   Reversible Implementierungsdetails innerhalb des beauftragten Umfangs
+   selbstständig entscheiden.
 
 ## Bereits umgesetzt
 
@@ -38,6 +39,10 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
   Component-Namen/-Werte und Hierarchien. Es verwendet den bestehenden Handle und
   schließt interne Resource-Entities aus. Adapter-, Codec- und Plugin-Tests prüfen
   Type Paths, Ablehnungen, Sortierung und Lesen ohne Tick oder Zeitfortschritt.
+- Die Reflection-Matrix gegen Bevy 0.19.1 ist ergänzt. Dieselben Wertfixtures laufen
+  durch Resource- und Component-Inspect, einschließlich fehlender Registrierungen,
+  opaker Werte, Custom-Serializer-Fehler, Maps, verschachtelter Sets und Asset-Handles.
+  Die Zuordnung der Fälle steht im [Implementierungsplan](implementation-plan.md#reflection-matrix).
 - Pointer-Bewegung, Buttons und Scroll sind geprüft und bis zum nächsten Tick
   vorgemerkt. Die gerenderte Context-Menu-Abnahme über Server und Session besteht.
   Der Kontrolllauf hält den Render-Zeitkanal frei, ohne Simulationszeit fortzuschreiben.
@@ -53,6 +58,15 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
   Erst beim Tick erhält die geprüfte `EditableText`-Entity den Edit. Fokuswechsel
   leiten angenommene Eingaben nicht um. Die UI-Abnahme prüft getrennte Unicode-Texte
   in beiden Sessions; fehlender Fokus und Übergröße werden abgelehnt.
+- `screenshot.capture` nimmt mit dem optionalen `screenshot`-Feature das primäre
+  gerenderte Fenster auf. Readback und PNG-Schreiben laufen ohne zusätzliche Ticks.
+  Pfadsandbox, atomisches Überschreiben, parallele Requests und getrennte Roots
+  sind geprüft; die reale Context-Menu-Abnahme validiert die PNGs und eingefrorene Zeit.
+- Recording-Start/-Stop laufen im Session-Koordinator mit separatem Dateiworker.
+  Header-/Footer-Bestätigungen begrenzen den aufgenommenen Abschnitt; Commands und
+  Outcomes werden in Annahmereihenfolge geschrieben. Tests prüfen Zustände,
+  Pfadsicherheit, Schreibfehler und unerwartetes Prozessende. Die Zähler- und
+  UI-Abnahmen prüfen die erzeugten JSONL-Dateien über den tatsächlichen CLI-Weg.
 - Der Server verwaltet mehrere unabhängige Sessions über HTTP und fest gebundene
   WebSocket-Verbindungen. Activity besitzt Cursor und erkennbare Lücken.
   Client-Trennung beendet angenommene Arbeit nicht.
@@ -85,7 +99,7 @@ Konfiguration; alte Funktionen werden nicht durch Kompatibilitäts-Exports angeb
   dem Zielvertrag abdecken. Erfolg bedeutet nur Prüfung und Vormerkung bis zum Tick.
 - [x] Entity-Queries, Component-Filter, Namen-/Werteprojektionen und Hierarchien
   ergänzen. Den übernommenen Handle verwenden; keine Automation-Marker einführen.
-- [ ] Reflection-Fixtures gegen Bevy 0.19.1 vervollständigen: exakte Type Paths,
+- [x] Reflection-Fixtures gegen Bevy 0.19.1 vervollständigen: exakte Type Paths,
   fehlende/opaque/nicht serialisierbare Werte, nicht endliche Zahlen, Maps, Sets
   und Asset-Handles.
 - [x] Den realen UI-Durchstich unten als Integrationstest ausführen.
@@ -96,10 +110,10 @@ die Arbeit endet nicht schon beim ersten erfolgreichen Klick.
 
 ### 2. Screenshot und gerenderte Abnahme
 
-- [ ] Das primäre gerenderte Fenster aufnehmen; erst nach GPU-Readback und
+- [x] Das primäre gerenderte Fenster aufnehmen; erst nach GPU-Readback und
   erfolgreichem PNG-Schreiben antworten.
-- [ ] Normalisierte Pfade, Symlink-Sicherheit, Root-Isolation und Überschreiben prüfen.
-- [ ] Nachweisen, dass Aufnahme und Darstellung keine Simulationsticks oder
+- [x] Normalisierte Pfade, Symlink-Sicherheit, Root-Isolation und Überschreiben prüfen.
+- [x] Nachweisen, dass Aufnahme und Darstellung keine Simulationsticks oder
   simulierte Zeit hinzufügen.
 
 Abschluss: Die realen UI-Szenen liefern überprüfbare Bilder über denselben
@@ -107,9 +121,9 @@ Client-Vertrag; fehlende Unterstützung wird korrekt abgelehnt.
 
 ### 3. Recording und Replay
 
-- [ ] Recording-Start/-Stop, Zustände, Dateibarrieren, Pfadsicherheit und das neue
+- [x] Recording-Start/-Stop, Zustände, Dateibarrieren, Pfadsicherheit und das neue
   JSONL-Format implementieren. Commands und Outcomes in Annahmereihenfolge schreiben.
-- [ ] Schreibfehler, unvollständige Aufnahme, Session-Ende und Footer-Abschluss prüfen.
+- [x] Schreibfehler, unvollständige Aufnahme, Session-Ende und Footer-Abschluss prüfen.
 - [ ] Replay vollständig vor dem ersten Spiel-Command validieren und in der
   laufenden Session ausführen. Effektiv ausgeführte Warp-Ticks berücksichtigen.
 - [ ] Stop während Laden und Ausführung, technische Blockierungen sowie
@@ -163,10 +177,19 @@ auch bei parallelen Clients und Wiederverbindung.
 ## Konkreter nächster Durchstich
 
 Entity-Inspect sowie Pointer-, Keyboard- und Text-Commands sind umgesetzt.
-Als Nächstes die vollständige Reflection-Matrix aus Block 1 abschließen:
-opaque/nicht serialisierbare Werte, fehlende Registrierungen, Maps, verschachtelte Sets,
-nicht endliche Zahlen und Asset-Handles gegen Bevy 0.19.1 prüfen.
-Erst danach mit Screenshot beginnen.
+Die Reflection-Matrix aus Block 1 ist abgeschlossen. Dafür waren nur Tests und
+Dokumentation nötig, keine Änderungen am produktiven Inspect-Verhalten.
+Screenshot aus Block 2 ist ebenfalls umgesetzt und mit zwei gerenderten
+Context-Menu-Sessions geprüft. Recording-Start/-Stop aus Block 3 sind implementiert.
+Als Nächstes den Replay-Loader und danach die Replay-Ausführung ergänzen:
+gesamte Datei strikt vorab validieren, effektive Warp-Ticks übernehmen, technische
+Blockierungen und Stop während Laden/Ausführung abdecken.
+Recording-interne Versionstypen bleiben privat; keine alten Replay-Dateien als
+gültigen v1-Nachweis verwenden. Noch kein Replay-Code und kein neuer Commit.
+
+Die fehlenden Glyphen für `ü`, `ß`, Emoji und Japanisch in der Context-Menu-
+Standardschrift sind reproduziert. Die gespeicherten Unicode-Texte sind korrekt.
+Font-/Fallback-Korrekturen sind auf Nutzerwunsch zurückgestellt.
 
 Die [Context-Menu-Anwendung](../../bevy_test_apps/src/bin/context_menu.rs)
 ist angebunden; [tests/ui.py](../../tests/ui.py) weist diesen Ablauf nach:
@@ -181,10 +204,68 @@ ist angebunden; [tests/ui.py](../../tests/ui.py) weist diesen Ablauf nach:
 6. Die erwartete Zustandsänderung erneut per Inspect lesen.
 
 Dieser Test verbindet Input, Entity-Inspect und tatsächliche Bevy-Ausführung.
-Danach die übrigen Varianten und Fehlerfälle von Block 1 abschließen, bevor
-Screenshot oder Recording begonnen werden.
+Die Reflection-Fixtures ergänzen die Varianten und Fehlerfälle aus Block 1,
+ohne dafür Fenster zu öffnen.
 
 ## Nachweise und bekannte Grenzen
+
+Nach dem Recording-Durchstich bestanden 64 Bibliotheks-/CLI-Tests mit allen
+Features, 9 Prozess-Integrationstests und 44 Bibliothekstests ohne Default-Features.
+Clippy für alle Targets/Features mit `-D warnings`, Formatprüfung sowie die
+realen Zähler- und UI-Abnahmen bestanden ebenfalls.
+Die Aufnahme enthält unter anderem Input, Inspect, Warp, Screenshot und
+fachliche Ablehnungen; Commands der zweiten Session und Recording-Steuerung
+bleiben draußen. Start und Stop verändern weder Ticks noch simulierte Zeit.
+Der Verwaltungs-Stopp schließt eine aktive Aufnahme ausdrücklich mit Recording-Stop,
+wartet auf den Footer und führt erst danach den weiterhin strikt geprüften Shutdown aus.
+Die Zählerabnahme prüft auch diesen Ablauf.
+
+Unit-Tests injizieren Header-, aktive Schreib-, Footer- und Sync-Fehler.
+Sie prüfen `Io`, Header-Cleanup, `RecordingFailed`, Rückkehr nach Idle und die
+Fehlerreihenfolge beim Session-Ende. Prozessfixtures prüfen absichtlich vertauschte
+Response-Reihenfolge, Shutdown-Blockierung, verworfene Pending-Handles,
+Protokollfehler und `unanswered` bei Prozessende.
+Replay-Dateivalidierung und Wiedergabe sind noch offen.
+
+Nach dem Screenshot-Durchstich bestanden:
+
+- Ein vollständiger Lauf `cargo test --all-features -- --test-threads=1` mit
+  57 Bibliotheks-/CLI-Tests und 6 Prozess-Integrationstests.
+- 37 Bibliothekstests ohne Default-Features; Clippy für alle Targets und Features
+  mit `-D warnings`.
+- Der Context-Menu-Anwendungstest, `tests/slice.py` mit vier Sessions und
+  `tests/ui.py` mit zwei gerenderten Sessions. Die PNGs wurden auch visuell geprüft.
+
+In einem weiteren vollständigen Rust-Lauf scheiterte der bestehende
+Server-Fristtest: ein Kindprozess wurde vor Ready mit SIGKILL beendet.
+Die übrigen 56 Tests bestanden. Die Ursache dieses Prozessstarts ist nicht
+geklärt; das ist kein Nachweis eines Screenshot-Fehlers und kein durch einen
+grünen Lauf aufgehobener Befund. Die Render-Abnahme und der vollständige
+erfolgreiche Lauf sind separate Nachweise.
+
+Der Screenshot-Adapter verwendet Bevys Readback-Kanal, liefert ihn aber im
+Kontrolllauf statt in Update aus. PNG-Encoding und Datei-I/O blockieren diesen
+Loop nicht. Ohne Readback endet der Request nach 30 realen Sekunden; spätes
+Ergebnis wird ignoriert. Absolute Symlinks werden von der Pfadsandbox abgelehnt,
+auch wenn sie auf einen Ort innerhalb des Roots zeigen. Relative In-Root-Links
+sind geprüft. Die übrigen UI-Szenen und `tests/shutdown.py` wurden nicht erneut
+abgenommen.
+
+Nach Ergänzung der Reflection-Matrix bestanden:
+
+- `cargo test --all-features -- --test-threads=1`: 49 Bibliotheks-/CLI-Tests
+  und 6 Prozess-Integrationstests.
+- `cargo test --no-default-features --lib -- --test-threads=1`: 35 Tests.
+- `cargo test --all-features --features serde_json/preserve_order --lib session::inspect -- --test-threads=1`:
+  alle 16 Inspect-Tests. Die Set-Sortierung hängt nicht von der JSON-Map-Implementierung ab.
+- Clippy für alle Targets und Features mit `-D warnings`, Formatprüfung und
+  `git diff --check`.
+
+Die neuen Tests prüfen wiederholtes Lesen ohne veränderte World-/Component-/Resource-
+Change-Ticks. Bevy 0.19.1 reflektiert `BTreeSet` opak, ohne `ReflectSerialize`;
+dieser Fall ergibt erwartungsgemäß `NotSerializable`. Rekursiv reflektierte Sets
+werden mit `HashSet` geprüft. Die gerenderten Python-Abnahmen wurden für diese
+reine Testerweiterung nicht erneut ausgeführt.
 
 Nach der Erweiterung um die virtuelle Texteingabe bestanden
 `cargo test --all-features -- --test-threads=1` mit

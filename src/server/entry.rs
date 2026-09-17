@@ -1,6 +1,6 @@
 use super::{activity, protocol::*};
 use crate::{
-    command::{Command, Empty, tick::warp},
+    command::{Command, Empty, recording, tick::warp},
     session::{self, Error, Session},
 };
 use serde_json::{Value, json};
@@ -209,6 +209,7 @@ fn run(entry: &Entry, session: &mut Session, input: mpsc::Receiver<Submission>) 
     let mut pending = Vec::new();
     let mut stop_sent = false;
     let mut shutdown_sent = false;
+    let mut recording_stop = None;
     loop {
         if entry.cancel.load(Ordering::Acquire) {
             entry.transition(
@@ -252,7 +253,7 @@ fn run(entry: &Entry, session: &mut Session, input: mpsc::Receiver<Submission>) 
                 Err(error) => {
                     let technical = !matches!(error, Error::Rejected { .. });
                     entry.push(json!({"kind":if technical {"failed"} else {"rejected"},"request_id":id,"command":name,"error":error}));
-                    if id == u64::MAX {
+                    if id == u64::MAX || recording_stop == Some(id) {
                         entry.transition(Lifecycle::Failed, Some(error));
                         return;
                     }
@@ -281,6 +282,20 @@ fn run(entry: &Entry, session: &mut Session, input: mpsc::Receiver<Submission>) 
                 stop_sent = true;
             } else if pending.is_empty() {
                 let result = accept(entry, session, Command::Shutdown(Empty {}), &mut pending);
+                if matches!(&result, Result::Error { code, .. } if code == "shutdown_recording_active")
+                {
+                    // Direct shutdown stays strict. Management explicitly closes the recording
+                    // and waits for the durable footer before retrying shutdown.
+                    match accept(entry, session, recording::Stop {}.into(), &mut pending) {
+                        Result::Pending { request_id, .. } => recording_stop = Some(request_id),
+                        Result::Error { code, message } => {
+                            entry.transition(Lifecycle::Failed, Some(Error::new(&code, message)));
+                            return;
+                        }
+                        _ => unreachable!("submission result"),
+                    }
+                    continue;
+                }
                 if let Result::Error { code, message } = result {
                     entry.transition(Lifecycle::Failed, Some(Error::new(&code, message)));
                     return;

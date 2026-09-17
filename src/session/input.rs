@@ -11,19 +11,10 @@ use bevy::{
     },
     picking::{input::PointerInputSettings, pointer::PointerInput},
     prelude::*,
-    window::{CursorEntered, CursorLeft, CursorMoved, Ime, PrimaryWindow, WindowEvent},
+    window::{CursorEntered, CursorLeft, CursorMoved, Ime, WindowEvent},
 };
 
-fn primary_window(world: &World) -> Option<(Entity, &Window)> {
-    let mut windows = world.iter_entities().filter_map(|entity| {
-        entity
-            .contains::<PrimaryWindow>()
-            .then(|| entity.get::<Window>().map(|window| (entity.id(), window)))
-            .flatten()
-    });
-    let first = windows.next()?;
-    windows.next().is_none().then_some(first)
-}
+use super::window::primary as primary_window;
 
 #[cfg(feature = "ui")]
 mod ui;

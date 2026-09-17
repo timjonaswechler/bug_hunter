@@ -15,6 +15,7 @@ use std::{
 /// It preserves the configured schedule order and time policy; only a warp runs that order.
 /// Native mouse, keyboard, touch and IME input is discarded in controlled sessions.
 /// Enable the `ui` feature for applications using Bevy UI's `Interaction` components.
+/// Enable `screenshot` for PNG capture with an application-installed renderer.
 #[derive(Default)]
 pub struct Plugin;
 
@@ -87,6 +88,9 @@ impl bevy::app::Plugin for Plugin {
     }
 
     fn finish(&self, app: &mut App) {
+        let root = std::env::var_os("WOODPECKER_ARTIFACT_DIR")
+            .expect("session requires WOODPECKER_ARTIFACT_DIR");
+        super::screenshot::install(app, std::path::Path::new(&root));
         // Startup schedules precede the first control iteration, so Ready is sent there.
         app.add_systems(PostStartup, ready);
     }
@@ -118,11 +122,14 @@ fn install(
     .add_systems(Control, run);
 }
 
-fn ready(bridge: Res<Bridge>) {
+fn ready(world: &World) {
+    let bridge = world.resource::<Bridge>();
     let _ = bridge.output.send((
         Message::Ready {
             version: protocol::VERSION,
-            capabilities: protocol::Capabilities { screenshot: false },
+            capabilities: protocol::Capabilities {
+                screenshot: super::screenshot::available(world),
+            },
         },
         None,
     ));
@@ -138,7 +145,10 @@ fn run(world: &mut World) {
                 Ok(line) => {
                     let decoded = protocol::decode(&line);
                     let response = match decoded {
-                        Ok((id, command)) if bridge.active.as_ref().is_some_and(|a| a.id == id) => {
+                        Ok((id, command))
+                            if bridge.active.as_ref().is_some_and(|a| a.id == id)
+                                || super::screenshot::pending(world, id) =>
+                        {
                             Some(Message::ProtocolError {
                                 request_id: Some(id),
                                 error: Diagnostic::new("duplicate_request_id", command.name()),
@@ -157,6 +167,9 @@ fn run(world: &mut World) {
                     return;
                 }
             }
+        }
+        for response in super::screenshot::poll(world) {
+            let _ = bridge.output.send((response, None));
         }
         let budget = Instant::now();
         for _ in 0..64 {
@@ -236,6 +249,22 @@ fn dispatch(world: &mut World, bridge: &mut Bridge, id: u64, command: Command) -
         })
     };
     let value = match command {
+        Command::RecordingStart(_) | Command::RecordingStop(_) => {
+            return reject(
+                "unknown_command",
+                "recording is owned by the session coordinator",
+            );
+        }
+        Command::Screenshot(capture) => {
+            return match super::screenshot::start(world, id, capture.path) {
+                Ok(()) => None,
+                Err(error) => Some(Message::Rejected {
+                    request_id: id,
+                    command: name.into(),
+                    error,
+                }),
+            };
+        }
         Command::TextInput(input) => {
             return input_response(bridge.text.input(world, input));
         }

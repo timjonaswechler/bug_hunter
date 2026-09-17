@@ -45,6 +45,8 @@ struct SessionState {
     key_a_presses: u32,
     key_a_releases: u32,
     text: String,
+    ticks: u64,
+    elapsed_secs: f64,
 }
 
 fn main() {
@@ -106,6 +108,8 @@ fn setup(mut commands: Commands) {
                 key_a_presses: 0,
                 key_a_releases: 0,
                 text: String::new(),
+                ticks: 0,
+                elapsed_secs: 0.0,
             },
             background_and_button(),
         ))
@@ -115,6 +119,7 @@ fn setup(mut commands: Commands) {
 }
 
 fn observe_keyboard_and_text(
+    time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     input: Single<&EditableText, With<DummyTextInput>>,
     mut state: Single<&mut SessionState, With<Background>>,
@@ -127,6 +132,8 @@ fn observe_keyboard_and_text(
         state.key_a_releases += 1;
     }
     state.text = input.value().to_string();
+    state.ticks += 1;
+    state.elapsed_secs = time.elapsed_secs_f64();
 }
 
 fn on_trigger_close_menus(
@@ -315,6 +322,8 @@ mod tests {
                     key_a_presses: 0,
                     key_a_releases: 0,
                     text: String::new(),
+                    ticks: 0,
+                    elapsed_secs: 0.0,
                 },
             ))
             .id();

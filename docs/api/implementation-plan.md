@@ -116,12 +116,37 @@ Die Entfernung des v2-Einstiegs schließt die noch fehlenden v3-Funktionen nicht
 | `src/host/mod.rs`, `command_line.rs`, `config.rs`, `runner.rs`; alte Controller-Beispiele | `server`, `client`, `cli` | ersetzen | Fassade, `host`/`driver`-Features und alte Beispiele entfernt. Neue CLI mit privaten Config-Typen ist der einzige unterstützte Einstieg. |
 | `src/target.rs`; alte Queries und Bevy-Testapps | kein Ersatz | löschen | Marker, Exports, Inserter und Nutzungen entfernt. Bevy-Anwendungen behalten normale Entity-Namen und ihre fachlichen Systeme. |
 | `src/keyboard.rs`, `pointer.rs`, `text.rs` | `command::input`, private Bevy-Adapter unter `session` | überarbeiten | Virtueller Pointer, Keyboard und Text implementiert. Adapter-Tests prüfen Tokens, Fenster, Zustände, UTF-8-Grenze und Fokus. [Plugin-Tests](../../src/session/plugin/input_tests.rs) prüfen Vormerkung, gehaltene Tasten, Modifier, native Störeingaben und Isolation; reale UI-Abnahme prüft alle Eingaben in zwei Sessions. `ui` ermöglicht fokussierte Texteingabe und virtuelle `Interaction`. |
-| `src/observation.rs` | `command::inspect`, privater Inspect-Adapter | ersetzen | Resource-, Entity-, Component- und Hierarchievarianten implementiert. [Adapter-Tests](../../src/session/inspect/entities/tests.rs) prüfen Filter, Handles, Resource-Isolation, Projektionen, Reihenfolge und Wertstatus; Plugin-Test prüft Lesen ohne Tick/Zeitfortschritt. UI-Abnahme liest Layout und Anwendungszustand. Vollständige Reflection-Matrix bleibt offen. |
-| `src/screenshot.rs` | `command::screenshot`, privater Capture-Adapter | überarbeiten | Alte API und ihre allein benötigten Abhängigkeiten entfernt. PNG-/Pfad-/Readback-Mechanik beim Screenshot-Durchstich prüfen. |
-| `src/host/recording.rs`, `replay.rs`; `tests/driver_recording.rs` und alte JSONL-Fixture | `command::recording`, `command::replay`, `session` | überarbeiten | v2 entfernt; neue Zustände, Datei- und Replay-Verträge noch offen. Die alte Fixture ist kein gültiger Nachweis für das neue v1-Dateiformat. |
+| `src/observation.rs` | `command::inspect`, privater Inspect-Adapter | ersetzen | Resource-, Entity-, Component- und Hierarchievarianten implementiert. [Adapter-Tests](../../src/session/inspect/entities/tests.rs) prüfen Filter, Handles, Resource-Isolation, Projektionen, Reihenfolge und Wertstatus; Plugin-Test prüft Lesen ohne Tick/Zeitfortschritt. UI-Abnahme liest Layout und Anwendungszustand. Die [Reflection-Matrix](#reflection-matrix) gegen Bevy 0.19.1 ist geprüft. |
+| `src/screenshot.rs` | `command::screenshot`, privater Capture-Adapter | überarbeiten | Optionales `screenshot`-Feature implementiert. [Capture-Tests](../../src/session/screenshot/capture.rs) prüfen verzögerten Abschluss, PNG, Fenster und Readback-Timeout; [Pfadtests](../../src/session/screenshot/destination.rs) prüfen Root-Isolation, atomischen Ersatz und Symlink-Wechsel. [UI-Abnahme](../../tests/ui.py) prüft echte 640×360-PNGs in zwei Sessions, parallele Requests und unveränderte Ticks/Zeit. |
+| `src/host/recording.rs`, `replay.rs`; `tests/driver_recording.rs` und alte JSONL-Fixture | `command::recording`, `command::replay`, `session` | überarbeiten | Recording im Koordinator implementiert. [Tests](../../src/session/recording/tests.rs) prüfen Dateibarrieren, Pfade und injizierte Schreibfehler; [Prozessfixtures](../../tests/session.rs) prüfen Reihenfolge, Shutdown und Session-Ende. Zähler-/UI-Abnahme prüfen reale v1-Dateien. Replay-Loader und Ausführung bleiben offen; die alte Fixture ist kein gültiger v1-Nachweis. |
 | `src/host/report.rs`, `issue_report.rs`, `github.rs`, Fehleranteile von `diagnostics.rs`; alte Report-Tests | `report`, privater Session-Observer | überarbeiten / Zwischenformat löschen | `failure.json`-Architektur entfernt. `report` enthält bislang nur Konfiguration, noch keinen Report- oder Provider-Ablauf. |
 | `src/host/repl.rs`, `script.rs` | `cli::repl`, `cli::script` über `client` | überarbeiten | Alte direkte Session-Owner entfernt; neue REPL und Script-Ausführung offen. |
 | `bevy_test_apps` mit `automation`, `tests/logical_state.rs`, `examples/*_controller.rs` | normale Testanwendungen; neue Client-Abnahmen | ersetzen | v2-Anbindung und Controller entfernt. Native Bevy-Anwendungen und datenbasierte UI-Komposition bleiben erhalten. `counter` und `context_menu` mit `slice` prüfen den neuen Weg. Context-Menu-Test sichert Öffnen/Ersetzen/Schließen; UI-Abnahme sichert Input erst beim Tick. Weitere Szenen bleiben offen. |
+
+### Reflection-Matrix
+
+Die [gemeinsamen Fixtures](../../src/session/inspect/reflection_tests.rs) prüfen
+die JSON-Ergebnisse über Resource- und Component-Queries. Die Fehlerfälle führen
+zu einem Wertstatus, nicht zum Abbruch der Query. Wiederholtes Lesen lässt die
+World-, Resource- und Component-Change-Ticks unverändert.
+
+| Fall | Nachweis |
+| --- | --- |
+| Exakte registrierte Type Paths | Eigener `#[type_path]`; Kurzname, Rust-Typname und falsche Großschreibung werden abgelehnt. Bestehende Entity-Tests prüfen sämtliche Filter-/Listed-Pfade vor Handle-Auflösung. |
+| Fehlende und nicht zugängliche Werte | Resource `Missing`/`NotReflectable`, Resource-All-Auswahl und Sortierung; bestehende Entity-Tests unterscheiden `Missing`, `NotRegistered`, `NotReflectable` und `NotSerializable`. |
+| Metadaten | Ein Serializer, der bei Aufruf panikt, bleibt bei Resource-Metadata und Component-Namen unberührt. Kein Wertstatus in den Metadaten. |
+| Opaque und Registrierungen | Opaque ohne Serializer, absichtlich fehlschlagender Serializer, fehlende verschachtelte Registrierung; opakes Custom-`null` bleibt lesbar. |
+| Zahlen | `f32` und `f64`, `NaN` und beide Unendlichkeiten, direkt und verschachtelt in Struct/Vec/Option/Tupel/Map. Der umgebende Wert wird unlesbar. |
+| Maps | String-, Zeichen-, boolesche und ganzzahlige Schlüssel einschließlich `u64::MAX`; leere Maps bleiben Objekte. Tupel-/Vec-Schlüssel sind nicht darstellbar. |
+| Sets | Leere Sets, lexikalische statt numerischer Reihenfolge, verschiedene Einfügereihenfolgen, verschachtelte HashSets und fehlerhafte Elemente. |
+| Kanonische Set-Sortierschlüssel | [Serializer-Test](../../src/session/inspect/value.rs) prüft rekursiv geordnete Objektschlüssel bei unveränderter Array-Reihenfolge, auch mit `serde_json/preserve_order`. |
+| Asset-Handles | Typed/Untyped mit UUID, Pfad samt Quelle und Label sowie flüchtiger ID; Klone behalten die Referenz, unterschiedliche IDs bleiben verschieden. Fehlende Handle-/Asset-Registrierungen ergeben `NotSerializable`. Pfadfixtures verwenden eine In-Memory-Quelle. |
+
+Bevy 0.19.1 implementiert `BTreeSet` als opaken Reflect-Typ ohne Serializer.
+Die Matrix hält deshalb `NotSerializable` fest und prüft die strukturelle
+Set-Regel mit `HashSet`. Es wurde keine zusätzliche Collection-Sonderbehandlung
+eingeführt. Die [aktuellen Läufe](next-steps.md#nachweise-und-bekannte-grenzen)
+umfassen alle Features, die Bibliothek ohne Features und JSON mit `preserve_order`.
 
 ### Fachliche Testfälle für die offenen Durchstiche
 

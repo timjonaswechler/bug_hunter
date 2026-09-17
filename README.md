@@ -10,8 +10,8 @@ Remote operation is not supported.
 ## Current implementation
 
 The experimental v3 slice supports tick warps, pace changes, stop, reflected
-resource and entity inspection, virtual pointer, keyboard and text input, session management
-and shutdown. Screenshots, recording, replay, reporting, REPL and scripts remain planned work.
+resource and entity inspection, virtual pointer, keyboard and text input, PNG screenshots,
+session management, JSONL recording and shutdown. Replay, reporting, REPL and scripts remain planned work.
 The v2 API and its `host`/`driver` features have been removed.
 
 Controlled sessions ignore native mouse, touch, keyboard and IME input. Their pointers
@@ -55,6 +55,8 @@ The default library has no HTTP/CLI dependencies and does not require a renderer
 
 | Feature | Entry points |
 | --- | --- |
+| `ui` | Virtual legacy UI interaction and focused text input |
+| `screenshot` | GPU readback and sandboxed PNG output in rendered applications |
 | `server` | Local session management and HTTP/WebSocket serving |
 | `client` | Network management and fixed-session access |
 | `cli` | The `woodpecker` executable |
@@ -65,6 +67,7 @@ The default library has no HTTP/CLI dependencies and does not require a renderer
 cargo test --all-features --all-targets
 cargo test --manifest-path bevy_test_apps/Cargo.toml --all-features --all-targets
 python3 tests/slice.py
+python3 tests/ui.py
 python3 tests/shutdown.py
 ```
 

@@ -8,6 +8,9 @@ pub mod launch;
 mod plugin;
 mod process;
 pub mod protocol;
+mod recording;
+mod screenshot;
+mod window;
 
 use crate::command::{self, Command};
 pub use error::Error;
@@ -89,6 +92,7 @@ impl<T> Drop for Pending<T> {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
     ProtocolError { code: String, message: String },
+    RecordingFailed { path: String, message: String },
     Ended { reason: EndReason },
 }
 #[derive(Clone, Debug, Serialize)]

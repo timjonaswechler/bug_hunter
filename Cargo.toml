@@ -7,11 +7,15 @@ publish = false
 [features]
 default = []
 ui = ["bevy/bevy_ui", "bevy/bevy_input_focus"]
+screenshot = ["bevy/bevy_render", "dep:image"]
 server = ["dep:axum", "dep:tokio", "dep:getrandom"]
 client = ["server", "dep:ureq", "dep:tungstenite"]
 cli = ["client", "dep:clap", "dep:toml"]
 
 [dependencies]
+cap-std = "3"
+cap-fs-ext = "3"
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 axum = { version = "0.8", features = ["ws"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "signal"], optional = true }
 getrandom = { version = "0.4", optional = true }

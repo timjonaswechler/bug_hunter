@@ -103,14 +103,31 @@ def run():
             assert len(first) == 32 and first == first.lower()
             until(lambda: state(first, "Ready"))
             initial = inspect(first)
+            screenshot = submit(first, "screenshot.capture", {"path": "screenshots/headless.png"})
+            rejected = outcome(first, screenshot["request_id"])
+            assert rejected["kind"] == "rejected", rejected
+            assert rejected["error"]["code"] == "screenshot_unavailable", rejected
+            artifact_root = Path(cli("session", "inspect", first)["artifact_dir"])
+            assert not (artifact_root / "screenshots/headless.png").exists()
             time.sleep(0.1)
             assert inspect(first)["ticks"] == initial["ticks"] == 0
 
+            recording = submit(first, "recording.start", {"path": "recordings/counter.jsonl"})
+            assert outcome(first, recording["request_id"])["output"] == {"path": "recordings/counter.jsonl"}
+            assert inspect(first)["ticks"] == 0
             warp = submit(first, "tick.warp.start", {"ticks": 13})
             assert warp["kind"] == "pending", warp
             result = outcome(first, warp["request_id"])
             assert result["output"] == {"requested_ticks": 13, "executed_ticks": 13, "outcome": "completed"}, result
             assert inspect(first)["ticks"] == 13
+            stopped = submit(first, "recording.stop", {})
+            assert outcome(first, stopped["request_id"])["output"] == {
+                "path": "recordings/counter.jsonl", "recorded_commands": 3}
+            assert inspect(first)["ticks"] == 13
+            lines = [json.loads(line) for line in
+                     (artifact_root / "recordings/counter.jsonl").read_text().splitlines()]
+            assert [entry["command"] for entry in lines[1:-1]] == [
+                "inspect.query", "tick.warp.start", "inspect.query"]
 
             # Each CLI call disconnects. Accepted work must remain live between calls.
             slow = submit(first, "tick.warp.start", {
@@ -136,8 +153,14 @@ def run():
             assert outcome(first, 1)["command"] == "inspect.query"
             second_pid = inspect(second)["process_id"]
 
+            active_recording = submit(first, "recording.start", {"path": "recordings/managed-stop.jsonl"})
+            assert outcome(first, active_recording["request_id"])["kind"] == "completed"
             cli("session", "stop", first)
             until(lambda: state(first, "Ended"))
+            managed = [json.loads(line) for line in
+                       (artifact_root / "recordings/managed-stop.jsonl").read_text().splitlines()]
+            assert managed[-1] == {"type": "recording_ended", "outcome": "stopped", "recorded_commands": 1}
+            assert managed[1]["command"] == "tick.warp.stop"
             assert cli("session", "inspect", second)["state"] == "Ready"
             assert len(cli("session", "ls")) == 2
             try:

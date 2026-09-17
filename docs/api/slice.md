@@ -1,8 +1,8 @@
 # Experimenteller Durchstich
 
 Dieser Build ist keine vollständige v3-Implementation. Er implementiert Warp,
-Resource-/Entity-Inspect, Pointer-/Keyboard-/Text-Input und Shutdown. Screenshot, Recording, Replay
-und Reporting folgen in weiteren Durchstichen. Der einzige unterstützte Weg verwendet
+Resource-/Entity-Inspect, Pointer-/Keyboard-/Text-Input, Screenshot, Recording und Shutdown.
+Replay und Reporting folgen in weiteren Durchstichen. Der einzige unterstützte Weg verwendet
 `session`; die v2-Implementation und ihre öffentlichen Einstiegspunkte sind entfernt.
 
 Entity-Inspect unterstützt Handle-Abfragen, Componentfilter, Summary, Component-Namen,
@@ -52,6 +52,87 @@ cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin con
 python3 tests/ui.py
 ```
 
+## Screenshot
+
+Die Spielanwendung aktiviert `woodpecker/screenshot` und installiert ihren Renderer
+selbst. Das Session-Plugin meldet die Capability erst, wenn RenderApp, RenderDevice,
+Bevys Screenshot-Kanal und das Artefaktverzeichnis verfügbar sind. Server und CLI
+benötigen dieses Feature nicht.
+
+```sh
+target/debug/woodpecker --address 127.0.0.1:4100 session submit "$ID" \
+  --command '{"command":"screenshot.capture","arguments":{"path":"screenshots/current.png"}}'
+```
+
+Das korrelierte Ergebnis kommt nach GPU-Readback, PNG-Encoding und erfolgreichem
+Schreiben, beispielsweise:
+
+```json
+{"path":"screenshots/current.png","width":640,"height":360,"overwritten":false}
+```
+
+Der relative Pfad gehört zum `artifact_dir` aus `session inspect`. Elternverzeichnisse
+werden angelegt. Vorhandene Dateien werden erst nach vollständigem Schreiben über
+eine temporäre Datei atomar ersetzt. Alle Dateioperationen verwenden eine
+`cap_std::fs::Dir`-Capability; Symlinks können nicht aus ihr ausbrechen.
+Relative Symlinks innerhalb des Roots sind möglich, absolute Symlinks werden abgelehnt.
+Der Adapter prüft das Ziel vor Annahme und erneut beim Schreiben.
+
+Aufnahmen derselben Session laufen nacheinander, da Bevy konkurrierende Aufnahmen
+des gleichen Renderziels verwirft. Der Kontrolllauf nimmt weiter Commands an.
+PNG-Encoding und Datei-I/O laufen auf einem Worker-Thread. Ein fehlender
+GPU-Readback wird nach 30 realen Sekunden mit `screenshot_failed` abgeschlossen;
+die Anwendung wird dafür nicht getickt. Verspätete Readbacks werden verworfen.
+Die Frist gilt nicht für bereits laufendes Schreiben.
+
+`tests/ui.py` prüft vollständige PNGs, sichtbare Menüänderung nach einem ausdrücklichen
+Tick, Überschreiben, parallele Requests und Session-Isolation. Tickzähler,
+simulierte Zeit und Anwendungszustand bleiben während Capture unverändert.
+Mit `--capture-dir target/ui-captures` bleiben die Bilder nach der Abnahme erhalten.
+
+## Recording
+
+Recording gehört zur direkten Session und benötigt kein zusätzliches Feature.
+Der Koordinator führt diese Commands selbst aus; sie gehen nicht an das Spiel:
+
+```sh
+target/debug/woodpecker --address 127.0.0.1:4100 session submit "$ID" \
+  --command '{"command":"recording.start","arguments":{"path":"recordings/run.jsonl"}}'
+# Nach den gewünschten Spiel-Commands und deren Abschlüssen:
+target/debug/woodpecker --address 127.0.0.1:4100 session submit "$ID" \
+  --command '{"command":"recording.stop","arguments":{}}'
+```
+
+Start liefert nach geschriebenem Header `{"path":"recordings/run.jsonl"}`.
+Stop liefert nach Footer, Flush, Synchronisierung und Dateischluss
+`{"path":"recordings/run.jsonl","recorded_commands":42}`.
+Beide Operationen benötigen zuvor abgeschlossene Commands. Während ihrer
+Dateiarbeit werden spätere Commands angenommen, aber noch nicht ausgeführt.
+Die Arbeit bleibt auch nach Client-Trennung oder verworfenem Pending bestehen.
+
+Der relative `.jsonl`-Pfad darf keine Symlinks enthalten, auch keine In-Root-Links.
+Jede Verzeichniskomponente wird ohne Symlink-Folgen geöffnet, die Datei mit
+`create_new` angelegt. Vorhandene Dateien werden nicht überschrieben.
+Diese Regeln sind strenger als die Screenshot-Pfadregeln.
+
+Die Version-1-Datei enthält Header, Spiel-Commands mit Outcomes in Annahmereihenfolge
+und Footer. Recording-Steuerung, Shutdown und Events werden nicht aufgenommen.
+Dateien enthalten ungekürzte Argumente und Inspect-Ergebnisse und können vertraulich
+sein. Aufnahmen erzeugen selbst keine Ticks.
+
+Bei einem aktiven Schreibfehler bleibt die Datei unvollständig. Nur Recording endet;
+die Session meldet `RecordingFailed`, ohne das Spiel-Command-Ergebnis zu ändern.
+Start-/Stop-Dateifehler liefern `Io`. Bei unerwartetem Prozessende versucht der
+Dateiworker noch offene Commands als `unanswered` und einen `session_ended`-Footer
+zu schreiben. Ein erzwungener Abbruch wartet nicht unbegrenzt auf blockierende Datei-I/O.
+Reguläres Shutdown verlangt zuerst den Abschluss offener Commands und Recording-Stop.
+`session stop` und das Serverende stellen diese Vorbedingungen selbst durch
+ausdrücklichen Warp-/Recording-Stop her. Der Verwaltungs-Stopp wartet dabei auf
+den Recording-Footer; ein Fehler dieses Abschlusses ergibt `Failed`.
+
+Replay und die strikte Validierung eingelesener Recording-Dateien sind noch nicht
+implementiert. Der vollständige Dateivertrag steht in [target.md](target.md#recording-dateivertrag).
+
 ## Paketierung
 
 Die direkte Session und das Plugin brauchen kein Feature. `server` aktiviert HTTP
@@ -63,8 +144,9 @@ Beschreibung des nativen Fensters, kein virtueller Eingabestatus.
 Die Prozessverwaltung dieses Durchstichs unterstützt Unix-Prozessgruppen.
 Das Testpackage verwendet für Zähler und Context-Menu das Feature `slice`. Die übrigen Bevy-Anwendungen
 laufen mit nativer Eingabe; ihr altes Feature `automation` wurde entfernt.
-Die Bibliothek benötigt keinen Renderer. Render-/UI-Abhängigkeiten der Testanwendungen
-gehören weiterhin zu deren eigenem Manifest.
+Ohne `screenshot` benötigt die Bibliothek keinen Renderer. Das optionale Feature
+verwendet Bevy Render und PNG-Encoding, installiert aber keinen Renderer.
+Die übrigen Render-/UI-Abhängigkeiten der Testanwendungen gehören zu deren eigenem Manifest.
 
 Die Lockfiles halten die geprüfte Auflösung auf Bevy 0.19.1 fest.
 Das Testpackage hat weiterhin seine eigene Cargo-Auflösung.

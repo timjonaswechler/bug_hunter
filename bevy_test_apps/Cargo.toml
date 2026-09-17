@@ -12,7 +12,7 @@ rand = "0.9"
 
 [features]
 default = []
-slice = ["dep:woodpecker", "woodpecker/ui"]
+slice = ["dep:woodpecker", "woodpecker/ui", "woodpecker/screenshot"]
 
 [[bin]]
 name = "context_menu"

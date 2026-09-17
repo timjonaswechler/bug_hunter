@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 use woodpecker::{
-    command::tick::warp,
+    command::{recording, tick::warp},
     report,
     session::{self, Session},
 };
@@ -41,6 +41,202 @@ fn wait(mut condition: impl FnMut() -> bool) {
         assert!(Instant::now() < deadline, "condition timed out");
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+fn recording_lines(root: &std::path::Path, path: &str) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(root.join(path))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[test]
+fn recording_orders_outcomes_and_excludes_controls_and_shutdown() {
+    let config = config("normal");
+    let root = config.artifact_dir.clone();
+    let mut session = Session::start(config).unwrap();
+    let start = session
+        .send(recording::Start {
+            path: "records/session.jsonl".into(),
+        })
+        .unwrap();
+    // Submit before consuming Start: execution must wait for its file barrier.
+    let warp = session
+        .send(warp::Start {
+            ticks: 100,
+            pace: None,
+        })
+        .unwrap();
+    assert_eq!(
+        session.receive(start).unwrap().path,
+        "records/session.jsonl"
+    );
+    assert_eq!(
+        recording_lines(&root, "records/session.jsonl"),
+        vec![serde_json::json!({"type":"recording_started","format_version":1})]
+    );
+    let stop_recording = session.send(recording::Stop {}).unwrap();
+    assert_eq!(
+        session.receive(stop_recording).unwrap_err().code(),
+        "recording_commands_pending"
+    );
+    assert_eq!(
+        session.shutdown().unwrap_err().code(),
+        "shutdown_commands_pending"
+    );
+    // The fixture deliberately answers Stop before the older Warp.
+    let stop = session.send(warp::Stop {}).unwrap();
+    session.receive(stop).unwrap();
+    session.receive(warp).unwrap();
+    let history_len = session.history().len();
+    assert_eq!(
+        session.shutdown().unwrap_err().code(),
+        "shutdown_recording_active"
+    );
+    assert_eq!(session.history().len(), history_len);
+    let stop = session.send(recording::Stop {}).unwrap();
+    let after = session.send(warp::Stop {}).unwrap();
+    let result = session.receive(stop).unwrap();
+    assert_eq!(result.recorded_commands, 2);
+    session.receive(after).unwrap();
+    let lines = recording_lines(&root, &result.path);
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines[1]["command"], "tick.warp.start");
+    assert_eq!(lines[1]["outcome"]["output"]["executed_ticks"], 0);
+    assert_eq!(lines[2]["command"], "tick.warp.stop");
+    assert_eq!(
+        lines[3],
+        serde_json::json!({"type":"recording_ended","outcome":"stopped","recorded_commands":2})
+    );
+    assert!(lines.iter().all(|line| line.get("request_id").is_none()));
+    let duplicate = session
+        .send(recording::Start {
+            path: result.path.clone(),
+        })
+        .unwrap();
+    assert_eq!(
+        session.receive(duplicate).unwrap_err().code(),
+        "recording_path_exists"
+    );
+    let stopped = session.send(recording::Stop {}).unwrap();
+    assert_eq!(
+        session.receive(stopped).unwrap_err().code(),
+        "recording_not_active"
+    );
+    session.shutdown().unwrap();
+    assert_eq!(recording_lines(&root, &result.path), lines);
+}
+
+#[test]
+fn recording_start_rejects_pending_work_and_abandoned_controls_still_finish() {
+    let config = config("normal");
+    let root = config.artifact_dir.clone();
+    let mut session = Session::start(config).unwrap();
+    let warp = session
+        .send(warp::Start {
+            ticks: 100,
+            pace: None,
+        })
+        .unwrap();
+    let start = session
+        .send(recording::Start {
+            path: "pending.jsonl".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        session.receive(start).unwrap_err().code(),
+        "recording_commands_pending"
+    );
+    assert!(!root.join("pending.jsonl").exists());
+    let stop = session.send(warp::Stop {}).unwrap();
+    session.receive(stop).unwrap();
+    session.receive(warp).unwrap();
+    drop(
+        session
+            .send(recording::Start {
+                path: "empty.jsonl".into(),
+            })
+            .unwrap(),
+    );
+    wait(|| {
+        session.history().last().is_some_and(|entry| {
+            matches!(entry.outcome, session::history::Outcome::Completed { .. })
+        })
+    });
+    let duplicate = session
+        .send(recording::Start {
+            path: "other.jsonl".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        session.receive(duplicate).unwrap_err().code(),
+        "recording_already_active"
+    );
+    let stop = session.send(recording::Stop {}).unwrap();
+    assert_eq!(session.receive(stop).unwrap().recorded_commands, 0);
+    assert_eq!(recording_lines(&root, "empty.jsonl").len(), 2);
+    session.shutdown().unwrap();
+}
+
+#[test]
+fn recording_keeps_protocol_failures_and_unanswered_commands_on_process_exit() {
+    let settings = config("corrupt");
+    let root = settings.artifact_dir.clone();
+    let mut session = Session::start(settings).unwrap();
+    let start = session
+        .send(recording::Start {
+            path: "protocol.jsonl".into(),
+        })
+        .unwrap();
+    session.receive(start).unwrap();
+    let stop = session.send(warp::Stop {}).unwrap();
+    assert!(matches!(
+        session.receive(stop),
+        Err(session::Error::Protocol { .. })
+    ));
+    let stop = session.send(recording::Stop {}).unwrap();
+    session.receive(stop).unwrap();
+    assert_eq!(
+        recording_lines(&root, "protocol.jsonl")[1]["outcome"]["status"],
+        "protocol_failed"
+    );
+    session.shutdown().unwrap();
+
+    let settings = config("normal");
+    let root = settings.artifact_dir.clone();
+    let mut session = Session::start(settings).unwrap();
+    let start = session
+        .send(recording::Start {
+            path: "ended.jsonl".into(),
+        })
+        .unwrap();
+    session.receive(start).unwrap();
+    let pending = session
+        .send(warp::Start {
+            ticks: 100,
+            pace: None,
+        })
+        .unwrap();
+    let pid: i32 = std::fs::read_to_string(root.join("pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    assert!(matches!(
+        session.receive_event().unwrap(),
+        session::Event::Ended { .. }
+    ));
+    assert!(session.receive(pending).is_err());
+    let lines = recording_lines(&root, "ended.jsonl");
+    assert_eq!(
+        lines[1]["outcome"],
+        serde_json::json!({"status":"unanswered"})
+    );
+    assert_eq!(
+        lines[2],
+        serde_json::json!({"type":"recording_ended","outcome":"session_ended","recorded_commands":1})
+    );
 }
 
 #[test]

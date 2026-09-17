@@ -4,17 +4,49 @@ Requires a desktop session and the CLI and context_menu binaries built with `sli
 Run from the repository root: python3 tests/ui.py
 """
 import json
+import argparse
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import select
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
+import zlib
 
 from slice import CLI, ROOT, until
 
 
-def run():
+def read_png(path):
+    """Check the complete PNG, including CRCs and decompressible RGB scanlines."""
+    data = path.read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", path
+    offset, compressed = 8, bytearray()
+    width = height = None
+    while offset < len(data):
+        length = struct.unpack(">I", data[offset:offset + 4])[0]
+        kind = data[offset + 4:offset + 8]
+        payload = data[offset + 8:offset + 8 + length]
+        crc = struct.unpack(">I", data[offset + 8 + length:offset + 12 + length])[0]
+        assert zlib.crc32(kind + payload) == crc, (path, kind)
+        offset += length + 12
+        if kind == b"IHDR":
+            width, height, bits, color, compression, filtering, interlace = struct.unpack(">IIBBBBB", payload)
+            assert (bits, color, compression, filtering, interlace) == (8, 2, 0, 0, 0)
+        elif kind == b"IDAT":
+            compressed.extend(payload)
+        elif kind == b"IEND":
+            assert offset == len(data)
+            break
+    else:
+        raise AssertionError("missing PNG end")
+    pixels = zlib.decompress(compressed)
+    assert len(pixels) == height * (1 + width * 3)
+    return width, height, pixels
+
+
+def run(capture_dir=None):
     with tempfile.TemporaryDirectory(prefix="ui-", dir=ROOT / "target") as directory:
         directory = Path(directory)
         with (directory / "server.log").open("w+") as log:
@@ -95,8 +127,41 @@ def run():
                     assert result == {"requested_ticks": ticks, "executed_ticks": ticks,
                                       "outcome": "completed"}, result
 
+                def capture(path, overwritten=False, target=session):
+                    before = state(target)
+                    result = command("screenshot.capture", {"path": path}, target=target)
+                    assert result == {"path": path, "width": 640, "height": 360,
+                                      "overwritten": overwritten}, result
+                    root = Path(cli("session", "inspect", target)["artifact_dir"])
+                    width, height, pixels = read_png(root / path)
+                    assert (width, height) == (640, 360)
+                    assert state(target) == before, "screenshot advanced simulation or time"
+                    if capture_dir is not None:
+                        destination = capture_dir / target / path
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.write_bytes((root / path).read_bytes())
+                    return pixels
+
                 # Layout runs only in explicit ticks. Inspect the real layout, not fixture coordinates.
+                recording_path = "recordings/ui.jsonl"
+                assert command("recording.start", {"path": recording_path}) == {"path": recording_path}
                 warp(3)
+                closed_pixels = capture("screenshots/current.png")
+                assert capture("screenshots/current.png", overwritten=True) == closed_pixels
+                frozen = state()
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    results = list(pool.map(
+                        lambda _: command("screenshot.capture", {"path": "screenshots/concurrent.png"}),
+                        range(3)))
+                assert sorted(result["overwritten"] for result in results) == [False, True, True]
+                assert state() == frozen
+                for path in ["../escape.png", "/absolute.png", "a//b.png", "a/./b.png", "a\\b.png", "a.jpg"]:
+                    command("screenshot.capture", {"path": path}, rejection="invalid_screenshot_path")
+                artifact_root = Path(cli("session", "inspect", session)["artifact_dir"])
+                (artifact_root / "escape").symlink_to(directory, target_is_directory=True)
+                command("screenshot.capture", {"path": "escape/outside.png"},
+                        rejection="invalid_screenshot_path")
+                assert not (directory / "outside.png").exists()
                 before = state()
                 command("input.text.input", {"text": "not focused"},
                         rejection="text_focus_unavailable")
@@ -138,6 +203,7 @@ def run():
                 }
                 menu = named("context-menu")
                 assert components(button, ["bevy_ui::focus::Interaction"])[0] == "Pressed"
+                assert capture("screenshots/menu.png") != closed_pixels
 
                 # A second real process can press the same button independently,
                 # at another position, while the first session keeps its button held.
@@ -149,6 +215,7 @@ def run():
                 command("input.keyboard.press", {"key": "a"}, target=second)
                 assert not state(second)["key_a_held"]
                 warp(3, second)
+                assert capture("screenshots/current.png", target=second) == closed_pixels
                 assert state(second)["key_a_held"] and state(second)["key_a_presses"] == 1
                 assert state()["key_a_held"] and state()["key_a_presses"] == 1
                 second_button = named("button", second)
@@ -208,21 +275,53 @@ def run():
                     command("input.pointer.release", {"button": "left"}, target=target)
                     warp(1, target)
 
+                # Verify visible text, not just the mirrored application state.
+                empty_field_pixels = capture("screenshots/text-empty.png")
+                assert command("input.text.input", {"text": "hallo"}) is None
+                assert state()["text"] == ""
+                assert capture("screenshots/text-pending.png") == empty_field_pixels
+                warp(1)
+                assert state()["text"] == "hallo", state()
+                assert state(second)["text"] == ""
+                assert capture("screenshots/text-hallo.png") != empty_field_pixels
+
                 assert command("input.text.input", {"text": "Grüße "}) is None
                 assert command("input.text.input", {"text": "🦜"}) is None
                 assert command("input.text.input", {"text": ""}) is None
                 command("input.text.input", {"text": "東京"}, target=second)
-                assert state()["text"] == state(second)["text"] == ""
+                assert state()["text"] == "hallo" and state(second)["text"] == ""
                 # Keyboard letters must not generate a second, implicit text input.
                 command("input.keyboard.press", {"key": "a"})
                 command("input.keyboard.release", {"key": "a"})
                 warp(1)
-                assert state()["text"] == "Grüße 🦜", state()
+                assert state()["text"] == "halloGrüße 🦜", state()
+                capture("screenshots/text-unicode.png")
                 assert state(second)["text"] == ""
                 warp(1, second)
                 assert state(second)["text"] == "東京", state(second)
+                capture("screenshots/text-japanese.png", target=second)
                 warp(1)
-                assert state()["text"] == "Grüße 🦜"
+                assert state()["text"] == "halloGrüße 🦜"
+                frozen = state()
+                recorded = command("recording.stop", {})
+                assert recorded["path"] == recording_path
+                assert state() == frozen, "recording stop advanced simulation or time"
+                lines = [json.loads(line) for line in (artifact_root / recording_path).read_text().splitlines()]
+                assert lines[0] == {"type": "recording_started", "format_version": 1}
+                assert lines[-1] == {"type": "recording_ended", "outcome": "stopped",
+                                     "recorded_commands": recorded["recorded_commands"]}
+                entries = lines[1:-1]
+                assert len(entries) == recorded["recorded_commands"]
+                assert all(entry["type"] == "command" and "request_id" not in entry for entry in entries)
+                assert all(not entry["command"].startswith("recording.") for entry in entries)
+                assert any(entry["command"] == "input.text.input" and entry["arguments"]["text"] == "🦜"
+                           for entry in entries)
+                assert not any(entry["command"] == "input.text.input" and entry["arguments"]["text"] == "東京"
+                               for entry in entries), "recording mixed sessions"
+                assert any(entry["command"] == "screenshot.capture"
+                           and entry["outcome"]["status"] == "completed" for entry in entries)
+                assert any(entry["outcome"]["status"] == "rejected" for entry in entries)
+                assert any(entry["command"] == "tick.warp.start" for entry in entries)
                 cli("session", "stop", session)
                 assert state(second)["menu_open"]
                 cli("session", "stop", second)
@@ -244,4 +343,6 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--capture-dir", type=Path, help="retain PNGs for visual inspection")
+    run(parser.parse_args().capture_dir)
