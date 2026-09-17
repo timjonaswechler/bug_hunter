@@ -1,16 +1,67 @@
 # Experimenteller Durchstich
 
 Dieser Build ist keine vollständige v3-Implementation. Er implementiert Warp,
-Resource-Inspect und Shutdown. Input, Entity-Inspect, Screenshot, Recording, Replay
+Resource-/Entity-Inspect, Pointer-/Keyboard-/Text-Input und Shutdown. Screenshot, Recording, Replay
 und Reporting folgen in weiteren Durchstichen. Der einzige unterstützte Weg verwendet
 `session`; die v2-Implementation und ihre öffentlichen Einstiegspunkte sind entfernt.
+
+Entity-Inspect unterstützt Handle-Abfragen, Componentfilter, Summary, Component-Namen,
+Component-Werte und Hierarchien. Adapter-, Codec- und Plugin-Tests prüfen diese Varianten
+einschließlich unverändertem Anwendungszustand und unveränderter Zeit zwischen Warps.
+Der reale Context-Menu-Ablauf über Server, Pointer-Eingabe und Warp ist in
+`tests/ui.py` geprüft. Er findet den Button per allgemeinem Inspect und liest seine
+Layoutposition, statt Koordinaten für den Klick festzuschreiben.
+Pointer-Erfolg bestätigt nur die Vormerkung. Bevy erhält die Input-Messages erst
+beim nächsten Tick. Der Kontrolllauf entleert zwischen Ticks den Render-Zeitkanal,
+ohne die Simulationszeit fortzuschreiben.
+
+Der Pointer ist virtuell und sessionlokal. Commands bewegen den Betriebssystem-Cursor
+nicht und funktionieren ohne nativen Fensterfokus. Native Maus-, Touch-, Keyboard-
+und IME-Eingaben werden verworfen, Resize-/Close-Ereignisse bleiben erhalten.
+`tests/ui.py` steuert zwei gleichzeitig laufende Anwendungen mit getrennten Buttonzuständen.
+Keyboard-Commands halten Tasten pro Session bis zum ausdrücklichen Release.
+Die Abnahme prüft `a` in beiden Sessions vor und nach Ticks sowie über mehrere Ticks.
+Text-Commands verwenden den beim Annehmen geprüften Bevy-Fokus. Die Abnahme fokussiert
+zwei Textfelder per virtuellem Pointer und prüft getrennte Unicode-Eingaben.
+
+`input.text.input` nimmt `{"text":"Grüße 🦜"}` mit höchstens 16.384 UTF-8-Bytes an.
+Erfolg liefert `null`; das Textfeld bleibt bis zum Tick unverändert. Leerer Text ist
+zulässig. Voraussetzung sind ein eindeutiges primäres Fenster und ein lebender
+Bevy-Fokus auf einer `EditableText`-Entity. Die Anwendung benötigt `woodpecker/ui`.
+Ohne diese Unterstützung wird die Eingabe mit `text_focus_unavailable` abgelehnt,
+bei fehlendem Fenster mit `text_window_unavailable`. Übergröße ergibt `text_too_large`.
+Der Adapter stellt den Edit erst beim Tick dem geprüften Feld zu. Er verändert
+weder die Betriebssystem-Zwischenablage noch sendet er native IME-Ereignisse.
+
+Keyboard-Commands verwenden `{"key":"a"}` mit `input.keyboard.press` oder
+`input.keyboard.release`. Erfolg liefert `null` und bedeutet nur Vormerkung.
+Unterstützt sind Buchstaben `a` bis `z`, Ziffern `digit_0` bis `digit_9`, Satzzeichen,
+Navigation, linke/rechte Modifikatortasten und `f1` bis `f12`.
+Die vollständigen Tokens und festen Bevy-Zuordnungen stehen in
+[keyboard.rs](../../src/command/input/keyboard.rs).
+Die Zuordnung hängt nicht vom Betriebssystemlayout ab; Shift verändert den
+festen logischen Buchstaben nicht. Text kommt ausschließlich über den
+Text-Command, nicht über Keyboard-Events. Es gibt keinen automatischen Key-Repeat.
+Bei beiden gehaltenen Shift-Tasten bleibt logisch Shift gedrückt, bis beide losgelassen sind.
+
+Die gerenderte Abnahme benötigt eine Desktop-Sitzung:
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin context_menu
+python3 tests/ui.py
+```
 
 ## Paketierung
 
 Die direkte Session und das Plugin brauchen kein Feature. `server` aktiviert HTTP
 und WebSocket, `client` den synchronen Netzwerkclient, `cli` das Binary `woodpecker`.
+Anwendungen mit Bevy UI müssen zusätzlich `woodpecker/ui` aktivieren. Damit verwendet
+auch die ältere `Interaction`-Logik den virtuellen Pointer statt der nativen Maus.
+Die Pointerposition wird über `PointerLocation` gelesen; `Window` bleibt die
+Beschreibung des nativen Fensters, kein virtueller Eingabestatus.
 Die Prozessverwaltung dieses Durchstichs unterstützt Unix-Prozessgruppen.
-Das Testpackage verwendet für den Zähler das Feature `slice`. Die übrigen Bevy-Anwendungen
+Das Testpackage verwendet für Zähler und Context-Menu das Feature `slice`. Die übrigen Bevy-Anwendungen
 laufen mit nativer Eingabe; ihr altes Feature `automation` wurde entfernt.
 Die Bibliothek benötigt keinen Renderer. Render-/UI-Abhängigkeiten der Testanwendungen
 gehören weiterhin zu deren eigenem Manifest.

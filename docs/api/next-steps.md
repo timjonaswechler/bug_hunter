@@ -34,6 +34,25 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
 - Warp mit Pace-Wechsel und Stop, reflektiertes Resource-Inspect und Shutdown
   funktionieren. Inspect und der normale äußere Event-Loop erzeugen keine
   zusätzlichen Simulationsticks.
+- Allgemeines Entity-Inspect besitzt Handle-Abfragen, Componentfilter, Summary,
+  Component-Namen/-Werte und Hierarchien. Es verwendet den bestehenden Handle und
+  schließt interne Resource-Entities aus. Adapter-, Codec- und Plugin-Tests prüfen
+  Type Paths, Ablehnungen, Sortierung und Lesen ohne Tick oder Zeitfortschritt.
+- Pointer-Bewegung, Buttons und Scroll sind geprüft und bis zum nächsten Tick
+  vorgemerkt. Die gerenderte Context-Menu-Abnahme über Server und Session besteht.
+  Der Kontrolllauf hält den Render-Zeitkanal frei, ohne Simulationszeit fortzuschreiben.
+- Kontrollierte Sessions verwenden jetzt einen eigenen virtuellen Pointer und filtern
+  native Maus-/Touch-/Keyboard-/IME-Eingaben. Zwei gerenderte Sessions steuern unabhängig
+  voneinander ihre Menüs und Buttonzustände. Das optionale `ui`-Feature bindet auch
+  Bevys ältere `Interaction`-Logik an den virtuellen Pointer an.
+- Virtuelle Keyboard-Commands besitzen stabile Key-Tokens und halten Tasten bis zum
+  ausdrücklichen Release. Sie erzeugen keine Texteingabe und keine Wiederholungs-Events.
+  Tests prüfen Vormerkung, Halten über mehrere Ticks, Ablehnungen, Modifikatortasten,
+  native Störeingaben und unabhängige Tastaturen in zwei gerenderten Sessions.
+- `input.text.input` prüft Fenster, Bevy-Fokus und die 16.384-Byte-UTF-8-Grenze.
+  Erst beim Tick erhält die geprüfte `EditableText`-Entity den Edit. Fokuswechsel
+  leiten angenommene Eingaben nicht um. Die UI-Abnahme prüft getrennte Unicode-Texte
+  in beiden Sessions; fehlender Fokus und Übergröße werden abgelehnt.
 - Der Server verwaltet mehrere unabhängige Sessions über HTTP und fest gebundene
   WebSocket-Verbindungen. Activity besitzt Cursor und erkennbare Lücken.
   Client-Trennung beendet angenommene Arbeit nicht.
@@ -44,7 +63,7 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
   `failure.json`-Architektur. Der Handle samt Lebensdauertests wurde nach
   [handle](../../src/handle.rs) übernommen.
 - Die Bevy-Szenen und ihre eigenen fachlichen Tests bleiben als native
-  Anwendungen erhalten. Nur `counter` ist derzeit an den neuen Session-Weg
+  Anwendungen erhalten. `counter` und `context_menu` sind an den neuen Session-Weg
   angebunden. Die entfernte `automation`-Anbindung ist kein unterstützter Einstieg.
 - Die Bibliothek ohne Features benötigt weder Server-/CLI- noch UI-/Renderer-
   Abhängigkeiten. Render-Abhängigkeiten der Testanwendungen gehören zu deren
@@ -58,17 +77,18 @@ Konfiguration; alte Funktionen werden nicht durch Kompatibilitäts-Exports angeb
 
 ### 1. Input und vollständiges Inspect
 
-- [ ] Keyboard-, Pointer- und Text-Commands samt Bevy-Anbindung implementieren.
-  Key-Tokens, gehaltene Tasten, absolute/relative Bewegung, Button-/Scroll-Zustände,
-  Fenstergrenzen, Fokus und Textgrößen aus dem Zielvertrag abdecken.
-- [ ] Eingaben prüfen und für den nächsten Tick vormerken. Erfolg darf keine
-  bereits erfolgte Verarbeitung durch Anwendungssysteme behaupten.
-- [ ] Entity-Queries, Component-Filter, Namen-/Werteprojektionen und Hierarchien
+- [x] Pointer-Commands mit absoluter/relativer Bewegung, Button-/Scroll-Zuständen
+  und Fenstergrenzen implementieren, prüfen und bis zum nächsten Tick vormerken.
+- [x] Keyboard-Commands samt Bevy-Anbindung implementieren. Key-Tokens, gehaltene
+  Tasten, Ablehnungen und Verarbeitung erst beim nächsten Tick sind geprüft.
+- [x] Text-Commands samt Bevy-Anbindung implementieren. Fokus und Textgrößen aus
+  dem Zielvertrag abdecken. Erfolg bedeutet nur Prüfung und Vormerkung bis zum Tick.
+- [x] Entity-Queries, Component-Filter, Namen-/Werteprojektionen und Hierarchien
   ergänzen. Den übernommenen Handle verwenden; keine Automation-Marker einführen.
 - [ ] Reflection-Fixtures gegen Bevy 0.19.1 vervollständigen: exakte Type Paths,
   fehlende/opaque/nicht serialisierbare Werte, nicht endliche Zahlen, Maps, Sets
   und Asset-Handles.
-- [ ] Den realen UI-Durchstich unten als Integrationstest ausführen.
+- [x] Den realen UI-Durchstich unten als Integrationstest ausführen.
 
 Abschluss: Eine echte Bevy-Anwendung lässt sich über neue Input-Commands verändern
 und allgemein inspizieren. Die fachlichen Varianten und Ablehnungen sind geprüft;
@@ -142,8 +162,14 @@ auch bei parallelen Clients und Wiederverbindung.
 
 ## Konkreter nächster Durchstich
 
-Empfehlung: die vorhandene [Context-Menu-Anwendung](../../bevy_test_apps/src/bin/context_menu.rs)
-an den neuen Weg anbinden und diesen Ablauf nachweisen:
+Entity-Inspect sowie Pointer-, Keyboard- und Text-Commands sind umgesetzt.
+Als Nächstes die vollständige Reflection-Matrix aus Block 1 abschließen:
+opaque/nicht serialisierbare Werte, fehlende Registrierungen, Maps, verschachtelte Sets,
+nicht endliche Zahlen und Asset-Handles gegen Bevy 0.19.1 prüfen.
+Erst danach mit Screenshot beginnen.
+
+Die [Context-Menu-Anwendung](../../bevy_test_apps/src/bin/context_menu.rs)
+ist angebunden; [tests/ui.py](../../tests/ui.py) weist diesen Ablauf nach:
 
 1. Die Anwendung über Server und Session starten und Ready beobachten.
 2. Falls Layout-Initialisierung Ticks benötigt, diese ausdrücklich ausführen.
@@ -160,7 +186,26 @@ Screenshot oder Recording begonnen werden.
 
 ## Nachweise und bekannte Grenzen
 
-Die zuletzt erfolgreichen Prüfungen umfassten 15 Bibliotheks-/CLI-Tests,
+Nach der Erweiterung um die virtuelle Texteingabe bestanden
+`cargo test --all-features -- --test-threads=1` mit
+38 Bibliotheks-/CLI-Tests und 6 Prozess-Integrationstests, Clippy für alle Targets
+und Features mit `-D warnings` sowie 24 Bibliothekstests ohne Default-Features.
+`tests/ui.py` mit zwei gerenderten Sessions und `tests/slice.py` bestanden mit den
+neu gebauten Anwendungen. Tests prüfen native Störeingaben ohne Fensterfokus,
+unabhängige Buttonzustände, genau einmal zugestellte Resize-Ereignisse und die
+unveränderte native Cursorposition einschließlich interner Präzision.
+Die Keyboard-Abnahme prüft Press/Halten/Release in beiden Sessions; Unit-Tests prüfen
+auch Press und Release vor demselben Tick sowie gemeinsam gehaltene logische Modifier.
+Die Text-Abnahme prüft getrennte Unicode-Werte ohne Verarbeitung vor dem Tick.
+Weitere Tests prüfen die exakte UTF-8-Grenze, leeren Text, ungültigen Fokus,
+Fokuswechsel, Despawn ohne Umleitung und native Störeingaben.
+Ein vorheriger paralleler Testlauf lief beim Server-Fristtest in den 30-Sekunden-
+Timeout; die Ursache ist nicht belegt. Die anschließenden seriellen Läufe bestanden.
+Der zusätzliche Context-Menu-Test prüft Öffnen, Ersetzen und Schließen ohne
+widersprüchliches `menu_open`. Die übrigen Bevy-Testapps und `tests/shutdown.py`
+wurden für diese Erweiterung nicht erneut geprüft.
+
+Die Prüfungen vor diesen Erweiterungen umfassten 15 Bibliotheks-/CLI-Tests,
 6 Prozess-Integrationstests und 7 fachliche Bevy-Anwendungstests. Beide realen
 Abnahmeskripte bestanden, ebenso Feature-Builds, Root-Clippy mit `-D warnings`,
 Formatprüfung und `git diff --check`. Das ist der Ausgangsnachweis dieser Übergabe,

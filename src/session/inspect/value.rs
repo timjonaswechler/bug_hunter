@@ -10,6 +10,21 @@ use bevy::{
 };
 use serde::{Serialize, ser::Error};
 
+pub(super) fn serialize(
+    reflected: &dyn PartialReflect,
+    registry: &TypeRegistry,
+) -> crate::command::inspect::Value {
+    use crate::command::inspect::{Status, Value};
+    match serde_json::to_value(TypedReflectSerializer::with_processor(
+        reflected, registry, &Processor,
+    )) {
+        Ok(value) => Value::Readable { value },
+        Err(_) => Value::Unavailable {
+            reason: Status::NotSerializable,
+        },
+    }
+}
+
 pub(super) struct Processor;
 
 impl ReflectSerializerProcessor for Processor {

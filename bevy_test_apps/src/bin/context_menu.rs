@@ -4,7 +4,7 @@ use bevy::{
     color::palettes::basic,
     ecs::{relationship::RelatedSpawner, spawn::SpawnWith},
     prelude::*,
-    text::{EditableText, TextCursorStyle},
+    text::{EditableText, EditableTextSystems, TextCursorStyle},
     window::WindowResolution,
 };
 use bevy_test_apps::composition;
@@ -55,18 +55,24 @@ fn main() {
             title: "Controlled context menu test".into(),
             resolution: WindowResolution::new(640, 360).with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
 
     app.register_type::<SessionState>()
         .add_systems(Startup, setup)
-        .add_systems(Update, observe_keyboard_and_text)
+        .add_systems(
+            PostUpdate,
+            observe_keyboard_and_text.after(EditableTextSystems),
+        )
         .add_observer(on_trigger_menu)
         .add_observer(on_trigger_close_menus)
         .add_observer(text_color_on_hover::<Out>(basic::WHITE.into()))
-        .add_observer(text_color_on_hover::<Over>(basic::RED.into()))
-        .run();
+        .add_observer(text_color_on_hover::<Over>(basic::RED.into()));
+    #[cfg(feature = "slice")]
+    app.add_plugins(woodpecker::session::Plugin);
+    app.run();
 }
 
 fn text_color_on_hover<T: Debug + Clone + Reflect>(
@@ -140,9 +146,14 @@ fn on_trigger_close_menus(
 fn on_trigger_menu(
     event: On<OpenContextMenu>,
     mut commands: Commands,
+    menus: Query<Entity, With<ContextMenu>>,
     mut state: Query<&mut SessionState, With<Background>>,
 ) {
-    commands.trigger(CloseContextMenus);
+    // Remove only existing menus. A deferred CloseContextMenus would reset the
+    // state after this observer has already marked the new menu as open.
+    for entity in &menus {
+        commands.entity(entity).despawn();
+    }
     if let Ok(mut state) = state.single_mut() {
         state.menu_open = true;
     }
@@ -282,4 +293,61 @@ fn background_and_button() -> impl Bundle {
             ));
         })),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_replaces_the_menu_and_keeps_state_consistent() {
+        let mut app = App::new();
+        app.add_observer(on_trigger_menu)
+            .add_observer(on_trigger_close_menus);
+        let background = app
+            .world_mut()
+            .spawn((
+                Background,
+                SessionState {
+                    menu_open: false,
+                    selected_item: "none".into(),
+                    key_a_held: false,
+                    key_a_presses: 0,
+                    key_a_releases: 0,
+                    text: String::new(),
+                },
+            ))
+            .id();
+        let mut previous = None;
+        for _ in 0..2 {
+            app.world_mut().trigger(OpenContextMenu {
+                pos: Vec2::new(10., 20.),
+            });
+            app.world_mut().flush();
+            assert!(
+                app.world()
+                    .get::<SessionState>(background)
+                    .unwrap()
+                    .menu_open
+            );
+            let mut menus = app
+                .world_mut()
+                .query_filtered::<Entity, With<ContextMenu>>();
+            let current = menus.single(app.world()).unwrap();
+            if let Some(previous) = previous {
+                assert_ne!(current, previous);
+                assert!(app.world().get_entity(previous).is_err());
+            }
+            previous = Some(current);
+        }
+        app.world_mut().trigger(CloseContextMenus);
+        app.world_mut().flush();
+        assert!(
+            !app.world()
+                .get::<SessionState>(background)
+                .unwrap()
+                .menu_open
+        );
+        assert!(app.world().get_entity(previous.unwrap()).is_err());
+    }
 }

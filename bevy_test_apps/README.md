@@ -5,7 +5,7 @@ repository root with `--manifest-path bevy_test_apps/Cargo.toml`.
 
 ## Headless session acceptance
 
-`counter` is the supported woodpecker integration. It uses `session::Plugin`,
+`counter` is the headless woodpecker integration. It uses `session::Plugin`,
 an application-owned simulation schedule and a reflected counter resource.
 
 ```sh
@@ -16,9 +16,33 @@ Start it through the CLI using `tests/fixtures/counter.toml`; see the
 [walkthrough](../docs/api/slice.md#ausführen). The raw game binary expects the
 session's internal launch environment.
 
+## Rendered session acceptance
+
+`context_menu` also uses `session::Plugin` when built with `slice`. Without that
+feature it remains a native application. The acceptance test finds named entities
+through general Inspect, reads layout coordinates, queues pointer input and checks
+that application state changes only after an explicit Warp.
+`slice` enables `woodpecker/ui` so both picking observers and legacy `Interaction`
+use the virtual pointer. The controlled window starts without requesting focus.
+The test runs two concurrent sessions with independent pointer/button states.
+It also presses, holds and releases `a` independently in both sessions and checks
+the reflected key counters. Keyboard events do not insert text.
+The test then focuses each text field with its virtual pointer and submits different
+Unicode strings through `input.text.input`. The reflected text is sampled after
+Bevy applies text edits, so a single explicit tick shows the resulting value.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin context_menu
+python3 tests/ui.py
+```
+
+This test opens a real window and requires a desktop session.
+The CLI launch configuration is `tests/fixtures/context_menu.toml`.
+
 ## Native application fixtures
 
-The other binaries use native Bevy input. Their systems, semantic state,
+The binaries without `slice` use native Bevy input. Their systems, semantic state,
 reflection registrations and unit tests are retained for later Input, Inspect
 and Screenshot acceptance. They do not expose the removed v2 integration.
 There is no `automation` feature or automation marker.

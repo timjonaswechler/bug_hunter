@@ -3,18 +3,33 @@ use crate::command::inspect::*;
 use bevy::{
     ecs::reflect::{ReflectComponent, ReflectResource},
     prelude::{AppTypeRegistry, World},
-    reflect::serde::TypedReflectSerializer,
 };
+mod entities;
 mod value;
 
 pub(super) fn query(world: &World, query: Command) -> std::result::Result<Output, Diagnostic> {
+    match query {
+        Command::Entities {
+            entity,
+            with,
+            without,
+            projection,
+        } => entities::query(world, entity, &with, &without, projection),
+        Command::Resources {
+            selector,
+            projection,
+        } => resources(world, selector, projection),
+    }
+}
+
+fn resources(
+    world: &World,
+    selector: Selector,
+    projection: Projection,
+) -> std::result::Result<Output, Diagnostic> {
     let registry = world.resource::<AppTypeRegistry>().read();
-    let Command::Resources {
-        selector,
-        projection,
-    } = query;
-    let registrations: Vec<_> = match &selector {
-        Selector::All => registry
+    let mut registrations: Vec<_> = match &selector {
+        Selector::All {} => registry
             .iter()
             .filter(|r| r.data::<ReflectResource>().is_some())
             .collect(),
@@ -24,6 +39,7 @@ pub(super) fn query(world: &World, query: Command) -> std::result::Result<Output
                 .ok_or_else(|| Diagnostic::new("unknown_type_path", type_path))?,
         ],
     };
+    registrations.sort_by_key(|registration| registration.type_info().type_path());
     let mut items = Vec::new();
     for registration in registrations {
         let type_path = registration.type_info().type_path().to_string();
@@ -33,13 +49,14 @@ pub(super) fn query(world: &World, query: Command) -> std::result::Result<Output
             .and_then(|id| world.resource_entities().get(id))
             .and_then(|entity| world.get_entity(entity).ok());
         if entity.is_none()
-            && (matches!(projection, Projection::Metadata) || matches!(selector, Selector::All))
+            && (matches!(projection, Projection::Metadata {})
+                || matches!(selector, Selector::All {}))
         {
             continue;
         }
         let result = match projection {
-            Projection::Metadata => Result::Metadata { type_path },
-            Projection::Value => {
+            Projection::Metadata {} => Result::Metadata { type_path },
+            Projection::Value {} => {
                 let value = match (entity, registration.data::<ReflectComponent>()) {
                     (None, _) => Value::Unavailable {
                         reason: Status::Missing,
@@ -52,18 +69,7 @@ pub(super) fn query(world: &World, query: Command) -> std::result::Result<Output
                             None => Value::Unavailable {
                                 reason: Status::NotReflectable,
                             },
-                            Some(value) => {
-                                match serde_json::to_value(TypedReflectSerializer::with_processor(
-                                    value,
-                                    &registry,
-                                    &value::Processor,
-                                )) {
-                                    Ok(value) => Value::Readable { value },
-                                    Err(_) => Value::Unavailable {
-                                        reason: Status::NotSerializable,
-                                    },
-                                }
-                            }
+                            Some(reflected) => value::serialize(reflected, &registry),
                         }
                     }
                 };
@@ -72,16 +78,6 @@ pub(super) fn query(world: &World, query: Command) -> std::result::Result<Output
         };
         items.push(Item::Resource { result });
     }
-    items.sort_by(
-        |Item::Resource { result: a }, Item::Resource { result: b }| {
-            fn path(r: &Result) -> &str {
-                match r {
-                    Result::Metadata { type_path } | Result::Value { type_path, .. } => type_path,
-                }
-            }
-            path(a).cmp(path(b))
-        },
-    );
     Ok(Output { items })
 }
 
@@ -112,7 +108,7 @@ mod tests {
                     selector: Selector::Type {
                         type_path: "Sample".into()
                     },
-                    projection: Projection::Value,
+                    projection: Projection::Value {},
                 }
             )
             .is_err()
@@ -121,7 +117,7 @@ mod tests {
             app.world(),
             Command::Resources {
                 selector: selector.clone(),
-                projection: Projection::Value,
+                projection: Projection::Value {},
             },
         )
         .unwrap();
@@ -144,7 +140,7 @@ mod tests {
             app.world(),
             Command::Resources {
                 selector: selector.clone(),
-                projection: Projection::Value,
+                projection: Projection::Value {},
             },
         )
         .unwrap();
@@ -158,7 +154,7 @@ mod tests {
             app.world(),
             Command::Resources {
                 selector,
-                projection: Projection::Value,
+                projection: Projection::Value {},
             },
         )
         .unwrap();

@@ -392,6 +392,22 @@ Input-Erfolg bedeutet Annahme, Prüfung und Vormerkung für den nächsten ausgef
 nicht bereits erfolgte Verarbeitung durch Anwendungssysteme. Mehrere Inputs vor einem Tick
 werden gemeinsam bereitgestellt. Input-Outputs sind `()`, auf dem Wire `null`.
 
+Kontrollierte Sessions verwenden ausschließlich virtuelle Eingabegeräte. Jede Session
+besitzt ihren eigenen Pointer-, Button- und Tastaturzustand. Commands bewegen weder den
+Betriebssystem-Cursor noch benötigen sie Betriebssystem-Fokus. Native Maus-, Touch-,
+Tastatur- und IME-Eingaben gelangen nicht in die Bevy-Eingabeverarbeitung der Simulation.
+Auch nativer Fokusverlust darf gehaltene virtuelle Tasten nicht freigeben.
+Mehrere Clients derselben Session teilen sich deren Geräte; mehrere Pointer innerhalb
+derselben Session und Mischbetrieb mit nativer Eingabe sind nicht vorgesehen.
+Ohne Session-Plugin bleibt die native Bedienung unverändert.
+
+Der virtuelle Pointer verwendet Bevys Picking-Eingabe mit eigener Pointer-Identität.
+Seine Position steht am zugehörigen `PointerLocation`, nicht am Betriebssystemfenster.
+Bevys UI-`Interaction` muss ebenfalls diesen Pointer verwenden. Fenster-Metadaten und
+Fensterverwaltung, etwa Resize und Close, bleiben nativ; direkte Betriebssystemabfragen
+und `RawWinitWindowEvent` sind keine kontrollierten Eingabekanäle.
+Textfokus bezeichnet ausschließlich den Fokus innerhalb des jeweiligen Bevy World.
+
 Keyboard verwendet eigene stabile, layoutunabhängige Key-Tokens mit fester interner Abbildung
 auf physisches `KeyCode` und logisches Bevy-`Key`.
 Pointer verwendet das Spielfenster. `MoveTo` benutzt logische Pixel vom linken oberen Rand,
@@ -401,6 +417,14 @@ Buttons sind `left`, `right`, `middle` und wirken an der aktuellen Position.
 Scroll übergibt horizontales und vertikales Delta samt Vorzeichen in Bevy-Zeileneinheiten;
 `[0,0]` ist erlaubt. Text geht an den eindeutigen lebenden, editierbaren Bevy-Fokus
 und umfasst höchstens 16.384 UTF-8-Bytes.
+
+Text bindet sich bei der Annahme an die fokussierte `EditableText`-Entity.
+Ein späterer Fokuswechsel leitet angenommenen Text nicht in ein anderes Feld um.
+Erst beim nächsten Tick erhält dieses Feld den vorgemerkten Edit; Bevys normale
+Selektions-, Zeichenfilter- und Längenregeln bestimmen dessen Verarbeitung.
+Ist das Feld dann nicht mehr vorhanden oder editierbar, wird nichts an ein anderes
+Feld zugestellt. Der bestätigte Command-Erfolg bleibt eine Vormerkungsbestätigung.
+Leerer Text ist zulässig, er benötigt dieselben Fenster- und Fokusprüfungen.
 
 ### Tick-Warp
 

@@ -2,6 +2,7 @@
 mod coordinator;
 mod error;
 pub mod history;
+mod input;
 mod inspect;
 pub mod launch;
 mod plugin;

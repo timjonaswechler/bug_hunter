@@ -10,9 +10,14 @@ Remote operation is not supported.
 ## Current implementation
 
 The experimental v3 slice supports tick warps, pace changes, stop, reflected
-Resource-Inspect, session management and shutdown. Input, Entity-Inspect,
-screenshots, recording, replay, reporting, REPL and scripts remain planned work.
+resource and entity inspection, virtual pointer, keyboard and text input, session management
+and shutdown. Screenshots, recording, replay, reporting, REPL and scripts remain planned work.
 The v2 API and its `host`/`driver` features have been removed.
+
+Controlled sessions ignore native mouse, touch, keyboard and IME input. Their pointers
+do not move the OS cursor or require window focus. Applications using Bevy UI must
+enable `woodpecker/ui`, which also enables focused text input. The context-menu fixture
+enables it through `slice`.
 
 - [Target contract](docs/api/target.md)
 - [Implementation and migration status](docs/api/implementation-plan.md#migration-und-bereinigung)

@@ -1,4 +1,5 @@
 //! Commands implemented by the experimental v3 vertical slice.
+pub mod input;
 pub mod inspect;
 pub mod tick;
 
@@ -15,6 +16,22 @@ pub trait Request: private::Sealed + Into<Command> {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "command", content = "arguments", deny_unknown_fields)]
 pub enum Command {
+    #[serde(rename = "input.text.input")]
+    TextInput(input::text::Input),
+    #[serde(rename = "input.keyboard.press")]
+    KeyboardPress(input::keyboard::Press),
+    #[serde(rename = "input.keyboard.release")]
+    KeyboardRelease(input::keyboard::Release),
+    #[serde(rename = "input.pointer.move_to")]
+    PointerMoveTo(input::pointer::MoveTo),
+    #[serde(rename = "input.pointer.move_by")]
+    PointerMoveBy(input::pointer::MoveBy),
+    #[serde(rename = "input.pointer.press")]
+    PointerPress(input::pointer::Press),
+    #[serde(rename = "input.pointer.release")]
+    PointerRelease(input::pointer::Release),
+    #[serde(rename = "input.pointer.scroll")]
+    PointerScroll(input::pointer::Scroll),
     #[serde(rename = "tick.warp.start")]
     Start(tick::warp::Start),
     #[serde(rename = "tick.warp.set_pace")]
@@ -34,6 +51,14 @@ pub struct Empty {}
 impl Command {
     pub fn name(&self) -> &'static str {
         match self {
+            Self::TextInput(_) => "input.text.input",
+            Self::KeyboardPress(_) => "input.keyboard.press",
+            Self::KeyboardRelease(_) => "input.keyboard.release",
+            Self::PointerMoveTo(_) => "input.pointer.move_to",
+            Self::PointerMoveBy(_) => "input.pointer.move_by",
+            Self::PointerPress(_) => "input.pointer.press",
+            Self::PointerRelease(_) => "input.pointer.release",
+            Self::PointerScroll(_) => "input.pointer.scroll",
             Self::Start(_) => "tick.warp.start",
             Self::SetPace(_) => "tick.warp.set_pace",
             Self::Stop(_) => "tick.warp.stop",
@@ -57,7 +82,15 @@ impl Command {
             Self::SetPace(_) => valid::<tick::warp::PaceChanged>(output),
             Self::Stop(_) => valid::<tick::warp::Stopped>(output),
             Self::Inspect(_) => valid::<inspect::Output>(output),
-            Self::Shutdown(_) => output.is_null(),
+            Self::TextInput(_)
+            | Self::KeyboardPress(_)
+            | Self::KeyboardRelease(_)
+            | Self::PointerMoveTo(_)
+            | Self::PointerMoveBy(_)
+            | Self::PointerPress(_)
+            | Self::PointerRelease(_)
+            | Self::PointerScroll(_)
+            | Self::Shutdown(_) => output.is_null(),
         }
     }
 }

@@ -11,8 +11,10 @@ use std::{
     time::Instant,
 };
 
-/// Experimental headless v3 bridge. Install after the application's simulation plugins.
+/// Experimental v3 bridge. Install after the application's simulation plugins.
 /// It preserves the configured schedule order and time policy; only a warp runs that order.
+/// Native mouse, keyboard, touch and IME input is discarded in controlled sessions.
+/// Enable the `ui` feature for applications using Bevy UI's `Interaction` components.
 #[derive(Default)]
 pub struct Plugin;
 
@@ -24,6 +26,10 @@ struct Bridge {
     pace: warp::Pace,
     active: Option<Active>,
     ticks: u64,
+    pointer: super::input::pointer::State,
+    keyboard: super::input::keyboard::State,
+    text: super::input::text::State,
+    input_gate: super::input::Gate,
 }
 
 struct Active {
@@ -92,6 +98,7 @@ fn install(
     output: mpsc::Sender<(Message, Option<mpsc::Sender<()>>)>,
     pace: warp::Pace,
 ) {
+    super::input::install(app);
     let schedules = {
         let mut order = app.world_mut().resource_mut::<MainScheduleOrder>();
         std::mem::replace(&mut order.labels, vec![Control.intern()])
@@ -103,6 +110,10 @@ fn install(
         pace,
         active: None,
         ticks: 0,
+        pointer: Default::default(),
+        keyboard: Default::default(),
+        text: Default::default(),
+        input_gate: Default::default(),
     })
     .add_systems(Control, run);
 }
@@ -119,6 +130,7 @@ fn ready(bridge: Res<Bridge>) {
 
 fn run(world: &mut World) {
     world.resource_scope(|world, mut bridge: Mut<Bridge>| {
+        bridge.input_gate.capture(world);
         // Bound both command intake and tick execution so neither can starve the other.
         for _ in 0..64 {
             let line = bridge.input.lock().unwrap().try_recv();
@@ -158,9 +170,15 @@ fn run(world: &mut World) {
             {
                 break;
             }
+            bridge.input_gate.capture(world);
+            bridge.input_gate.swap_window_events(world);
+            bridge.pointer.flush(world);
+            bridge.keyboard.flush(world);
+            bridge.text.flush(world);
             for label in &bridge.schedules {
                 let _ = world.try_run_schedule(*label);
             }
+            bridge.input_gate.swap_window_events(world);
             bridge.ticks = bridge.ticks.checked_add(1).expect("tick counter exhausted");
             let active = bridge.active.as_mut().unwrap();
             active.executed += 1;
@@ -174,6 +192,11 @@ fn run(world: &mut World) {
             }
         }
     });
+    // Rendering continues between warps. Its bounded clock channel must be drained
+    // even when the simulation's time_system does not run. Never update Time here.
+    if let Some(receiver) = world.get_resource::<bevy::time::TimeReceiver>() {
+        for _ in receiver.0.try_iter() {}
+    }
 }
 
 fn finish(bridge: &mut Bridge, outcome: warp::Outcome) {
@@ -202,7 +225,41 @@ fn dispatch(world: &mut World, bridge: &mut Bridge, id: u64, command: Command) -
             error: Diagnostic::new(code, message),
         })
     };
+    let input_response = |result| {
+        Some(match result {
+            Ok(()) => protocol::completed(id, name, ()),
+            Err(error) => Message::Rejected {
+                request_id: id,
+                command: name.into(),
+                error,
+            },
+        })
+    };
     let value = match command {
+        Command::TextInput(input) => {
+            return input_response(bridge.text.input(world, input));
+        }
+        Command::KeyboardPress(input) => {
+            return input_response(bridge.keyboard.key(world, &input.key, true));
+        }
+        Command::KeyboardRelease(input) => {
+            return input_response(bridge.keyboard.key(world, &input.key, false));
+        }
+        Command::PointerMoveTo(input) => {
+            return input_response(bridge.pointer.move_to(world, input.position));
+        }
+        Command::PointerMoveBy(input) => {
+            return input_response(bridge.pointer.move_by(world, input.delta));
+        }
+        Command::PointerPress(input) => {
+            return input_response(bridge.pointer.button(world, &input.button, true));
+        }
+        Command::PointerRelease(input) => {
+            return input_response(bridge.pointer.button(world, &input.button, false));
+        }
+        Command::PointerScroll(input) => {
+            return input_response(bridge.pointer.scroll(world, input.delta));
+        }
         Command::Start(start) => {
             if start.ticks == 0 {
                 return reject("invalid_tick_count", "ticks must be positive");
@@ -263,6 +320,9 @@ fn dispatch(world: &mut World, bridge: &mut Bridge, id: u64, command: Command) -
 }
 
 #[cfg(test)]
+mod input_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use bevy::time::TimeUpdateStrategy;
@@ -272,6 +332,224 @@ mod tests {
     #[reflect(Resource)]
     struct Counter {
         ticks: u64,
+    }
+
+    #[test]
+    fn pointer_commands_wait_for_ticks_and_preserve_button_lifetimes() {
+        use crate::command::input::pointer;
+        use bevy::{
+            input::mouse::MouseButtonInput,
+            window::{CursorMoved, PrimaryWindow, WindowEvent},
+        };
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let window = app
+            .world_mut()
+            .spawn((Window::default(), PrimaryWindow))
+            .id();
+        let (tx, input) = mpsc::channel();
+        let (output, rx) = mpsc::channel();
+        install(&mut app, input, output, warp::Pace::AsFastAsPossible);
+        let send = |id, command: Command| tx.send(protocol::encode(id, &command)).unwrap();
+        send(
+            1,
+            pointer::MoveTo {
+                position: [12., 17.],
+            }
+            .into(),
+        );
+        send(
+            2,
+            pointer::Press {
+                button: "left".into(),
+            }
+            .into(),
+        );
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(rx.try_iter().count(), 2);
+        assert!(
+            app.world()
+                .get::<Window>(window)
+                .unwrap()
+                .cursor_position()
+                .is_none()
+        );
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<MouseButton>>()
+                .pressed(MouseButton::Left)
+        );
+        assert!(app.world().resource::<Messages<WindowEvent>>().is_empty());
+        assert!(
+            app.world()
+                .resource::<Messages<MouseButtonInput>>()
+                .is_empty()
+        );
+        let warp = |id| {
+            send(
+                id,
+                warp::Start {
+                    ticks: 1,
+                    pace: None,
+                }
+                .into(),
+            )
+        };
+        warp(3);
+        app.update();
+        assert!(
+            app.world()
+                .resource::<ButtonInput<MouseButton>>()
+                .just_pressed(MouseButton::Left)
+        );
+        assert_eq!(
+            app.world().get::<Window>(window).unwrap().cursor_position(),
+            None
+        );
+        assert_eq!(app.world().resource::<Messages<CursorMoved>>().len(), 0);
+        assert_eq!(app.world().resource::<Messages<WindowEvent>>().len(), 0);
+        warp(4);
+        app.update();
+        let buttons = app.world().resource::<ButtonInput<MouseButton>>();
+        assert!(buttons.pressed(MouseButton::Left));
+        assert!(!buttons.just_pressed(MouseButton::Left));
+        send(
+            5,
+            pointer::Release {
+                button: "left".into(),
+            }
+            .into(),
+        );
+        app.update();
+        assert!(
+            app.world()
+                .resource::<ButtonInput<MouseButton>>()
+                .pressed(MouseButton::Left)
+        );
+        warp(6);
+        app.update();
+        assert!(
+            app.world()
+                .resource::<ButtonInput<MouseButton>>()
+                .just_released(MouseButton::Left)
+        );
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<MouseButton>>()
+                .pressed(MouseButton::Left)
+        );
+    }
+
+    #[test]
+    fn idle_control_drains_render_clock_without_advancing_time() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let (sender, receiver) = bevy::time::create_time_channels();
+        app.insert_resource(receiver);
+        let (_tx, input) = mpsc::channel();
+        let (output, _rx) = mpsc::channel();
+        install(&mut app, input, output, warp::Pace::AsFastAsPossible);
+        for _ in 0..10 {
+            sender
+                .0
+                .try_send(bevy::platform::time::Instant::now())
+                .unwrap();
+            app.update();
+            assert_eq!(
+                app.world().resource::<Time<Real>>().elapsed(),
+                Duration::ZERO
+            );
+        }
+    }
+
+    #[test]
+    fn entity_inspect_uses_the_command_bridge_without_ticks_or_time_progress() {
+        use crate::command::inspect::{self, component, entity};
+        #[derive(Component, Reflect)]
+        #[reflect(Component)]
+        struct State(u32);
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .register_type::<State>()
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                17,
+            )))
+            .add_systems(Update, |mut states: Query<&mut State>| {
+                for mut state in &mut states {
+                    state.0 += 1;
+                }
+            });
+        let entity = app.world_mut().spawn((Name::new("button"), State(0))).id();
+        let (tx, input) = mpsc::channel();
+        let (output, rx) = mpsc::channel();
+        install(&mut app, input, output, warp::Pace::AsFastAsPossible);
+        let request = inspect::Command::Entities {
+            entity: Some(entity.into()),
+            with: vec![],
+            without: vec![],
+            projection: entity::Projection::Components {
+                selection: component::Selection::Listed {
+                    type_paths: vec![State::type_path().into()],
+                },
+            },
+        };
+        for id in 1..=2 {
+            let before = app.world().resource::<Time<Real>>().elapsed();
+            let change_tick = app
+                .world()
+                .entity(entity)
+                .get_change_ticks::<State>()
+                .unwrap()
+                .changed;
+            tx.send(protocol::encode(id, &request.clone().into()))
+                .unwrap();
+            app.update();
+            let Message::Completed {
+                request_id,
+                command,
+                output,
+            } = rx.try_recv().unwrap().0
+            else {
+                panic!("inspect must complete");
+            };
+            assert_eq!(request_id, id);
+            assert_eq!(command, "inspect.query");
+            assert_eq!(
+                output["items"][0]["result"]["components"][0]["value"]["value"],
+                id - 1
+            );
+            assert_eq!(app.world().resource::<Time<Real>>().elapsed(), before);
+            assert_eq!(app.world().get::<State>(entity).unwrap().0, (id - 1) as u32);
+            // The control schedule itself can advance the world's change tick, but
+            // Inspect never marks the application component as changed.
+            assert_eq!(
+                app.world()
+                    .entity(entity)
+                    .get_change_ticks::<State>()
+                    .unwrap()
+                    .changed,
+                change_tick
+            );
+            if id == 1 {
+                tx.send(protocol::encode(
+                    3,
+                    &warp::Start {
+                        ticks: 1,
+                        pace: None,
+                    }
+                    .into(),
+                ))
+                .unwrap();
+                app.update();
+                assert!(matches!(
+                    rx.try_recv().unwrap().0,
+                    Message::Completed { request_id: 3, .. }
+                ));
+            }
+        }
     }
 
     #[test]
@@ -292,8 +570,8 @@ mod tests {
         }
         assert_eq!(app.world().resource::<Counter>().ticks, 0);
         let query = crate::command::inspect::Command::Resources {
-            selector: crate::command::inspect::Selector::All,
-            projection: crate::command::inspect::Projection::Value,
+            selector: crate::command::inspect::Selector::All {},
+            projection: crate::command::inspect::Projection::Value {},
         };
         tx.send(protocol::encode(1, &query.into())).unwrap();
         app.update();

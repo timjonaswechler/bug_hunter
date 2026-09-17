@@ -1,8 +1,18 @@
 use serde::{Deserialize, Serialize};
 
+pub mod component;
+pub mod entity;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    Entities {
+        #[serde(deserialize_with = "Option::deserialize")]
+        entity: Option<crate::handle::Handle>,
+        with: Vec<String>,
+        without: Vec<String>,
+        projection: entity::Projection,
+    },
     Resources {
         selector: Selector,
         projection: Projection,
@@ -12,15 +22,15 @@ pub enum Command {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Selector {
-    All,
+    All {},
     Type { type_path: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Projection {
-    Metadata,
-    Value,
+    Metadata {},
+    Value {},
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -32,7 +42,13 @@ pub struct Output {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Item {
-    Resource { result: Result },
+    Entity {
+        entity: crate::handle::Handle,
+        result: entity::Result,
+    },
+    Resource {
+        result: Result,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
