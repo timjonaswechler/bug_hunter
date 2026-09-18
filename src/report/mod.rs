@@ -1,11 +1,20 @@
-//! Report configuration shared by launch paths. Report execution is outside the first slice.
+//! Failure observation and immutable report context. Formatting and providers follow separately.
 use crate::session::Error;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub(crate) mod capture;
+mod failure;
+pub(crate) mod marker;
+pub(crate) mod observer;
+mod snapshot;
+pub use failure::{BacktraceStatus, Failure, Location, Origin};
+pub use snapshot::{Application, Context, Platform, Report, SourceRevision, Toolchain};
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
     pub tracing_errors: bool,
     pub output: PathBuf,
     pub provider: provider::Config,
@@ -22,12 +31,6 @@ pub mod provider {
 
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
-        if self.tracing_errors {
-            return Err(Error::new(
-                "unsupported_feature",
-                "tracing observation is not implemented in this slice",
-            ));
-        }
         if self.output.as_os_str().is_empty()
             || self
                 .output

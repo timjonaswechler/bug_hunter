@@ -2,7 +2,8 @@
 
 Dieser Build ist keine vollständige v3-Implementation. Er implementiert Warp,
 Resource-/Entity-Inspect, Pointer-/Keyboard-/Text-Input, Screenshot, Recording, Replay und Shutdown.
-Reporting folgt in einem weiteren Durchstich. Der einzige unterstützte Weg verwendet
+Fehlerbeobachtung und Report-Snapshots sind vorhanden; Report-Darstellung und Provider
+folgen im nächsten Durchstich. Der einzige unterstützte Weg verwendet
 `session`; die v2-Implementation und ihre öffentlichen Einstiegspunkte sind entfernt.
 
 Entity-Inspect unterstützt Handle-Abfragen, Componentfilter, Summary, Component-Namen,
@@ -173,6 +174,61 @@ ohne Tick sowie Verwaltungs-Stopp bei gleichzeitigem Replay und Recording.
 `tests/ui.py` enthält zusätzlich die Wiederholung der vollständigen UI-Aufnahme.
 Der aktuelle Nachweis und offene Render-Befund stehen in
 [next-steps.md](next-steps.md#nachweise-und-bekannte-grenzen).
+
+## Fehlerbeobachtung und Snapshots
+
+Das Session-Plugin verkettet den vorhandenen Panic-Hook. Jeder beobachtete Panic
+liefert ein `session::Event::Failure`, auch bei `catch_unwind` oder auf einem
+Worker-Thread. Payload, Location, Backtrace-Status und rohe Backtrace-Ausgabe bleiben
+getrennt. Die Anwendung darf den Hook danach nicht ersetzen.
+Gewöhnlicher stderr-Text, selbst mit dem Wort `ERROR`, ist kein Fehlerauslöser.
+
+Tracing-Errors sind standardmäßig aus. Zur Aktivierung setzt die Startkonfiguration
+`report.tracing_errors = true`, und die Anwendung registriert den Layer:
+
+```rust
+app.add_plugins(DefaultPlugins.set(bevy::log::LogPlugin {
+    custom_layer: woodpecker::session::tracing_error_layer,
+    ..Default::default()
+}));
+// Weitere Anwendungsplugins und Systeme, danach:
+app.add_plugins(woodpecker::session::Plugin);
+```
+
+Eigene Custom-Layer müssen ausdrücklich mit diesem Layer zusammengesetzt werden.
+Die Integration ändert keine Filter; nur tatsächlich dispatchte Error-Events werden
+beobachtet. Der Start wartet bei aktivierter Beobachtung auf die positive
+Layer-Bestätigung. Ein nicht installierter Layer ergibt einen Launch-Fehler.
+Die gerenderte `slice`-Komposition der Testanwendungen registriert den Callback bereits.
+
+Marker verwenden versionierte JSON-Chunks mit Event-ID, Index, Anzahl,
+Base64-Payload und SHA-256-Prüfsumme. Jeder Schreibaufruf ist höchstens 512 Bytes lang.
+Nur vollständig validierte Marker werden aus den menschlichen Diagnosebytes entfernt.
+Beschädigte oder bei EOF unvollständige Marker bleiben sichtbar und liefern
+`ObservationError { code: "invalid_report_marker", .. }`.
+Ein unerwartetes Prozessende liefert nach dem Pipe-Drain einen `ProcessExit`-Failure,
+sofern kein Panic erkannt wurde. Absichtliches Shutdown und Drop erzeugen keinen solchen
+Failure. Fehler vor Ready bleiben Startdiagnose.
+
+Direkte Nutzer können nach einem Failure-Event `report::Report::create(failure, &session)`
+aufrufen. Der Snapshot kopiert Failure, Startmetadaten und die aktuelle korrelierte
+History. Optionale Git-/Toolchain-Abfragen laufen nur beim Start, mit Zeitgrenze
+und Abbruchmöglichkeit. Der Snapshot enthält keine eigenen Felder für absolute
+Projektpfade, Umgebung oder Repository-URL. Unveränderte Argumente und Diagnosen
+können trotzdem vertrauliche Informationen enthalten.
+
+Der Server übernimmt Failure- und ObservationError-Events in Activity; ein
+behandelter Panic oder Tracing-Error beendet nicht automatisch die Session.
+Titel, Signatur, Markdown, Provider und automatische Report-Veröffentlichung
+sind noch nicht implementiert. Aktuell enthält `Report` nur Failure und Context.
+
+Nachweise:
+
+```sh
+cargo test --all-features --test observation -- --test-threads=1
+cargo build --features cli --bin woodpecker
+python3 tests/observation.py
+```
 
 ## Paketierung
 

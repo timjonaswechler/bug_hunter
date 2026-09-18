@@ -5,6 +5,7 @@ pub mod history;
 mod input;
 mod inspect;
 pub mod launch;
+mod observation;
 mod plugin;
 mod process;
 pub mod protocol;
@@ -14,6 +15,7 @@ mod screenshot;
 mod window;
 
 use crate::command::{self, Command};
+pub use crate::report::capture::tracing_error_layer;
 pub use error::Error;
 pub use plugin::Plugin;
 pub use protocol::Capabilities;
@@ -92,6 +94,8 @@ impl<T> Drop for Pending<T> {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
+    Failure { failure: crate::report::Failure },
+    ObservationError { code: String, message: String },
     ProtocolError { code: String, message: String },
     RecordingFailed { path: String, message: String },
     Ended { reason: EndReason },
@@ -108,6 +112,7 @@ pub enum EndReason {
 type Outcome = Result<serde_json::Value, Error>;
 #[derive(Default)]
 struct State {
+    context: Option<crate::report::Context>,
     results: BTreeMap<u64, Outcome>,
     abandoned: std::collections::BTreeSet<u64>,
     events: VecDeque<Event>,
@@ -132,6 +137,20 @@ pub struct Session {
 }
 
 impl Session {
+    pub(crate) fn report_context(&self) -> crate::report::Context {
+        let state = self.shared.state.lock().unwrap();
+        let mut context = state
+            .context
+            .clone()
+            .expect("successful Ready has a context");
+        context.commands = state
+            .history
+            .iter()
+            .map(|(_, entry)| entry.clone())
+            .collect();
+        context
+    }
+
     pub fn start(config: Config) -> Result<Self, Error> {
         Self::start_cancellable(config, Arc::new(AtomicBool::new(false)))
     }

@@ -2,8 +2,8 @@
 //!
 //! Direct Rust integration uses [`session::Session`], [`session::Plugin`] and [`command`].
 //! Enable `server`, `client` or `cli` for the network and executable entry points.
-//! The experimental v3 slice implements Warp, Resource-Inspect and Shutdown.
-//! Other target commands are not implemented yet; the old v2 API has been removed.
+//! The experimental v3 slice includes controlled input, inspection, screenshots, recording,
+//! replay and failure observation. Report formatting/providers, REPL and scripts remain open.
 
 #[cfg(feature = "cli")]
 pub mod cli;

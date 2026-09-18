@@ -5,8 +5,13 @@ use std::time::Duration;
 fn launch(
     config: &Config,
     cancel: &Arc<AtomicBool>,
-) -> Result<(process::Process, cap_std::fs::Dir), Error> {
-    let (project, mut command) = config.launch.resolve(cancel)?;
+) -> Result<(process::Process, cap_std::fs::Dir, crate::report::Context), Error> {
+    let launch::Resolved {
+        project,
+        mut command,
+        application,
+        toolchain,
+    } = config.launch.resolve(cancel)?;
     if cancel.load(Ordering::Acquire) {
         return Err(Error::ended());
     }
@@ -27,12 +32,33 @@ fn launch(
         .map_err(Error::io)?;
     command
         .env("WOODPECKER_ARTIFACT_DIR", root)
+        .env(
+            "WOODPECKER_TRACING_ERRORS",
+            if config.report.tracing_errors {
+                "1"
+            } else {
+                "0"
+            },
+        )
         .env("RUST_BACKTRACE", "1")
         .env(
             "WOODPECKER_TICK_PACE",
             serde_json::to_string(&config.tick.pace).unwrap(),
         );
-    Ok((process::Process::spawn(command)?, directory))
+    let context = crate::report::Context {
+        application,
+        toolchain,
+        woodpecker_version: env!("CARGO_PKG_VERSION").into(),
+        protocol_version: protocol::VERSION,
+        capabilities: Capabilities::default(),
+        tick: config.tick.clone(),
+        platform: crate::report::Platform {
+            os: std::env::consts::OS.into(),
+            arch: std::env::consts::ARCH.into(),
+        },
+        commands: Vec::new(),
+    };
+    Ok((process::Process::spawn(command)?, directory, context))
 }
 
 pub(super) fn run(
@@ -52,14 +78,19 @@ pub(super) fn run(
     }
     let _end = EndOnDrop(shared.clone());
     let result = launch(&config, &cancel);
-    let (mut process, root) = match result {
+    let (mut process, root, context) = match result {
         Ok(process) => process,
         Err(e) => {
             let _ = ready.send(Err(e));
             return;
         }
     };
-    let mut initialized = false;
+    let mut observation = observation::Observation::new(
+        shared.clone(),
+        ready.clone(),
+        context,
+        config.report.tracing_errors,
+    );
     let mut active = BTreeMap::<u64, Command>::new();
     let mut next = 1u64;
     let mut shutdown: Option<Outcome> = None;
@@ -67,7 +98,7 @@ pub(super) fn run(
     let mut reason = None;
     let mut closed = 0;
     let mut exit_status = None;
-    let mut diagnostics = String::new();
+    let mut intentional_cleanup = false;
     let replay_root = match root.try_clone() {
         Ok(root) => Arc::new(root),
         Err(error) => {
@@ -89,22 +120,19 @@ pub(super) fn run(
             };
             match event {
                 process::Event::Diagnostic(bytes) => {
-                    // Keep startup diagnostics bounded. Never write to a potentially blocked terminal
-                    // from the coordinator. The reporting/diagnostic observer is a later slice.
-                    diagnostics.push_str(&String::from_utf8_lossy(&bytes));
-                    if diagnostics.len() > 16384 {
-                        diagnostics = diagnostics
-                            .chars()
-                            .rev()
-                            .take(8192)
-                            .collect::<String>()
-                            .chars()
-                            .rev()
-                            .collect();
+                    if let Err(error) = observation.bytes(&bytes, &mut reason) {
+                        let _ = ready.send(Err(error));
+                        return;
                     }
                 }
                 process::Event::Closed(channel) => {
                     closed += 1;
+                    if channel == "stderr"
+                        && let Err(error) = observation.finish(&mut reason)
+                    {
+                        let _ = ready.send(Err(error));
+                        return;
+                    }
                     if !stopping && process.child.try_wait().ok().flatten().is_none() {
                         reason.get_or_insert(EndReason::TransportClosed {
                             channel: channel.into(),
@@ -119,14 +147,16 @@ pub(super) fn run(
                 }
                 process::Event::Line(line) => {
                     let decoded = serde_json::from_str::<Message>(&line);
-                    if !initialized {
+                    if !observation.initialized() {
                         match decoded {
                             Ok(Message::Ready {
                                 version: protocol::VERSION,
                                 capabilities,
                             }) => {
-                                initialized = true;
-                                let _ = ready.send(Ok(capabilities));
+                                if let Err(error) = observation.ready(capabilities) {
+                                    let _ = ready.send(Err(error));
+                                    return;
+                                }
                             }
                             Ok(Message::Ready { .. }) => {
                                 let _ = ready.send(Err(Error::new(
@@ -202,6 +232,7 @@ pub(super) fn run(
             break;
         }
         if reason.is_some() && exit_status.is_none() {
+            intentional_cleanup |= process.child.try_wait().ok().flatten().is_none();
             process.terminate();
         }
         match exit_status.map_or_else(|| process.child.try_wait(), |status| Ok(Some(status))) {
@@ -215,6 +246,11 @@ pub(super) fn run(
                     std::thread::sleep(Duration::from_millis(2));
                     continue;
                 }
+                observation.exit(
+                    status.to_string(),
+                    stopping || intentional_cleanup,
+                    &mut reason,
+                );
                 if stopping && status.success() && shutdown.as_ref().is_some_and(Result::is_ok) {
                     break;
                 }
@@ -235,7 +271,7 @@ pub(super) fn run(
         if reason.is_some() {
             break;
         }
-        if initialized {
+        if observation.initialized() {
             // File transitions hold execution, not acceptance or pipe/event progress.
             if !recorder.transitioning() {
                 for _ in 0..64 {
@@ -370,14 +406,16 @@ pub(super) fn run(
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    if !initialized {
+    let _ = observation.finish(&mut reason);
+    if !observation.initialized() {
         let error = if cancel.load(Ordering::Acquire) {
             Error::ended()
         } else {
             Error::new(
                 "launch",
                 format!(
-                    "game ended before Ready; reason={reason:?}; status={exit_status:?}: {diagnostics}"
+                    "game ended before Ready; reason={reason:?}; status={exit_status:?}: {}",
+                    observation.diagnostics()
                 ),
             )
         };
@@ -496,7 +534,7 @@ fn recording_notices(
     }
 }
 
-fn push_event(shared: &Shared, reason: &mut Option<EndReason>, value: Event) {
+pub(super) fn push_event(shared: &Shared, reason: &mut Option<EndReason>, value: Event) {
     let mut state = shared.state.lock().unwrap();
     if state.events.len() < 256 {
         state.events.push_back(value);

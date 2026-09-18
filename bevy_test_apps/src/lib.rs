@@ -34,10 +34,16 @@ pub mod composition {
 
     /// Adds a normal rendered application with native input.
     pub fn rendered(app: &mut App, window: Window) -> &mut App {
-        app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        let plugins = DefaultPlugins.set(WindowPlugin {
             primary_window: Some(window),
             ..default()
-        }))
+        });
+        #[cfg(feature = "slice")]
+        let plugins = plugins.set(bevy::log::LogPlugin {
+            custom_layer: woodpecker::session::tracing_error_layer,
+            ..default()
+        });
+        app.add_plugins(plugins)
     }
 
     /// Adds a renderer-free test composition with one fixed, data-only UI surface.

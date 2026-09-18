@@ -13,6 +13,10 @@ client = ["server", "dep:ureq", "dep:tungstenite"]
 cli = ["client", "dep:clap", "dep:toml"]
 
 [dependencies]
+base64 = "0.22"
+sha2 = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 cap-std = "3"
 cap-fs-ext = "3"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
@@ -22,7 +26,7 @@ getrandom = { version = "0.4", optional = true }
 ureq = { version = "3", default-features = false, features = ["json"], optional = true }
 tungstenite = { version = "0.29", optional = true }
 libc = "0.2"
-bevy = { version = "0.19.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_window", "bevy_camera", "bevy_picking", "mouse", "keyboard", "touch", "debug"] }
+bevy = { version = "0.19.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_window", "bevy_camera", "bevy_picking", "bevy_log", "mouse", "keyboard", "touch", "debug"] }
 clap = { version = "4.5", features = ["derive", "string"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
@@ -32,3 +36,7 @@ toml = { version = "0.8", optional = true }
 name = "woodpecker"
 path = "src/cli/main.rs"
 required-features = ["cli"]
+
+[[example]]
+name = "observation_fixture"
+path = "tests/fixtures/observation.rs"

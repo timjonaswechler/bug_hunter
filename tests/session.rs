@@ -432,6 +432,10 @@ fn recording_keeps_protocol_failures_and_unanswered_commands_on_process_exit() {
     assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
     assert!(matches!(
         session.receive_event().unwrap(),
+        session::Event::Failure { failure } if matches!(failure.origin(), report::Origin::ProcessExit { .. })
+    ));
+    assert!(matches!(
+        session.receive_event().unwrap(),
         session::Event::Ended { .. }
     ));
     assert!(session.receive(pending).is_err());
@@ -561,6 +565,10 @@ fn exit_drains_responses_and_closes_events_once() {
     let mut session = Session::start(config).unwrap();
     let pending = session.send(warp::Stop {}).unwrap();
     assert!(!session.receive(pending).unwrap().was_running);
+    assert!(matches!(
+        session.receive_event().unwrap(),
+        session::Event::Failure { failure } if matches!(failure.origin(), report::Origin::ProcessExit { .. })
+    ));
     assert!(matches!(
         session.receive_event().unwrap(),
         session::Event::Ended { .. }

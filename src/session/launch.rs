@@ -44,7 +44,7 @@ impl Config {
         Ok(())
     }
 
-    pub(super) fn resolve(&self, cancel: &Arc<AtomicBool>) -> Result<(PathBuf, Command), Error> {
+    pub(super) fn resolve(&self, cancel: &Arc<AtomicBool>) -> Result<Resolved, Error> {
         self.validate()?;
         if !self.manifest_path.is_file() {
             return Err(Error::new(
@@ -128,6 +128,48 @@ impl Config {
                 "package and version must resolve uniquely",
             ));
         }
+        let package = packages.iter().find(|p| p["name"] == self.package).unwrap();
+        let package_dir = package["manifest_path"]
+            .as_str()
+            .and_then(|p| std::path::Path::new(p).parent());
+        let source = package_dir.and_then(|directory| {
+            let commit = optional_command(
+                Command::new("git")
+                    .args(["rev-parse", "--verify", "HEAD"])
+                    .current_dir(directory),
+                cancel,
+            )?;
+            let dirty = optional_command(
+                Command::new("git")
+                    .args(["status", "--porcelain", "--untracked-files=normal"])
+                    .current_dir(directory),
+                cancel,
+            )?;
+            Some(crate::report::SourceRevision {
+                commit,
+                dirty: !dirty.is_empty(),
+            })
+        });
+        let application = crate::report::Application {
+            package: self.package.clone(),
+            version: package["version"].as_str().unwrap().into(),
+            target: self.target.clone(),
+            features: self.features.clone(),
+            arguments: self.arguments.clone(),
+            source,
+        };
+        let toolchain = crate::report::Toolchain {
+            cargo: optional_command(
+                Command::new(&cargo).arg("--version").current_dir(&project),
+                cancel,
+            ),
+            rustc: optional_command(
+                Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+                    .arg("--version")
+                    .current_dir(&project),
+                cancel,
+            ),
+        };
         let mut command = Command::new(cargo);
         command
             .args(["run", "--quiet", "--manifest-path"])
@@ -146,6 +188,89 @@ impl Config {
             command.arg("--features").arg(self.features.join(","));
         }
         command.arg("--").args(&self.arguments);
-        Ok((project, command))
+        Ok(Resolved {
+            project,
+            command,
+            application,
+            toolchain,
+        })
+    }
+}
+
+pub(super) struct Resolved {
+    pub project: PathBuf,
+    pub command: Command,
+    pub application: crate::report::Application,
+    pub toolchain: crate::report::Toolchain,
+}
+
+// Metadata is optional, bounded and cancellable. A missing or hung tool must not prevent launch.
+fn optional_command(command: &mut Command, cancel: &AtomicBool) -> Option<String> {
+    let mut owned = Command::new(command.get_program());
+    owned.args(command.get_args());
+    if let Some(dir) = command.get_current_dir() {
+        owned.current_dir(dir);
+    }
+    let mut process = process::Process::spawn(owned).ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let mut output = String::new();
+    let mut closed = 0;
+    loop {
+        if cancel.load(Ordering::Acquire) || std::time::Instant::now() >= deadline {
+            return None;
+        }
+        for _ in 0..128 {
+            let Ok(event) = process.events.try_recv() else {
+                break;
+            };
+            match event {
+                process::Event::Line(line) => {
+                    output.push_str(&line);
+                    output.push('\n');
+                    if output.len() > 64 * 1024 {
+                        return None;
+                    }
+                }
+                process::Event::Closed(_) => closed += 1,
+                process::Event::Failed(..) => return None,
+                process::Event::Diagnostic(_) => {}
+            }
+        }
+        if let Some(status) = process.child.try_wait().ok()?
+            && closed == 2
+        {
+            return status.success().then(|| output.trim().to_owned());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn optional_metadata_is_trimmed_and_missing_failed_or_hung_tools_are_nonfatal() {
+        let cancel = AtomicBool::new(false);
+        assert_eq!(
+            optional_command(
+                Command::new("sh").args(["-c", "printf '  version\\n'"]),
+                &cancel
+            ),
+            Some("version".into())
+        );
+        assert!(
+            optional_command(&mut Command::new("/nonexistent/woodpecker-tool"), &cancel).is_none()
+        );
+        assert!(optional_command(Command::new("sh").args(["-c", "exit 2"]), &cancel).is_none());
+        let start = std::time::Instant::now();
+        assert!(optional_command(Command::new("sh").args(["-c", "sleep 30"]), &cancel).is_none());
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        assert!(
+            optional_command(
+                Command::new("sh").args(["-c", "sleep 30"]),
+                &AtomicBool::new(true)
+            )
+            .is_none()
+        );
     }
 }

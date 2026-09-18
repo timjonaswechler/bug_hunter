@@ -20,7 +20,8 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
    prüfen. Research und ADRs nur für die jeweilige technische Frage hinzunehmen.
 4. Den aktuellen Stand unter „Konkreter nächster Durchstich“ beachten.
    Screenshot, Recording und Replay sind umgesetzt. Diese Übergabe gehört zum
-   Replay-Commit auf `code_ownership`, aufbauend auf `a41fea4`.
+   Commit für Fehlerbeobachtung und Snapshot-Konstruktion auf `code_ownership`,
+   aufbauend auf `82cd34b`.
    Keine Commits oder Subagenten ohne ausdrückliche Zustimmung.
    Reversible Implementierungsdetails innerhalb des beauftragten Umfangs
    selbstständig entscheiden.
@@ -78,6 +79,11 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
 - Der Server verwaltet mehrere unabhängige Sessions über HTTP und fest gebundene
   WebSocket-Verbindungen. Activity besitzt Cursor und erkennbare Lücken.
   Client-Trennung beendet angenommene Arbeit nicht.
+- Fehlerbeobachtung verarbeitet stderr während der laufenden Session. Ein verketteter
+  Panic-Hook und ein optionaler Tracing-Layer liefern versionierte Chunk-Marker.
+  Failure- und ObservationError-Events bleiben von Command-Outcomes getrennt.
+  Der Server übernimmt die Events in Activity. `Report::create` kopiert die
+  Startmetadaten und die aktuelle History; spätere Änderungen verändern den Snapshot nicht.
 - CLI, headless Zähleranwendung, Einzel-Session-Stopp, gemeinsame Serverfrist,
   SIGTERM und erstes/zweites Ctrl+C sind vorhanden.
 - Der v2-Ausführungsweg ist entfernt: alte Host-/Driver-Fassade, Plugin- und
@@ -92,8 +98,8 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
   separatem Package.
 
 Das ist weiterhin ein experimenteller v3-Teildurchstich, keine vollständige
-Implementation des Zielvertrags. Insbesondere enthält `report` bislang nur
-Konfiguration; alte Funktionen werden nicht durch Kompatibilitäts-Exports angeboten.
+Implementation des Zielvertrags. Insbesondere fehlen noch Report-Titel, Signatur,
+Markdown und Provider; alte Funktionen werden nicht durch Kompatibilitäts-Exports angeboten.
 
 ## Offene Aufgaben in empfohlener Reihenfolge
 
@@ -143,10 +149,10 @@ während aktiver Aufnahme beziehungsweise Wiedergabe.
 
 ### 4. Fehlerbeobachtung und Reports
 
-- [ ] Laufende stderr-Diagnose, Panic-Hook, optionales Tracing und Marker-Framing
+- [x] Laufende stderr-Diagnose, Panic-Hook, optionales Tracing und Marker-Framing
   ergänzen; Beobachtung von Session-Transport und Command-Outcomes getrennt halten.
-- [ ] Beim Start erforderliche Metadaten erfassen und beim Fehler einen
-  unveränderlichen Report-Snapshot mit History konstruieren.
+- [x] Beim Start erforderliche Metadaten erfassen und über `Report::create`
+  einen unveränderlichen Snapshot mit Failure und History konstruieren.
 - [ ] Titel, Markdown, Fehlerdaten und Signatur einschließlich Golden Vectors umsetzen.
 - [ ] Zuerst den lokalen Provider, danach GitHub mit Duplikatsuche und lokalem
   Rückfall implementieren. Echte Veröffentlichung braucht ausdrückliche Freigabe.
@@ -192,8 +198,13 @@ Context-Menu-Sessions geprüft. Recording und Replay aus Block 3 sind implementi
 Die gerenderte Replay-Abnahme besteht in vier erneuten Läufen ohne Codeänderung.
 Die früheren schwarzen PNGs und die mögliche Display-Bedingung sind unten festgehalten.
 
-Als Nächstes folgt Block 4: Fehlerbeobachtung und Reports gemäß Zielvertrag,
-zunächst laufende Diagnoseerfassung und unveränderliche Report-Snapshots.
+Die Diagnoseerfassung und Snapshot-Konstruktion aus Block 4 sind umgesetzt.
+`Report` enthält derzeit Failure und Context, noch keinen Titel, keine Signatur
+und kein Markdown. Als Nächstes diese gemeinsame Report-Darstellung gemäß Zielvertrag
+ergänzen, einschließlich Signatur-Golden-Vectors. Danach folgen Local, Github mit
+Fallback und die automatische clientunabhängige Report-Arbeit im Server.
+Aktuell werden Failure-Events weitergereicht, aber weder Reports automatisch
+persistiert noch veröffentlicht. Es gibt weiterhin kein `failure.json`.
 Vor weiterer Arbeit den tatsächlichen Arbeitsbaum prüfen und spätere lokale
 Änderungen erhalten.
 
@@ -218,6 +229,37 @@ Die Reflection-Fixtures ergänzen die Varianten und Fehlerfälle aus Block 1,
 ohne dafür Fenster zu öffnen.
 
 ## Nachweise und bekannte Grenzen
+
+Nach Fehlerbeobachtung und Snapshot-Konstruktion bestanden:
+
+- Clippy für alle Targets/Features mit `-D warnings`.
+- `cargo test --all-features -- --test-threads=1`: 86 Bibliotheks-/CLI-Tests,
+  5 Beobachtungs-Prozesstests und 13 Session-Prozesstests.
+- `cargo test --no-default-features --lib -- --test-threads=1`: 66 Tests.
+- CLI-, Zähler- und Context-Menu-Builds.
+- `python3 tests/observation.py`: zwei echte Sessions, Failure-Events über
+  CLI/Activity, Tracing-Error und behandelter Panic bei weiterhin bedienbarer Session.
+- `python3 tests/slice.py` und `python3 tests/ui.py`, einschließlich Replay.
+- `python3 tests/shutdown.py`: vier Szenarien mit zwölf Prozessen.
+- Format- und Diff-Prüfung.
+
+Ein weiterer kombinierter Prüfaufruf erreichte nach einem erneuten Dependency-Build
+die gesetzte 200-Sekunden-Werkzeugfrist. Zu diesem Zeitpunkt waren die 86
+Bibliotheks-/CLI-Tests und die 5 Beobachtungs-Prozesstests grün; die laufenden
+Session-Tests wurden unterbrochen. Deren separater Wiederholungslauf bestand
+mit allen 13 Tests.
+
+Der Markerparser ist an jeder Byte-Trennstelle, mit gemischten Event-IDs,
+beschädigten/unvollständigen Markern und unveränderten menschlichen Diagnosebytes
+geprüft. Handshake-Tests prüfen beide Reihenfolgen von Ready und Layer-Bestätigung.
+Echte Bevy-Prozesse prüfen System-, Worker- und Task-Panics, unbekannte Payloads,
+verketteten vorherigen Hook, Fehler vor Ready, Tracing-Filter und fehlenden Layer.
+Der Abort-Nachweis beendet den Prozess aus dem verketteten Hook; ein separat mit
+`panic=abort` gebautes Programm wurde noch nicht getestet.
+Der Snapshot-Nachweis hält einen Warp offen, konstruiert den Report und beendet
+danach Warp und Session, ohne dass sich der Report verändert.
+Optionale Metadatenabfragen sind auf eine Sekunde je Toolaufruf begrenzt und
+abbrechbar; fehlende oder hängende Zusatzwerkzeuge verhindern den Start nicht.
 
 Nach dem Replay-Durchstich bestanden:
 

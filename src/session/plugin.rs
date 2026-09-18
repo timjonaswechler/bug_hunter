@@ -52,6 +52,7 @@ impl bevy::app::Plugin for Plugin {
             std::path::Path::new(&root).is_dir(),
             "invalid artifact directory"
         );
+        crate::report::capture::install_hook();
         let pace = std::env::var("WOODPECKER_TICK_PACE")
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -91,6 +92,7 @@ impl bevy::app::Plugin for Plugin {
         let root = std::env::var_os("WOODPECKER_ARTIFACT_DIR")
             .expect("session requires WOODPECKER_ARTIFACT_DIR");
         super::screenshot::install(app, std::path::Path::new(&root));
+        crate::report::capture::layer_status();
         // Startup schedules precede the first control iteration, so Ready is sent there.
         app.add_systems(PostStartup, ready);
     }
