@@ -1,8 +1,8 @@
 # Experimenteller Durchstich
 
 Dieser Build ist keine vollständige v3-Implementation. Er implementiert Warp,
-Resource-/Entity-Inspect, Pointer-/Keyboard-/Text-Input, Screenshot, Recording und Shutdown.
-Replay und Reporting folgen in weiteren Durchstichen. Der einzige unterstützte Weg verwendet
+Resource-/Entity-Inspect, Pointer-/Keyboard-/Text-Input, Screenshot, Recording, Replay und Shutdown.
+Reporting folgt in einem weiteren Durchstich. Der einzige unterstützte Weg verwendet
 `session`; die v2-Implementation und ihre öffentlichen Einstiegspunkte sind entfernt.
 
 Entity-Inspect unterstützt Handle-Abfragen, Componentfilter, Summary, Component-Namen,
@@ -116,7 +116,8 @@ Jede Verzeichniskomponente wird ohne Symlink-Folgen geöffnet, die Datei mit
 Diese Regeln sind strenger als die Screenshot-Pfadregeln.
 
 Die Version-1-Datei enthält Header, Spiel-Commands mit Outcomes in Annahmereihenfolge
-und Footer. Recording-Steuerung, Shutdown und Events werden nicht aufgenommen.
+und Footer. Recording-/Replay-Steuerung, Shutdown und Events werden nicht aufgenommen.
+Interne Replay-Plan-Commands werden dagegen wie andere Spiel-Commands aufgezeichnet.
 Dateien enthalten ungekürzte Argumente und Inspect-Ergebnisse und können vertraulich
 sein. Aufnahmen erzeugen selbst keine Ticks.
 
@@ -127,11 +128,51 @@ Dateiworker noch offene Commands als `unanswered` und einen `session_ended`-Foot
 zu schreiben. Ein erzwungener Abbruch wartet nicht unbegrenzt auf blockierende Datei-I/O.
 Reguläres Shutdown verlangt zuerst den Abschluss offener Commands und Recording-Stop.
 `session stop` und das Serverende stellen diese Vorbedingungen selbst durch
-ausdrücklichen Warp-/Recording-Stop her. Der Verwaltungs-Stopp wartet dabei auf
+ausdrücklichen Replay-/Warp-/Recording-Stop her. Der Verwaltungs-Stopp wartet dabei auf
 den Recording-Footer; ein Fehler dieses Abschlusses ergibt `Failed`.
 
-Replay und die strikte Validierung eingelesener Recording-Dateien sind noch nicht
-implementiert. Der vollständige Dateivertrag steht in [target.md](target.md#recording-dateivertrag).
+## Replay
+
+```sh
+target/debug/woodpecker --address 127.0.0.1:4100 session submit "$ID" \
+  --command '{"command":"replay.start","arguments":{"path":"recordings/run.jsonl"}}'
+target/debug/woodpecker --address 127.0.0.1:4100 session submit "$ID" \
+  --command '{"command":"replay.stop","arguments":{}}'
+```
+
+Start bleibt bis zum Ende des Plans pending. Erfolg liefert
+`{"outcome":{"kind":"completed"}}`, kontrollierter Stop
+`{"outcome":{"kind":"stopped"}}`. Technische Blockierungen liefern
+`{"outcome":{"kind":"blocked","code":"command_protocol_failed","message":"..."}}`.
+Stop antwortet erst nach dem Auslaufen bereits gesendeter Commands mit
+`{"was_running":true}`. Ohne laufendes Replay liefert er `false`.
+
+Der private Loader öffnet den normalisierten `.jsonl`-Pfad ohne Symlinks und
+validiert die gesamte Datei vor dem ersten Spiel-Command. Dazu gehören Header,
+Version, doppelte und unbekannte Felder, Argumente, konkrete Output-Typen und Footer.
+Ladefehler enthalten Pfad und soweit bekannt Zeile. Sie gehen an das Start-Pending,
+nicht in den Session-Eventstrom. Der vollständige Vertrag steht in
+[target.md](target.md#recording-dateivertrag).
+
+Replay verwendet den aktuellen Spielzustand. Alte Inspect-Werte, Ablehnungen oder
+Screenshot-Overwrite-Flags sind keine Erwartungen an den neuen Lauf.
+Erfolgreiche aufgezeichnete Warps werden auf `executed_ticks` verkürzt;
+Null-Tick-Warps und zugehörige Stops entfallen. Benachbarte Warps werden derzeit
+nicht zusammengefasst. Vor jedem Warp wartet Replay auf frühere Outcomes und
+nach jedem Warp auf dessen Abschluss.
+
+Während Vorbereitung, Ausführung und Stop ist von außen nur `replay.stop`
+zulässig. Weitere Starts ergeben `replay_already_running`, andere Commands
+`replay_in_progress`. Direktes Shutdown liefert bei offenem Replay
+`shutdown_commands_pending`, ohne ID oder History-Eintrag.
+Stop während des Ladens wartet auf die Bestätigung der Ladeaufgabe.
+Eine vorher angenommene Recording-Dateibarriere hält auch den Loader zurück.
+
+`tests/slice.py` prüft eine echte Zähleraufnahme, vollständige Vorabvalidierung
+ohne Tick sowie Verwaltungs-Stopp bei gleichzeitigem Replay und Recording.
+`tests/ui.py` enthält zusätzlich die Wiederholung der vollständigen UI-Aufnahme.
+Der aktuelle Nachweis und offene Render-Befund stehen in
+[next-steps.md](next-steps.md#nachweise-und-bekannte-grenzen).
 
 ## Paketierung
 

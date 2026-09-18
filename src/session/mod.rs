@@ -9,6 +9,7 @@ mod plugin;
 mod process;
 pub mod protocol;
 mod recording;
+mod replay;
 mod screenshot;
 mod window;
 

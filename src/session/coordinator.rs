@@ -68,6 +68,14 @@ pub(super) fn run(
     let mut closed = 0;
     let mut exit_status = None;
     let mut diagnostics = String::new();
+    let replay_root = match root.try_clone() {
+        Ok(root) => Arc::new(root),
+        Err(error) => {
+            let _ = ready.send(Err(Error::io(error)));
+            return;
+        }
+    };
+    let mut replay = replay::Replay::new(replay_root);
     let mut recorder = recording::Recorder::new(root);
     let mut deferred = VecDeque::<(u64, Command)>::new();
     loop {
@@ -171,6 +179,7 @@ pub(super) fn run(
                             shutdown = Some(outcome);
                         } else {
                             recorder.terminal(id, &outcome);
+                            replay.terminal(id, &outcome);
                             complete(&shared, id, outcome);
                         }
                     } else {
@@ -244,15 +253,25 @@ pub(super) fn run(
             if reason.is_some() {
                 continue;
             }
+            for (id, outcome) in replay.poll(recorder.transitioning()) {
+                complete(&shared, id, outcome);
+            }
             for _ in 0..64 {
                 let Ok(Operation::Send(command, response)) = input.try_recv() else {
                     break;
                 };
+                // Observe completed loads before the next external command, including Stop.
+                for (id, outcome) in replay.poll(recorder.transitioning()) {
+                    complete(&shared, id, outcome);
+                }
                 let is_shutdown = matches!(command, Command::Shutdown(_));
                 let id = if stopping {
                     Err(Error::ended())
                 } else if is_shutdown
-                    && (!active.is_empty() || !deferred.is_empty() || recorder.transitioning())
+                    && (!active.is_empty()
+                        || !deferred.is_empty()
+                        || recorder.transitioning()
+                        || replay.busy())
                 {
                     Err(Error::new(
                         "shutdown_commands_pending",
@@ -281,19 +300,23 @@ pub(super) fn run(
                         let _ = response.send(Err(e));
                     }
                     Ok(id) => {
-                        let mut state = shared.state.lock().unwrap();
-                        if state.history.len() == 50 {
-                            state.history.pop_front();
-                        }
-                        state.history.push_back((
-                            id,
-                            history::Entry {
-                                command: command.clone(),
-                                outcome: history::Outcome::Unanswered,
-                            },
-                        ));
-                        drop(state);
+                        accepted(&shared, id, &command, false);
                         let _ = response.send(Ok(id));
+                        if matches!(command, Command::ReplayStart(_) | Command::ReplayStop(_)) {
+                            replay.control(id, &command);
+                            continue;
+                        }
+                        if replay.busy() {
+                            complete(
+                                &shared,
+                                id,
+                                Err(Error::new(
+                                    "replay_in_progress",
+                                    "only replay.stop is allowed during replay",
+                                )),
+                            );
+                            continue;
+                        }
                         if matches!(
                             command,
                             Command::RecordingStart(_) | Command::RecordingStop(_)
@@ -320,6 +343,30 @@ pub(super) fn run(
                     }
                 }
             }
+            // External Stop gets priority over freeing another batch from the plan.
+            if reason.is_none() && !recorder.transitioning() && deferred.is_empty() {
+                for _ in 0..64 {
+                    let earlier = active.keys().any(|id| !replay.owns(*id));
+                    let Some(command) = replay.next(earlier) else {
+                        break;
+                    };
+                    if next == u64::MAX {
+                        replay.submission_failed(Error::RequestIdExhausted);
+                        break;
+                    }
+                    let id = next;
+                    next += 1;
+                    accepted(&shared, id, &command, true);
+                    replay.submitted(id, &command);
+                    if let Err(error) =
+                        send_game(&process, &mut active, &mut recorder, &shared, id, command)
+                    {
+                        replay.terminal(id, &Err(Error::io("game stdin writer disconnected")));
+                        reason = Some(error);
+                        break;
+                    }
+                }
+            }
         }
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -337,6 +384,13 @@ pub(super) fn run(
         let _ = ready.send(Err(error));
     }
     drop(process);
+    let error = match &reason {
+        Some(EndReason::TransportFailed { message, .. }) => Error::io(message),
+        _ => Error::Ended,
+    };
+    for (id, outcome) in replay.end(error) {
+        complete(&shared, id, outcome);
+    }
     recording_notices(&shared, &mut reason, recorder.end(&cancel));
     if stopping {
         let result = if reason.is_some() || cancel.load(Ordering::Acquire) {
@@ -352,6 +406,24 @@ pub(super) fn run(
     }
     state.ended = true;
     shared.changed.notify_all();
+}
+
+fn accepted(shared: &Shared, id: u64, command: &Command, internal: bool) {
+    let mut state = shared.state.lock().unwrap();
+    if state.history.len() == 50 {
+        state.history.pop_front();
+    }
+    state.history.push_back((
+        id,
+        history::Entry {
+            command: command.clone(),
+            outcome: history::Outcome::Unanswered,
+        },
+    ));
+    // Internal commands have normal IDs/history but no Pending consumer.
+    if internal {
+        state.abandoned.insert(id);
+    }
 }
 
 fn send_game(
@@ -437,4 +509,31 @@ fn push_event(shared: &Shared, reason: &mut Option<EndReason>, value: Event) {
         });
     }
     shared.changed.notify_all();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_commands_keep_bounded_history_without_unclaimed_results() {
+        let shared = Shared::default();
+        let command = Command::Stop(command::tick::warp::Stop {});
+        for id in 1..=100 {
+            accepted(&shared, id, &command, true);
+        }
+        assert_eq!(shared.state.lock().unwrap().history.len(), 50);
+        for id in 1..=100 {
+            complete(&shared, id, Ok(serde_json::json!({"was_running":false})));
+        }
+        let state = shared.state.lock().unwrap();
+        assert!(state.results.is_empty());
+        assert!(state.abandoned.is_empty());
+        assert!(
+            state
+                .history
+                .iter()
+                .all(|(_, entry)| matches!(entry.outcome, history::Outcome::Completed { .. }))
+        );
+    }
 }

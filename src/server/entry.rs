@@ -1,6 +1,6 @@
 use super::{activity, protocol::*};
 use crate::{
-    command::{Command, Empty, recording, tick::warp},
+    command::{Command, Empty, recording, replay, tick::warp},
     session::{self, Error, Session},
 };
 use serde_json::{Value, json};
@@ -207,6 +207,8 @@ fn accept(
 
 fn run(entry: &Entry, session: &mut Session, input: mpsc::Receiver<Submission>) {
     let mut pending = Vec::new();
+    let mut replay_stop = None;
+    let mut replay_stopped = false;
     let mut stop_sent = false;
     let mut shutdown_sent = false;
     let mut recording_stop = None;
@@ -242,6 +244,9 @@ fn run(entry: &Entry, session: &mut Session, input: mpsc::Receiver<Submission>) 
             let name = token.command().name();
             match result {
                 Ok(Some(output)) => {
+                    if replay_stop == Some(id) {
+                        replay_stopped = true;
+                    }
                     entry.push(
                         json!({"kind":"completed","request_id":id,"command":name,"output":output}),
                     );
@@ -253,7 +258,7 @@ fn run(entry: &Entry, session: &mut Session, input: mpsc::Receiver<Submission>) 
                 Err(error) => {
                     let technical = !matches!(error, Error::Rejected { .. });
                     entry.push(json!({"kind":if technical {"failed"} else {"rejected"},"request_id":id,"command":name,"error":error}));
-                    if id == u64::MAX || recording_stop == Some(id) {
+                    if id == u64::MAX || recording_stop == Some(id) || replay_stop == Some(id) {
                         entry.transition(Lifecycle::Failed, Some(error));
                         return;
                     }
@@ -273,7 +278,18 @@ fn run(entry: &Entry, session: &mut Session, input: mpsc::Receiver<Submission>) 
         }
         shutdown_sent |= pending.iter().any(|p| p.request_id().as_u64() == u64::MAX);
         if entry.detail().state == Lifecycle::Stopping && !shutdown_sent {
-            if !stop_sent {
+            if replay_stop.is_none() {
+                match accept(entry, session, replay::Stop {}.into(), &mut pending) {
+                    Result::Pending { request_id, .. } => replay_stop = Some(request_id),
+                    Result::Error { code, message } => {
+                        entry.transition(Lifecycle::Failed, Some(Error::new(&code, message)));
+                        return;
+                    }
+                    _ => unreachable!("submission result"),
+                }
+            } else if !replay_stopped {
+                // Replay owns its internal Warp-Stop and drains already-submitted work first.
+            } else if !stop_sent {
                 let result = accept(entry, session, warp::Stop {}.into(), &mut pending);
                 if let Result::Error { code, message } = result {
                     entry.transition(Lifecycle::Failed, Some(Error::new(&code, message)));

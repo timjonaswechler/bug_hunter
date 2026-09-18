@@ -129,12 +129,24 @@ def run():
             assert [entry["command"] for entry in lines[1:-1]] == [
                 "inspect.query", "tick.warp.start", "inspect.query"]
 
+            # Replay uses the current world, not the old Inspect values as expectations.
+            replayed = submit(first, "replay.start", {"path": "recordings/counter.jsonl"})
+            assert outcome(first, replayed["request_id"])["output"] == {
+                "outcome": {"kind": "completed"}}
+            assert inspect(first)["ticks"] == 26
+            # Even a valid executable prefix must not run if its footer is missing.
+            (artifact_root / "recordings/incomplete.jsonl").write_text(
+                "\n".join(json.dumps(line) for line in lines[:-1]) + "\n")
+            invalid = submit(first, "replay.start", {"path": "recordings/incomplete.jsonl"})
+            assert outcome(first, invalid["request_id"])["error"]["code"] == "invalid_recording"
+            assert inspect(first)["ticks"] == 26
+
             # Each CLI call disconnects. Accepted work must remain live between calls.
             slow = submit(first, "tick.warp.start", {
                 "ticks": 100000, "pace": {"kind": "ticks_per_second", "target": 5.0},
             })
             time.sleep(0.3)
-            assert 13 < inspect(first)["ticks"] < 100013
+            assert 26 < inspect(first)["ticks"] < 100026
             changed = submit(first, "tick.warp.set_pace", {
                 "pace": {"kind": "ticks_per_second", "target": 10.0},
             })
@@ -155,12 +167,30 @@ def run():
 
             active_recording = submit(first, "recording.start", {"path": "recordings/managed-stop.jsonl"})
             assert outcome(first, active_recording["request_id"])["kind"] == "completed"
+            long_plan = [
+                {"type": "recording_started", "format_version": 1},
+                {"type": "command", "command": "tick.warp.start",
+                 "arguments": {"ticks": 100000, "pace": {"kind": "ticks_per_second", "target": 5.0}},
+                 "outcome": {"status": "unanswered"}},
+                {"type": "recording_ended", "outcome": "session_ended", "recorded_commands": 1},
+            ]
+            (artifact_root / "recordings/long.jsonl").write_text(
+                "\n".join(json.dumps(line) for line in long_plan))
+            replayed = submit(first, "replay.start", {"path": "recordings/long.jsonl"})
+            # A completed load remains active until management explicitly stops Replay.
+            time.sleep(0.3)
+            denied = submit(first, "tick.warp.stop", {})
+            assert outcome(first, denied["request_id"])["error"]["code"] == "replay_in_progress"
             cli("session", "stop", first)
             until(lambda: state(first, "Ended"))
+            assert outcome(first, replayed["request_id"])["output"] == {
+                "outcome": {"kind": "stopped"}}
             managed = [json.loads(line) for line in
                        (artifact_root / "recordings/managed-stop.jsonl").read_text().splitlines()]
-            assert managed[-1] == {"type": "recording_ended", "outcome": "stopped", "recorded_commands": 1}
-            assert managed[1]["command"] == "tick.warp.stop"
+            assert managed[-1] == {"type": "recording_ended", "outcome": "stopped", "recorded_commands": 3}
+            assert [line["command"] for line in managed[1:-1]] == [
+                "tick.warp.start", "tick.warp.stop", "tick.warp.stop"]
+            assert managed[1]["outcome"]["output"]["outcome"] == "stopped"
             assert cli("session", "inspect", second)["state"] == "Ready"
             assert len(cli("session", "ls")) == 2
             try:

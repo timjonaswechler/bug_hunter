@@ -19,7 +19,9 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
    [zu portierende Testfälle](implementation-plan.md#fachliche-testfälle-für-die-offenen-durchstiche)
    prüfen. Research und ADRs nur für die jeweilige technische Frage hinzunehmen.
 4. Den aktuellen Stand unter „Konkreter nächster Durchstich“ beachten.
-   Screenshot und Recording sind umgesetzt; als Nächstes folgt Replay.
+   Screenshot, Recording und Replay sind umgesetzt. Diese Übergabe gehört zum
+   Replay-Commit auf `code_ownership`, aufbauend auf `a41fea4`.
+   Keine Commits oder Subagenten ohne ausdrückliche Zustimmung.
    Reversible Implementierungsdetails innerhalb des beauftragten Umfangs
    selbstständig entscheiden.
 
@@ -67,6 +69,12 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
   Outcomes werden in Annahmereihenfolge geschrieben. Tests prüfen Zustände,
   Pfadsicherheit, Schreibfehler und unerwartetes Prozessende. Die Zähler- und
   UI-Abnahmen prüfen die erzeugten JSONL-Dateien über den tatsächlichen CLI-Weg.
+- Replay validiert die vollständige v1-Datei auf einem separaten Worker, bevor
+  der erste Spiel-Command ausgeführt wird. Der typisierte Plan berücksichtigt
+  effektive Warp-Ticks, Command-Barrieren, Stop und technische Blockierungen.
+  Interne Commands teilen IDs, History und Recording mit externen Commands.
+  Der Verwaltungs-Stopp beendet Replay vor Recording und Shutdown.
+  Zähler- und UI-Roundtrips sind über Server und CLI geprüft.
 - Der Server verwaltet mehrere unabhängige Sessions über HTTP und fest gebundene
   WebSocket-Verbindungen. Activity besitzt Cursor und erkennbare Lücken.
   Client-Trennung beendet angenommene Arbeit nicht.
@@ -124,9 +132,9 @@ Client-Vertrag; fehlende Unterstützung wird korrekt abgelehnt.
 - [x] Recording-Start/-Stop, Zustände, Dateibarrieren, Pfadsicherheit und das neue
   JSONL-Format implementieren. Commands und Outcomes in Annahmereihenfolge schreiben.
 - [x] Schreibfehler, unvollständige Aufnahme, Session-Ende und Footer-Abschluss prüfen.
-- [ ] Replay vollständig vor dem ersten Spiel-Command validieren und in der
+- [x] Replay vollständig vor dem ersten Spiel-Command validieren und in der
   laufenden Session ausführen. Effektiv ausgeführte Warp-Ticks berücksichtigen.
-- [ ] Stop während Laden und Ausführung, technische Blockierungen sowie
+- [x] Stop während Laden und Ausführung, technische Blockierungen sowie
   Command- und Shutdown-Barrieren umsetzen.
 
 Abschluss: Roundtrips prüfen Reihenfolge und Format, nicht beliebige Gleichheit
@@ -180,12 +188,14 @@ Entity-Inspect sowie Pointer-, Keyboard- und Text-Commands sind umgesetzt.
 Die Reflection-Matrix aus Block 1 ist abgeschlossen. Dafür waren nur Tests und
 Dokumentation nötig, keine Änderungen am produktiven Inspect-Verhalten.
 Screenshot aus Block 2 ist ebenfalls umgesetzt und mit zwei gerenderten
-Context-Menu-Sessions geprüft. Recording-Start/-Stop aus Block 3 sind implementiert.
-Als Nächstes den Replay-Loader und danach die Replay-Ausführung ergänzen:
-gesamte Datei strikt vorab validieren, effektive Warp-Ticks übernehmen, technische
-Blockierungen und Stop während Laden/Ausführung abdecken.
-Recording-interne Versionstypen bleiben privat; keine alten Replay-Dateien als
-gültigen v1-Nachweis verwenden. Noch kein Replay-Code und kein neuer Commit.
+Context-Menu-Sessions geprüft. Recording und Replay aus Block 3 sind implementiert.
+Die gerenderte Replay-Abnahme besteht in vier erneuten Läufen ohne Codeänderung.
+Die früheren schwarzen PNGs und die mögliche Display-Bedingung sind unten festgehalten.
+
+Als Nächstes folgt Block 4: Fehlerbeobachtung und Reports gemäß Zielvertrag,
+zunächst laufende Diagnoseerfassung und unveränderliche Report-Snapshots.
+Vor weiterer Arbeit den tatsächlichen Arbeitsbaum prüfen und spätere lokale
+Änderungen erhalten.
 
 Die fehlenden Glyphen für `ü`, `ß`, Emoji und Japanisch in der Context-Menu-
 Standardschrift sind reproduziert. Die gespeicherten Unicode-Texte sind korrekt.
@@ -209,6 +219,39 @@ ohne dafür Fenster zu öffnen.
 
 ## Nachweise und bekannte Grenzen
 
+Nach dem Replay-Durchstich bestanden:
+
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo test --all-features -- --test-threads=1`: 79 Bibliotheks-/CLI-Tests
+  und 13 Prozess-Integrationstests.
+- `cargo test --no-default-features --lib -- --test-threads=1`: 59 Tests.
+- CLI-, Zähler- und Context-Menu-Builds sowie `python3 tests/slice.py` mit vier Sessions.
+- Vier erneute Läufe von `python3 tests/ui.py --capture-dir ...`, jeweils mit zwei
+  gerenderten Sessions, vollständigem Replay, Screenshot-Prüfungen, exakter
+  Replay-Ticksumme und unveränderter zweiter Session.
+- `cargo fmt --all -- --check` und `git diff --check`.
+
+Die Replay-Tests prüfen Dateistruktur, Version-Priorität, verschachtelte doppelte
+Schlüssel, Symlinks, FIFO-Ablehnung, Lesefehler und Footer. Dazu kommen effektive
+und Null-Tick-Warps, Stop während Laden und Ausführung, mehrere wartende Stops,
+technische Blockierungen und normale interne Request-IDs ohne verwaiste Ergebnisse.
+Prozessfixtures prüfen vollständige Vorabvalidierung, Recording-Roundtrip,
+Pending-Drop, externe Ablehnungen und Session-Ende. Die Zählerabnahme prüft auch
+Replay plus aktives Recording beim Verwaltungs-Stopp.
+
+Vor den vier erfolgreichen UI-Läufen scheiterten zwei Läufe bereits vor Replay:
+Inspect meldete ein geöffnetes Menü, aber sowohl die geschlossene als auch die
+geöffnete Szene ergaben vollständig schwarze PNGs. Tim hat angegeben, dass er
+möglicherweise den Bildschirm vorzeitig zugeklappt hatte. Das ist eine plausible
+Umgebungsbedingung, keine bestätigte Ursache. Die vier erneuten Läufe bestanden
+ohne Codeänderung; kein Screenshot-Fix auf Verdacht und keine Abschwächung der
+Bildprüfung wurden vorgenommen. Für gerenderte Abnahmen den Mac offen und wach
+halten. Die Replay-Abnahme ist nachgewiesen, die Ursache der früheren schwarzen
+Bilder bleibt ungeklärt. Lokale Bilder liegen unter `target/replay-ui-evidence`
+und `target/replay-ui-diagnosis`; diese Verzeichnisse sind keine versionierten Fixtures.
+Der Context-Menu-Build meldet weiterhin die nicht fatale macOS-Linkerwarnung
+`__eh_frame section too large`.
+
 Nach dem Recording-Durchstich bestanden 64 Bibliotheks-/CLI-Tests mit allen
 Features, 9 Prozess-Integrationstests und 44 Bibliothekstests ohne Default-Features.
 Clippy für alle Targets/Features mit `-D warnings`, Formatprüfung sowie die
@@ -225,7 +268,7 @@ Sie prüfen `Io`, Header-Cleanup, `RecordingFailed`, Rückkehr nach Idle und die
 Fehlerreihenfolge beim Session-Ende. Prozessfixtures prüfen absichtlich vertauschte
 Response-Reihenfolge, Shutdown-Blockierung, verworfene Pending-Handles,
 Protokollfehler und `unanswered` bei Prozessende.
-Replay-Dateivalidierung und Wiedergabe sind noch offen.
+Dieser ältere Nachweis umfasst noch kein Replay; dessen Stand steht oben.
 
 Nach dem Screenshot-Durchstich bestanden:
 

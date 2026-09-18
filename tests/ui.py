@@ -322,6 +322,20 @@ def run(capture_dir=None):
                            and entry["outcome"]["status"] == "completed" for entry in entries)
                 assert any(entry["outcome"]["status"] == "rejected" for entry in entries)
                 assert any(entry["command"] == "tick.warp.start" for entry in entries)
+                # Replay the actual UI recording in the current world. Old Inspect results,
+                # input rejections and screenshot overwrite flags are not expectations.
+                second_before = state(second)
+                ticks = sum(entry["outcome"]["output"]["executed_ticks"] for entry in entries
+                            if entry["command"] == "tick.warp.start"
+                            and entry["outcome"]["status"] == "completed")
+                assert command("replay.start", {"path": recording_path}) == {
+                    "outcome": {"kind": "completed"}}
+                assert state()["ticks"] == frozen["ticks"] + ticks
+                assert state(second) == second_before, "replay affected the other session"
+                for entry in entries:
+                    if entry["command"] == "screenshot.capture" and entry["outcome"]["status"] == "completed":
+                        width, height, _ = read_png(artifact_root / entry["arguments"]["path"])
+                        assert (width, height) == (640, 360)
                 cli("session", "stop", session)
                 assert state(second)["menu_open"]
                 cli("session", "stop", second)

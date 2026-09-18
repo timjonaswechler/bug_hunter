@@ -71,6 +71,14 @@ fn main() {
             completed(id, "inspect.query", json!({"items":[]}));
             continue;
         }
+        if mode == "reject" && command != "shutdown" {
+            emit(json!({"status":"rejected","request_id":id,"command":command,
+                "error":{"code":"business","message":"fixture"}}));
+            continue;
+        }
+        if mode == "replay_exit" {
+            return;
+        }
         match command {
             "tick.warp.start" => {
                 let ticks = request["arguments"]["ticks"].as_u64().unwrap();

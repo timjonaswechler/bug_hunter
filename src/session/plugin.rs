@@ -249,10 +249,13 @@ fn dispatch(world: &mut World, bridge: &mut Bridge, id: u64, command: Command) -
         })
     };
     let value = match command {
-        Command::RecordingStart(_) | Command::RecordingStop(_) => {
+        Command::RecordingStart(_)
+        | Command::RecordingStop(_)
+        | Command::ReplayStart(_)
+        | Command::ReplayStop(_) => {
             return reject(
                 "unknown_command",
-                "recording is owned by the session coordinator",
+                "recording and replay are owned by the session coordinator",
             );
         }
         Command::Screenshot(capture) => {

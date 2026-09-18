@@ -2,6 +2,7 @@
 pub mod input;
 pub mod inspect;
 pub mod recording;
+pub mod replay;
 pub mod screenshot;
 pub mod tick;
 
@@ -18,6 +19,10 @@ pub trait Request: private::Sealed + Into<Command> {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "command", content = "arguments", deny_unknown_fields)]
 pub enum Command {
+    #[serde(rename = "replay.start")]
+    ReplayStart(replay::Start),
+    #[serde(rename = "replay.stop")]
+    ReplayStop(replay::Stop),
     #[serde(rename = "recording.start")]
     RecordingStart(recording::Start),
     #[serde(rename = "recording.stop")]
@@ -60,12 +65,18 @@ impl Command {
     pub(crate) fn is_recordable(&self) -> bool {
         !matches!(
             self,
-            Self::RecordingStart(_) | Self::RecordingStop(_) | Self::Shutdown(_)
+            Self::RecordingStart(_)
+                | Self::RecordingStop(_)
+                | Self::Shutdown(_)
+                | Self::ReplayStart(_)
+                | Self::ReplayStop(_)
         )
     }
 
     pub fn name(&self) -> &'static str {
         match self {
+            Self::ReplayStart(_) => "replay.start",
+            Self::ReplayStop(_) => "replay.stop",
             Self::RecordingStart(_) => "recording.start",
             Self::RecordingStop(_) => "recording.stop",
             Self::TextInput(_) => "input.text.input",
@@ -90,6 +101,8 @@ impl Command {
             serde_json::from_value::<T>(v.clone()).is_ok()
         }
         match self {
+            Self::ReplayStart(_) => valid::<replay::Completion>(output),
+            Self::ReplayStop(_) => valid::<replay::Stopped>(output),
             Self::RecordingStart(start) => {
                 serde_json::from_value::<recording::Started>(output.clone())
                     .is_ok_and(|result| result.path == start.path)

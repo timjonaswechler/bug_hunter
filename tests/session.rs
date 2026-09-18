@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 use woodpecker::{
-    command::{recording, tick::warp},
+    command::{recording, replay, tick::warp},
     report,
     session::{self, Session},
 };
@@ -49,6 +49,213 @@ fn recording_lines(root: &std::path::Path, path: &str) -> Vec<serde_json::Value>
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+fn replay_file(root: &std::path::Path, path: &str, commands: &[serde_json::Value]) {
+    use serde_json::json;
+    let mut lines = vec![json!({"type":"recording_started","format_version":1}).to_string()];
+    lines.extend(commands.iter().map(ToString::to_string));
+    lines.push(json!({"type":"recording_ended","outcome":"session_ended","recorded_commands":commands.len()}).to_string());
+    std::fs::write(root.join(path), lines.join("\n")).unwrap();
+}
+
+fn recorded_warp(ticks: u64) -> serde_json::Value {
+    serde_json::json!({"type":"command","command":"tick.warp.start","arguments":{"ticks":ticks},
+        "outcome":{"status":"unanswered"}})
+}
+
+#[test]
+fn replay_roundtrip_records_internal_commands_with_effective_ticks_and_normal_ids() {
+    use serde_json::json;
+    let config = config("normal");
+    let root = config.artifact_dir.clone();
+    let mut session = Session::start(config).unwrap();
+    let mut effective = recorded_warp(100);
+    effective["outcome"] = json!({"status":"completed","output":{
+        "requested_ticks":100,"executed_ticks":1,"outcome":"stopped"}});
+    replay_file(
+        &root,
+        "input.jsonl",
+        &[
+            effective,
+            json!({"type":"command","command":"tick.warp.stop","arguments":{},
+            "outcome":{"status":"completed","output":{"was_running":true}}}),
+            // This old rejection is deliberately not an expectation for the new run.
+            json!({"type":"command","command":"tick.warp.stop","arguments":{},
+            "outcome":{"status":"rejected","error":{"code":"old","message":"old"}}}),
+        ],
+    );
+    let start = session
+        .send(recording::Start {
+            path: "output.jsonl".into(),
+        })
+        .unwrap();
+    session.receive(start).unwrap();
+    let pending = session
+        .send(replay::Start {
+            path: "input.jsonl".into(),
+        })
+        .unwrap();
+    assert_eq!(pending.request_id().as_u64(), 2);
+    assert_eq!(
+        session.receive(pending).unwrap().outcome,
+        replay::Outcome::Completed {}
+    );
+    let history = session.history();
+    assert_eq!(history.len(), 4);
+    assert!(
+        matches!(&history[2].command, woodpecker::command::Command::Start(start) if start.ticks == 1)
+    );
+    assert!(matches!(
+        history[3].outcome,
+        session::history::Outcome::Completed { .. }
+    ));
+    let stop = session.send(recording::Stop {}).unwrap();
+    assert_eq!(stop.request_id().as_u64(), 5);
+    // Loading a just-closed recording must wait for the earlier footer barrier.
+    let pending = session
+        .send(replay::Start {
+            path: "output.jsonl".into(),
+        })
+        .unwrap();
+    assert_eq!(session.receive(stop).unwrap().recorded_commands, 2);
+    let lines = recording_lines(&root, "output.jsonl");
+    assert_eq!(lines[1]["arguments"]["ticks"], 1);
+    assert_eq!(lines[2]["outcome"]["status"], "completed");
+    // Dropping the only consumer must not stop the replay.
+    drop(pending);
+    wait(|| {
+        session
+            .history()
+            .iter()
+            .all(|entry| !matches!(entry.outcome, session::history::Outcome::Unanswered))
+    });
+    session.shutdown().unwrap();
+}
+
+#[test]
+fn replay_validates_the_whole_file_before_any_game_command_and_can_restart() {
+    let config = config("normal");
+    let root = config.artifact_dir.clone();
+    let mut session = Session::start(config).unwrap();
+    replay_file(
+        &root,
+        "bad.jsonl",
+        &[recorded_warp(1), serde_json::json!({"type":"unknown"})],
+    );
+    for (path, code) in [
+        ("bad.jsonl", "invalid_recording"),
+        ("missing.jsonl", "io"),
+        ("../a.jsonl", "invalid_recording_path"),
+    ] {
+        let pending = session.send(replay::Start { path: path.into() }).unwrap();
+        let error = session.receive(pending).unwrap_err();
+        assert_eq!(error.code(), code);
+        assert!(error.message().contains(path));
+    }
+    assert_eq!(session.history().len(), 3);
+    assert!(session.try_receive_event().unwrap().is_none());
+    replay_file(&root, "good.jsonl", &[recorded_warp(1)]);
+    let pending = session
+        .send(replay::Start {
+            path: "good.jsonl".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        session.receive(pending).unwrap().outcome,
+        replay::Outcome::Completed {}
+    );
+    session.shutdown().unwrap();
+}
+
+#[test]
+fn replay_excludes_external_commands_and_stop_drains_the_active_warp() {
+    let config = config("normal");
+    let root = config.artifact_dir.clone();
+    let mut session = Session::start(config).unwrap();
+    replay_file(&root, "long.jsonl", &[recorded_warp(100), recorded_warp(1)]);
+    let start = session
+        .send(replay::Start {
+            path: "long.jsonl".into(),
+        })
+        .unwrap();
+    wait(|| {
+        session.history().iter().any(|entry| {
+            matches!(&entry.command,
+        woodpecker::command::Command::Start(start) if start.ticks == 100)
+        })
+    });
+    let second = session
+        .send(replay::Start {
+            path: "long.jsonl".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        session.receive(second).unwrap_err().code(),
+        "replay_already_running"
+    );
+    let forbidden = session.send(warp::Stop {}).unwrap();
+    assert_eq!(
+        session.receive(forbidden).unwrap_err().code(),
+        "replay_in_progress"
+    );
+    let length = session.history().len();
+    assert_eq!(
+        session.shutdown().unwrap_err().code(),
+        "shutdown_commands_pending"
+    );
+    assert_eq!(session.history().len(), length);
+    let stop = session.send(replay::Stop {}).unwrap();
+    assert!(session.receive(stop).unwrap().was_running);
+    assert_eq!(
+        session.receive(start).unwrap().outcome,
+        replay::Outcome::Stopped {}
+    );
+    assert!(
+        !session
+            .history()
+            .iter()
+            .any(|entry| matches!(&entry.command,
+        woodpecker::command::Command::Start(start) if start.ticks == 1))
+    );
+    let stop = session.send(replay::Stop {}).unwrap();
+    assert!(!session.receive(stop).unwrap().was_running);
+    session.shutdown().unwrap();
+}
+
+#[test]
+fn replay_technical_failures_are_completions_not_old_outcome_comparisons() {
+    for mode in [
+        "corrupt",
+        "known_error",
+        "wrong_name",
+        "reject",
+        "replay_exit",
+    ] {
+        let config = config(mode);
+        let root = config.artifact_dir.clone();
+        let mut session = Session::start(config).unwrap();
+        replay_file(&root, "input.jsonl", &[recorded_warp(1)]);
+        let pending = session
+            .send(replay::Start {
+                path: "input.jsonl".into(),
+            })
+            .unwrap();
+        let outcome = session.receive(pending).unwrap().outcome;
+        if mode == "reject" {
+            assert_eq!(outcome, replay::Outcome::Completed {});
+        } else {
+            let expected = if mode == "replay_exit" {
+                "session_ended"
+            } else {
+                "command_protocol_failed"
+            };
+            assert!(matches!(outcome, replay::Outcome::Blocked { code, .. } if code == expected));
+        }
+        if mode != "replay_exit" {
+            session.shutdown().unwrap();
+        }
+    }
 }
 
 #[test]

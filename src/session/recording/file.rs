@@ -6,7 +6,7 @@ use cap_std::fs::{Dir, File, OpenOptions};
 use serde_json::{Value, json};
 use std::io::{self, BufWriter, Write};
 
-pub(super) fn validate(path: &str) -> Result<(), Error> {
+pub(crate) fn validate(path: &str) -> Result<(), Error> {
     if path.is_empty()
         || !path.ends_with(".jsonl")
         || path.contains(['\\', '\0'])
@@ -48,6 +48,38 @@ fn parent(root: &Dir, path: &str) -> Result<(Dir, String), Error> {
         };
     }
     Ok((directory, name))
+}
+
+// Replay shares the writer's lexical rules and opens every component without following links.
+pub(crate) fn open_read(root: &Dir, path: &str) -> Result<File, Error> {
+    validate(path)?;
+    let mut parts: Vec<_> = path.split('/').collect();
+    let name = parts.pop().unwrap();
+    let mut directory = root.try_clone().map_err(|e| path_error(e, path))?;
+    for part in parts {
+        directory = directory
+            .open_dir_nofollow(part)
+            .map_err(|e| path_error(e, path))?;
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    // A swapped-in FIFO must not leave the loader blocked in open before metadata validation.
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = directory.open_with(name, &options).map_err(|e| {
+        if directory.symlink_metadata(name).is_ok_and(|m| !m.is_file()) {
+            Error::new("invalid_recording_path", path)
+        } else {
+            path_error(e, path)
+        }
+    })?;
+    if !file.metadata().map_err(|e| path_error(e, path))?.is_file() {
+        return Err(Error::new("invalid_recording_path", path));
+    }
+    Ok(file)
 }
 
 pub(super) trait Sink: Write + Send {

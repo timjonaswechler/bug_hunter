@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-mod file;
+pub(super) mod file;
 mod worker;
 
 #[cfg(test)]
