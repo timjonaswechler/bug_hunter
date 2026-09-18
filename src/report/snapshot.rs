@@ -1,25 +1,47 @@
-use super::Failure;
+use super::{Failure, Signature};
 use crate::session::{self, Session};
 use serde::Serialize;
 
-/// Immutable observation snapshot. Title, signature, rendering and providers are not yet exposed.
+/// Immutable report. Construction captures context and computes identity once.
 #[derive(Clone, Debug, Serialize)]
 pub struct Report {
+    title: String,
     failure: Failure,
+    signature: Signature,
     context: Context,
 }
 impl Report {
     pub fn create(failure: Failure, session: &Session) -> Self {
+        let (context, project) = session.report_context();
+        Self::from_snapshot(failure, context, &project)
+    }
+
+    pub(super) fn from_snapshot(
+        failure: Failure,
+        context: Context,
+        project: &std::path::Path,
+    ) -> Self {
         Self {
+            title: super::normalize::title(&failure),
+            signature: Signature::create(&failure, project),
             failure,
-            context: session.report_context(),
+            context,
         }
+    }
+    pub fn title(&self) -> &str {
+        &self.title
     }
     pub fn failure(&self) -> &Failure {
         &self.failure
     }
+    pub fn signature(&self) -> &Signature {
+        &self.signature
+    }
     pub fn context(&self) -> &Context {
         &self.context
+    }
+    pub fn to_markdown(&self) -> String {
+        super::markdown::render(self)
     }
 }
 

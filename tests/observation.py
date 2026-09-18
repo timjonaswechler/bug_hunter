@@ -1,4 +1,4 @@
-"""Real CLI/server acceptance for observation events, without report publication."""
+"""Real CLI/server acceptance for observation and automatic local reports."""
 import json
 import select
 import signal
@@ -55,6 +55,20 @@ def run():
                     failures = until(lambda: [e["event"]["failure"] for e in events(session)
                                              if e["kind"] == "event" and e["event"]["kind"] == "failure"])
                     assert len(failures) == 1 and failures[0]["origin"]["kind"] == origin, failures
+                    reports = until(lambda: [e for e in events(session) if e["kind"] == "report"])
+                    assert len(reports) == 1, reports
+                    report_event = reports[0]
+                    assert report_event["report"]["failure"] == failures[0]
+                    result = report_event["result"]
+                    assert result["status"] == "submitted", result
+                    assert result["outcome"]["kind"] == "created", result
+                    relative = result["outcome"]["reference"]["reference"]["path"]
+                    artifact_dir = Path(cli("session", "inspect", session)["artifact_dir"])
+                    markdown = (artifact_dir / relative).read_text()
+                    signature = report_event["report"]["signature"]["value"]
+                    assert f"<!-- bug_hunter-signature: {signature} -->" in markdown
+                    assert report_event["report"]["title"] in markdown
+                    snapshot = json.dumps(report_event, sort_keys=True)
                     until(lambda: any(e["kind"] == "completed"
                                       and e["request_id"] == accepted["request_id"] for e in events(session)))
                     assert state(session, "Ready")
@@ -62,9 +76,12 @@ def run():
                     until(lambda: state(session, "Ended"))
                     assert sum(e["kind"] == "event" and e["event"]["kind"] == "failure"
                                for e in events(session)) == 1
+                    assert [json.dumps(e, sort_keys=True) for e in events(session)
+                            if e["kind"] == "report"] == [snapshot]
                 cli("server", "stop")
                 assert server.wait(timeout=15) == 0
-                print(json.dumps({"acceptance": "passed", "observation": True, "sessions": 2}))
+                print(json.dumps({"acceptance": "passed", "observation": True,
+                                  "automatic_reports": True, "sessions": 2}))
             finally:
                 if server.poll() is None:
                     server.send_signal(signal.SIGINT)

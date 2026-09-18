@@ -5,7 +5,15 @@ use std::time::Duration;
 fn launch(
     config: &Config,
     cancel: &Arc<AtomicBool>,
-) -> Result<(process::Process, cap_std::fs::Dir, crate::report::Context), Error> {
+) -> Result<
+    (
+        process::Process,
+        cap_std::fs::Dir,
+        crate::report::Context,
+        std::path::PathBuf,
+    ),
+    Error,
+> {
     let launch::Resolved {
         project,
         mut command,
@@ -58,7 +66,12 @@ fn launch(
         },
         commands: Vec::new(),
     };
-    Ok((process::Process::spawn(command)?, directory, context))
+    Ok((
+        process::Process::spawn(command)?,
+        directory,
+        context,
+        project,
+    ))
 }
 
 pub(super) fn run(
@@ -78,13 +91,14 @@ pub(super) fn run(
     }
     let _end = EndOnDrop(shared.clone());
     let result = launch(&config, &cancel);
-    let (mut process, root, context) = match result {
+    let (mut process, root, context, project) = match result {
         Ok(process) => process,
         Err(e) => {
             let _ = ready.send(Err(e));
             return;
         }
     };
+    shared.state.lock().unwrap().project_dir = Some(project.clone());
     let mut observation = observation::Observation::new(
         shared.clone(),
         ready.clone(),
@@ -106,6 +120,9 @@ pub(super) fn run(
             return;
         }
     };
+    shared.state.lock().unwrap().report_destination = Some(Arc::new(
+        crate::report::Destination::new(replay_root.clone(), config.report.clone(), project),
+    ));
     let mut replay = replay::Replay::new(replay_root);
     let mut recorder = recording::Recorder::new(root);
     let mut deferred = VecDeque::<(u64, Command)>::new();

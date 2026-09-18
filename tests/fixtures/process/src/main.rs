@@ -79,6 +79,12 @@ fn main() {
         if mode == "replay_exit" {
             return;
         }
+        if mode == "failure_on_shutdown" && command == "shutdown" {
+            let marker = std::fs::read(root.join("failure.marker")).unwrap();
+            std::io::stderr().write_all(&marker).unwrap();
+            std::io::stderr().flush().unwrap();
+            return;
+        }
         match command {
             "tick.warp.start" => {
                 let ticks = request["arguments"]["ticks"].as_u64().unwrap();

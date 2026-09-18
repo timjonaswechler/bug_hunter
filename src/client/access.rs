@@ -112,6 +112,13 @@ impl Client {
     pub fn poll(&mut self, cursor: Option<Cursor>, wait_ms: u64) -> Result<Reply, Error> {
         self.exchange(Operation::Poll { cursor, wait_ms })
     }
+    pub fn snapshot(&mut self) -> Result<protocol::Snapshot, Error> {
+        match self.exchange(Operation::Snapshot {})? {
+            Reply::Snapshot { snapshot } => Ok(snapshot),
+            Reply::Error { code, message } => Err(Error::Remote { code, message }),
+            _ => unreachable!("exchange validates snapshot responses"),
+        }
+    }
     fn exchange(&mut self, operation: Operation) -> Result<Reply, Error> {
         self.call = self
             .call
@@ -119,8 +126,9 @@ impl Client {
             .ok_or_else(|| Error::Protocol("client call counter exhausted".into()))?;
         let expected = match &operation {
             Operation::Submit { command } => Some(command.name()),
-            Operation::Poll { .. } => None,
+            Operation::Poll { .. } | Operation::Snapshot {} => None,
         };
+        let snapshot = matches!(operation, Operation::Snapshot {});
         let submitting = expected.is_some();
         let transport = |e: tungstenite::Error| {
             if submitting {
@@ -169,7 +177,8 @@ impl Client {
                                 && command == expected
                                 && (*request_id == u64::MAX) == (expected == "shutdown")
                         }
-                        (Reply::Activity { .. } | Reply::Gap { .. }, None) => true,
+                        (Reply::Snapshot { .. }, None) => snapshot,
+                        (Reply::Activity { .. } | Reply::Gap { .. }, None) => !snapshot,
                         _ => false,
                     };
                     if !valid {

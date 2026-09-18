@@ -107,6 +107,9 @@ async fn connection(mut socket: WebSocket, inner: Arc<Inner>, entry: Arc<Entry>)
             ),
             Ok(request) => {
                 let result = match request.operation {
+                    Operation::Snapshot {} => Result::Snapshot {
+                        snapshot: entry.snapshot(),
+                    },
                     Operation::Submit { command } => {
                         if inner.directory.lock().unwrap().deadline.is_some() {
                             Error::new("server_stopping", "new work is not accepted").into()

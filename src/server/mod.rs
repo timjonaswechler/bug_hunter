@@ -2,6 +2,7 @@
 mod activity;
 mod entry;
 pub mod protocol;
+mod reports;
 mod transport;
 
 use crate::session::Error;
@@ -203,10 +204,9 @@ impl Inner {
             return None;
         }
         if directory.forced
-            || directory
-                .entries
-                .values()
-                .any(|e| e.detail().state == Lifecycle::Failed)
+            || directory.entries.values().any(|e| {
+                e.detail().state == Lifecycle::Failed || e.report_incomplete.load(Ordering::Acquire)
+            })
         {
             Some(Err(Error::new(
                 "shutdown_incomplete",
@@ -296,6 +296,7 @@ mod tests {
             },
         }
     }
+    #[track_caller]
     fn wait(mut check: impl FnMut() -> bool) {
         let end = Instant::now() + Duration::from_secs(30);
         while !check() {
@@ -384,4 +385,6 @@ mod tests {
             assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
         }
     }
+
+    include!("report_tests.rs");
 }

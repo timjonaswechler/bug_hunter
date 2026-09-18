@@ -42,6 +42,7 @@ pub struct Request {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    Snapshot {},
     Submit {
         command: Command,
     },
@@ -62,6 +63,9 @@ pub struct Response {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Result {
+    Snapshot {
+        snapshot: Snapshot,
+    },
     Pending {
         request_id: u64,
         command: String,
@@ -85,6 +89,22 @@ pub enum Result {
 pub struct Activity {
     pub cursor: Cursor,
     pub event: Value,
+}
+
+/// Current server-owned commands, independent of Activity retention.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Snapshot {
+    pub cursor: Cursor,
+    pub state: Lifecycle,
+    pub pending: Vec<OpenCommand>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenCommand {
+    pub request_id: u64,
+    pub command: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

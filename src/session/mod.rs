@@ -7,7 +7,7 @@ mod inspect;
 pub mod launch;
 mod observation;
 mod plugin;
-mod process;
+pub(crate) mod process;
 pub mod protocol;
 mod recording;
 mod replay;
@@ -113,6 +113,9 @@ type Outcome = Result<serde_json::Value, Error>;
 #[derive(Default)]
 struct State {
     context: Option<crate::report::Context>,
+    // Launch-resolved normalization input, deliberately outside serialized Context.
+    project_dir: Option<std::path::PathBuf>,
+    report_destination: Option<Arc<crate::report::Destination>>,
     results: BTreeMap<u64, Outcome>,
     abandoned: std::collections::BTreeSet<u64>,
     events: VecDeque<Event>,
@@ -137,7 +140,17 @@ pub struct Session {
 }
 
 impl Session {
-    pub(crate) fn report_context(&self) -> crate::report::Context {
+    pub(crate) fn report_destination(&self) -> Arc<crate::report::Destination> {
+        self.shared
+            .state
+            .lock()
+            .unwrap()
+            .report_destination
+            .clone()
+            .expect("successful Ready has a report destination")
+    }
+
+    pub(crate) fn report_context(&self) -> (crate::report::Context, std::path::PathBuf) {
         let state = self.shared.state.lock().unwrap();
         let mut context = state
             .context
@@ -148,7 +161,11 @@ impl Session {
             .iter()
             .map(|(_, entry)| entry.clone())
             .collect();
-        context
+        let project = state
+            .project_dir
+            .clone()
+            .expect("successful Ready has a project directory");
+        (context, project)
     }
 
     pub fn start(config: Config) -> Result<Self, Error> {

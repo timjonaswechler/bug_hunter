@@ -26,6 +26,9 @@ impl Store {
             position,
         }
     }
+    pub fn current_cursor(&self) -> Cursor {
+        self.cursor(self.position)
+    }
     pub fn push(&mut self, event: serde_json::Value) {
         self.position = self
             .position

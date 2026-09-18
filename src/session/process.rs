@@ -7,14 +7,14 @@ use std::{
     thread::JoinHandle,
 };
 
-pub(super) enum Event {
+pub(crate) enum Event {
     Line(String),
     Diagnostic(Vec<u8>),
     Closed(&'static str),
     Failed(&'static str, String),
 }
 
-pub(super) struct Process {
+pub(crate) struct Process {
     pub child: Child,
     pub events: mpsc::Receiver<Event>,
     pub writer: Option<mpsc::Sender<String>>,

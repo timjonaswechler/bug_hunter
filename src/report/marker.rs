@@ -56,6 +56,14 @@ pub(super) fn encode(payload: &Payload, event: String) -> Vec<Vec<u8>> {
         .collect()
 }
 
+#[cfg(all(test, feature = "server"))]
+pub(crate) fn fixture(failure: Failure) -> Vec<u8> {
+    encode(&Payload::Failure { failure }, "fixture".into())
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 pub(super) fn emit(payload: Payload) {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let event = format!(

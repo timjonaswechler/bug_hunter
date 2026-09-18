@@ -18,6 +18,8 @@ pub(super) struct Entry {
     admission: Mutex<()>,
     commands: mpsc::Sender<Submission>,
     pub cancel: Arc<AtomicBool>,
+    pub report_cancel: Arc<AtomicBool>,
+    pub report_incomplete: AtomicBool,
     forced: AtomicBool,
     pub done: AtomicBool,
     pub changed: tokio::sync::Notify,
@@ -25,6 +27,7 @@ pub(super) struct Entry {
 struct Data {
     detail: Detail,
     activity: activity::Store,
+    pending: std::collections::BTreeMap<u64, String>,
     input: Option<mpsc::Receiver<Submission>>,
 }
 struct Submission {
@@ -48,11 +51,14 @@ impl Entry {
                     error: None,
                 },
                 activity: activity::Store::new(id, limit),
+                pending: Default::default(),
                 input: Some(input),
             }),
             admission: Mutex::new(()),
             commands,
             cancel: Arc::new(AtomicBool::new(false)),
+            report_cancel: Arc::new(AtomicBool::new(false)),
+            report_incomplete: AtomicBool::new(false),
             forced: AtomicBool::new(false),
             done: AtomicBool::new(false),
             changed: tokio::sync::Notify::new(),
@@ -68,6 +74,9 @@ impl Entry {
         }
         data.detail.state = state;
         data.detail.error = error.clone();
+        if state.terminal() {
+            data.pending.clear();
+        }
         data.activity
             .push(json!({"kind":"lifecycle","state":state,"error":error}));
         self.changed.notify_waiters();
@@ -78,6 +87,34 @@ impl Entry {
     }
     pub fn poll(&self, cursor: Option<&Cursor>) -> Result {
         self.data.lock().unwrap().activity.poll(cursor)
+    }
+    pub fn snapshot(&self) -> Snapshot {
+        let data = self.data.lock().unwrap();
+        Snapshot {
+            cursor: data.activity.current_cursor(),
+            state: data.detail.state,
+            pending: data
+                .pending
+                .iter()
+                .map(|(&request_id, command)| OpenCommand {
+                    request_id,
+                    command: command.clone(),
+                })
+                .collect(),
+        }
+    }
+    fn accepted(&self, request_id: u64, command: &str) {
+        let mut data = self.data.lock().unwrap();
+        data.pending.insert(request_id, command.to_owned());
+        data.activity
+            .push(json!({"kind":"pending","request_id":request_id,"command":command}));
+        self.changed.notify_waiters();
+    }
+    fn settled(&self, request_id: u64, event: Value) {
+        let mut data = self.data.lock().unwrap();
+        data.pending.remove(&request_id);
+        data.activity.push(event);
+        self.changed.notify_waiters();
     }
     pub fn stop(&self) {
         let _admission = self.admission.lock().unwrap();
@@ -97,6 +134,7 @@ impl Entry {
         if !self.done.load(Ordering::Acquire) {
             self.forced.store(true, Ordering::Release);
             self.cancel.store(true, Ordering::Release);
+            self.report_cancel.store(true, Ordering::Release);
         }
     }
     pub async fn submit(&self, command: Command) -> Result {
@@ -158,8 +196,13 @@ pub(super) fn start(entry: Arc<Entry>, create: Create) {
                         entry.changed.notify_waiters();
                     }
                 }
-                run(&entry, &mut session, input);
+                let reports =
+                    super::reports::Reports::new(entry.clone(), session.report_destination());
+                run(&entry, &mut session, input, &reports);
                 drop(session);
+                // Session lifecycle may already be terminal. `done` includes report IO
+                // and process-group cleanup, so the server deadline still reaches it.
+                reports.finish();
             }
             Err(e) => {
                 if entry.detail().state == Lifecycle::Stopping
@@ -181,6 +224,31 @@ fn prepare(root: &std::path::Path) -> std::result::Result<(), Error> {
     std::fs::create_dir(root).map_err(Error::io)
 }
 
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn current_pending_survives_eviction_and_settles_atomically_with_activity() {
+        let entry = Entry::new("a".repeat(32), "unused".into(), 1);
+        entry.transition(Lifecycle::Ready, None);
+        entry.accepted(1, "tick.warp.start");
+        entry.accepted(2, "replay.start");
+        let snapshot = entry.snapshot();
+        assert_eq!(snapshot.state, Lifecycle::Ready);
+        assert_eq!(snapshot.pending.len(), 2);
+        assert_eq!(snapshot.pending[0].request_id, 1);
+        assert_eq!(snapshot.pending[1].command, "replay.start");
+        assert!(matches!(entry.poll(None), Result::Gap { .. }));
+        assert!(matches!(entry.poll(Some(&snapshot.cursor)),
+            Result::Activity { entries, .. } if entries.is_empty()));
+        entry.settled(1, json!({"kind":"completed","request_id":1}));
+        assert_eq!(entry.snapshot().pending.len(), 1);
+        entry.transition(Lifecycle::Failed, Some(Error::ended()));
+        assert!(entry.snapshot().pending.is_empty());
+    }
+}
+
 fn accept(
     entry: &Entry,
     session: &mut Session,
@@ -191,7 +259,7 @@ fn accept(
         Ok(token) => {
             let request_id = token.request_id().as_u64();
             let command = token.command().name().to_string();
-            entry.push(json!({"kind":"pending","request_id":request_id,"command":command}));
+            entry.accepted(request_id, &command);
             if request_id == u64::MAX {
                 entry.transition(Lifecycle::Stopping, None);
             }
@@ -205,12 +273,20 @@ fn accept(
     }
 }
 
-fn run(entry: &Entry, session: &mut Session, input: mpsc::Receiver<Submission>) {
+fn run(
+    entry: &Entry,
+    session: &mut Session,
+    input: mpsc::Receiver<Submission>,
+    reports: &super::reports::Reports,
+) {
     let mut pending = Vec::new();
     let mut replay_stop = None;
     let mut replay_stopped = false;
     let mut stop_sent = false;
     let mut shutdown_sent = false;
+    let mut shutdown_completed = false;
+    let mut event_end = None;
+    let mut terminal_error = None;
     let mut recording_stop = None;
     loop {
         if entry.cancel.load(Ordering::Acquire) {
@@ -241,40 +317,77 @@ fn run(entry: &Entry, session: &mut Session, input: mpsc::Receiver<Submission>) 
             }
             let token = pending.remove(i);
             let id = token.request_id().as_u64();
+            if id == u64::MAX {
+                shutdown_sent = true;
+            }
             let name = token.command().name();
             match result {
                 Ok(Some(output)) => {
                     if replay_stop == Some(id) {
                         replay_stopped = true;
                     }
-                    entry.push(
+                    entry.settled(
+                        id,
                         json!({"kind":"completed","request_id":id,"command":name,"output":output}),
                     );
                     if id == u64::MAX {
-                        entry.transition(Lifecycle::Ended, None);
-                        return;
+                        shutdown_completed = true;
                     }
                 }
                 Err(error) => {
                     let technical = !matches!(error, Error::Rejected { .. });
-                    entry.push(json!({"kind":if technical {"failed"} else {"rejected"},"request_id":id,"command":name,"error":error}));
+                    entry.settled(id, json!({"kind":if technical {"failed"} else {"rejected"},"request_id":id,"command":name,"error":error}));
                     if id == u64::MAX || recording_stop == Some(id) || replay_stop == Some(id) {
-                        entry.transition(Lifecycle::Failed, Some(error));
-                        return;
+                        terminal_error.get_or_insert(error);
                     }
                 }
                 _ => unreachable!(),
             }
         }
-        loop {
+        // A failed shutdown can carry a final panic. Do not return on its command
+        // outcome before consuming the independently delivered Failure and Ended events.
+        let mut events_drained = false;
+        for _ in 0..64 {
+            if event_end.is_some() {
+                break;
+            }
             match session.try_receive_event() {
-                Ok(Some(event)) => entry.push(json!({"kind":"event","event":event})),
-                Ok(None) => break,
+                Ok(Some(event)) => {
+                    // Capture before provider queuing and before observing later session events.
+                    let report = match &event {
+                        session::Event::Failure { failure } => {
+                            Some(crate::report::Report::create(failure.clone(), session))
+                        }
+                        _ => None,
+                    };
+                    entry.push(json!({"kind":"event","event":event}));
+                    if let Some(report) = report {
+                        reports.submit(report);
+                    }
+                }
+                Ok(None) => {
+                    events_drained = true;
+                    break;
+                }
                 Err(e) => {
-                    entry.transition(Lifecycle::Failed, Some(e));
-                    return;
+                    event_end = Some(e);
+                    break;
                 }
             }
+        }
+        if terminal_error.is_some() && ((!shutdown_sent && events_drained) || event_end.is_some()) {
+            entry.transition(Lifecycle::Failed, terminal_error.take());
+            return;
+        }
+        if pending.is_empty()
+            && let Some(error) = event_end.take()
+        {
+            if shutdown_completed && matches!(error, Error::Ended) {
+                entry.transition(Lifecycle::Ended, None);
+            } else {
+                entry.transition(Lifecycle::Failed, Some(error));
+            }
+            return;
         }
         shutdown_sent |= pending.iter().any(|p| p.request_id().as_u64() == u64::MAX);
         if entry.detail().state == Lifecycle::Stopping && !shutdown_sent {
