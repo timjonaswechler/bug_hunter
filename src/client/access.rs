@@ -77,6 +77,21 @@ impl Management {
             .ok_or_else(|| Error::Protocol("missing data".into()))
     }
     pub fn bind(&self, selector: &str) -> Result<Client, Error> {
+        self.bind_with(selector, |_| Ok(()))
+    }
+    #[cfg(feature = "cli")]
+    pub(crate) fn bind_interruptible(
+        &self,
+        selector: &str,
+        interrupt: &Interrupt,
+    ) -> Result<Client, Error> {
+        self.bind_with(selector, |stream| interrupt.attach(stream))
+    }
+    fn bind_with(
+        &self,
+        selector: &str,
+        attach: impl FnOnce(&TcpStream) -> Result<(), Error>,
+    ) -> Result<Client, Error> {
         if !(8..=32).contains(&selector.len()) || !selector.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(Error::Protocol("expected 8 to 32 hex digits".into()));
         }
@@ -88,16 +103,52 @@ impl Management {
         .into_client_request()
         .map_err(|e| Error::Protocol(e.to_string()))?;
         let stream =
-            TcpStream::connect(self.address).map_err(|e| Error::Connection(e.to_string()))?;
+            TcpStream::connect_timeout(&self.address, std::time::Duration::from_millis(500))
+                .map_err(|e| Error::Connection(e.to_string()))?;
+        attach(&stream)?;
         stream
             .set_read_timeout(Some(std::time::Duration::from_secs(35)))
             .map_err(|e| Error::Connection(e.to_string()))?;
         stream
             .set_write_timeout(Some(std::time::Duration::from_secs(35)))
             .map_err(|e| Error::Connection(e.to_string()))?;
-        let (socket, _) =
-            tungstenite::client(request, stream).map_err(|e| Error::Connection(e.to_string()))?;
+        let (socket, _) = tungstenite::client(request, stream).map_err(|e| match e {
+            tungstenite::HandshakeError::Failure(tungstenite::Error::Http(response)) => {
+                Error::Remote {
+                    code: "binding_rejected".into(),
+                    message: format!("server rejected session binding: {}", response.status()),
+                }
+            }
+            e => Error::Connection(e.to_string()),
+        })?;
         Ok(Client { socket, call: 0 })
+    }
+}
+
+/// Wakes blocking socket IO when the owning interactive client exits.
+#[cfg(feature = "cli")]
+#[derive(Default)]
+pub(crate) struct Interrupt(std::sync::Mutex<(bool, Option<TcpStream>)>);
+#[cfg(feature = "cli")]
+impl Interrupt {
+    fn attach(&self, stream: &TcpStream) -> Result<(), Error> {
+        let mut state = self.0.lock().unwrap();
+        if state.0 {
+            return Err(Error::Connection("client closed".into()));
+        }
+        state.1 = Some(
+            stream
+                .try_clone()
+                .map_err(|e| Error::Connection(e.to_string()))?,
+        );
+        Ok(())
+    }
+    pub fn cancel(&self) {
+        let mut state = self.0.lock().unwrap();
+        state.0 = true;
+        if let Some(stream) = state.1.take() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
     }
 }
 

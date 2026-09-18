@@ -1,5 +1,7 @@
-//! Machine-oriented CLI for the experimental slice. REPL and scripts are not implemented yet.
+//! Machine-oriented CLI, interactive REPL and prevalidated scripts.
 mod config;
+mod repl;
+pub mod script;
 use crate::{
     client::Management,
     command::Command,
@@ -45,6 +47,14 @@ enum Server {
 }
 #[derive(Subcommand)]
 enum Session {
+    Script {
+        id: String,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    Repl {
+        id: String,
+    },
     Create {
         #[arg(long)]
         config: PathBuf,
@@ -100,6 +110,23 @@ pub fn run() -> Result<(), Error> {
             action: Server::Stop,
         } => management.request("POST", "/stop", None)?,
         Resource::Session { action } => match action {
+            Session::Script { id, file } => {
+                let script = match script::Script::parse(&std::fs::read_to_string(file)?) {
+                    Ok(script) => script,
+                    Err(error) => {
+                        print(&error)?;
+                        return Err(error.into());
+                    }
+                };
+                let outcome = script::run_cli(args.address, id, script)?;
+                print(&outcome)?;
+                return if outcome.passed() {
+                    Ok(())
+                } else {
+                    Err("script failed; see structured outcome".into())
+                };
+            }
+            Session::Repl { id } => return repl::run(args.address, id),
             Session::Create { config: path } => {
                 let create = config::parse(&std::fs::read_to_string(path)?)?;
                 management.request("POST", "/sessions", Some(&serde_json::to_value(create)?))?
