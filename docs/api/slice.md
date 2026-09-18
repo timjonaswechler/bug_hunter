@@ -2,8 +2,8 @@
 
 Dieser Build ist keine vollständige v3-Implementation. Er implementiert Warp,
 Resource-/Entity-Inspect, Pointer-/Keyboard-/Text-Input, Screenshot, Recording, Replay und Shutdown.
-Fehlerbeobachtung und Report-Snapshots sind vorhanden; Report-Darstellung und Provider
-folgen im nächsten Durchstich. Der einzige unterstützte Weg verwendet
+Fehlerbeobachtung, Report-Snapshots, Report-Darstellung sowie Local und GitHub sind vorhanden.
+Der Server verarbeitet Reports automatisch und unabhängig von Clients. Der einzige unterstützte Weg verwendet
 `session`; die v2-Implementation und ihre öffentlichen Einstiegspunkte sind entfernt.
 
 Entity-Inspect unterstützt Handle-Abfragen, Componentfilter, Summary, Component-Namen,
@@ -217,14 +217,107 @@ und Abbruchmöglichkeit. Der Snapshot enthält keine eigenen Felder für absolut
 Projektpfade, Umgebung oder Repository-URL. Unveränderte Argumente und Diagnosen
 können trotzdem vertrauliche Informationen enthalten.
 
+`Report::title()` und `Report::signature()` liefern die beim Create-Aufruf berechneten
+Werte. Die Signatur verwendet den v1-Vertrag einschließlich des unveränderten
+Hash-Namensraums `bug_hunter.signature`. Nur Kind und normalisierte Meldung bestimmen
+die Identität, nicht Backtrace, Location, Exit-Status oder Kontext.
+Der beim Start aufgelöste Projektpfad bleibt privat und dient der Normalisierung.
+`Report::to_markdown()` liefert den gemeinsamen vollständigen Text mit H1,
+Signatur-Marker, Failure, Application, Environment und Commands.
+Die H1 maskiert Markdown-Syntax; Meldung und Backtrace stehen in Text-Codeblöcken,
+strukturierte Daten in Pretty-JSON. Jeder Fence ist länger als alle Backtick-Folgen
+seiner Nutzdaten. Fehlende Diagnosen erscheinen als `Unavailable.` oder als ausdrücklich
+erklärtes JSON-`null`. Der Text verwendet LF und endet mit genau einem LF.
+
 Der Server übernimmt Failure- und ObservationError-Events in Activity; ein
 behandelter Panic oder Tracing-Error beendet nicht automatisch die Session.
-Titel, Signatur, Markdown, Provider und automatische Report-Veröffentlichung
-sind noch nicht implementiert. Aktuell enthält `Report` nur Failure und Context.
+Das Erzeugen oder Rendern eines Reports schreibt keine Datei und veröffentlicht nichts.
+
+`report::submit(&report, &session)` verwendet den ausgewählten Provider.
+Es verwendet den beim Start geöffneten Artefakt-Root und die damalige Report-Konfiguration,
+nicht eine neu aufgelöste absolute Pfadzeichenfolge. Der Aufruf ist synchron, arbeitet
+außerhalb des Session-Koordinators und bleibt nach Session-Ende verfügbar.
+
+Für `{"kind":"local"}` gilt:
+
+- Ziel ist `<output>/v1-sha256-<digest>.md`, die zurückgegebene `FileReference.path`
+  bleibt relativ zum Artefakt-Root.
+- Jede vorhandene Verzeichniskomponente und die Zieldatei werden ohne Symlink-Folgen
+  geöffnet. Auch Links innerhalb des Roots sind ungültig.
+- Eine neue temporäre Datei wird vollständig geschrieben und synchronisiert, dann
+  per Hardlink ohne Überschreiben unter dem endgültigen Namen eingesetzt.
+  Temporäre Dateien werden anschließend entfernt. Fehlende Hardlink-Unterstützung
+  ist ein Schreibfehler, kein Anlass für einen überschreibenden Ersatzweg.
+- `Created` meldet eine neue Datei, `Existing` eine unveränderte Datei mit derselben
+  vollständigen Signatur. Ein fehlender, anderer oder mehrdeutiger Marker ergibt
+  `report::Error::Local(local::Error::Conflict { path })`. Marker in Code-Fences
+  sind Nutzdaten und zählen nicht.
+- Ungültige Pfade ergeben `InvalidPath`; Dateisystemfehler enthalten `Read` oder
+  `Write`, den relativen Pfad und eine lesbare Meldung. Fehlertexte sind kein Steuervertrag.
+
+Für `{"kind":"github"}` gilt:
+
+- `gh` läuft im beim Start aufgelösten Projektverzeichnis. Repository, Host und
+  Anmeldung kommen aus dessen Git-Kontext und der von `gh` unterstützten Umgebung.
+  Der Provider besitzt keine weiteren Konfigurationsfelder.
+- `gh api --paginate` fragt alle offenen und geschlossenen Issues ab. Pull Requests
+  zählen nicht. Ein vollständiger eigener Marker ergibt `Existing` mit Nummer als
+  `identifier` und URL; das Issue wird nicht geändert.
+- Ohne Treffer sendet `gh api --method POST --input -` Titel und vollständiges
+  Markdown als JSON über stdin. Es gibt keine zusätzliche Rückfrage.
+  Die Antwort ergibt `Created` mit Issue-Referenz, ohne lokale Datei.
+- Jeder Remote-Fehler führt zum selben lokalen Speicherweg. `Fallback` enthält
+  Datei-Referenz und Provider-Fehler, auch wenn die lokale Datei bereits existierte.
+  Scheitert auch Local, liefert `report::Error::FallbackFailed` beide Ursachen.
+- GitHub-Fehler unterscheiden `Unavailable`, `CommandFailed` und `InvalidResponse`,
+  jeweils mit `Search` oder `Publish`. Freie stderr-Texte werden nicht in vermeintliche
+  Authentisierungs- oder Netzwerkkategorien umgedeutet.
+
+Ein fehlgeschlagener Publish-Aufruf beweist nicht, dass kein Issue angelegt wurde.
+Es gibt keinen automatischen POST-Retry und keine atomare Remote-Eindeutigkeit bei
+gleichzeitigen Aufrufen. Die nächste Suche kann ein zuvor angelegtes Issue finden.
+Der direkte synchrone `submit` wartet ohne Serverfrist auf den Abschluss des Providers.
+Im Server verwenden dieselben Provider zusätzlich dessen gemeinsames Abbruchsignal.
+
+### Automatische Reports im Server
+
+Bei jedem empfangenen Failure-Event erzeugt der Server sofort den Report-Snapshot.
+Ein eigener Worker je Session verarbeitet die Reports in Empfangsreihenfolge.
+Langsame Provider blockieren weder neue Commands noch den Empfang weiterer Events
+oder das Leeren der Spiel-Pipes. Clients müssen dafür weder verbunden bleiben noch
+einen zusätzlichen Submit-Aufruf senden.
+
+Ein Activity-Eintrag enthält Snapshot und Ergebnis gemeinsam:
+
+```json
+{"kind":"report","report":{"title":"...","failure":{},"signature":{},"context":{}},"result":{"status":"submitted","outcome":{"kind":"created","reference":{"kind":"issue","reference":{"identifier":"42","url":"https://example.test/org/repo/issues/42"}}}}}
+```
+
+Die leeren Report-Objekte oben sind Platzhalter; tatsächliche Einträge enthalten den
+vollständigen Snapshot. `result.status` ist `submitted` mit Provider-Outcome,
+`failed` mit typisiertem Submit-Fehler oder `interrupted` mit lesbarer Meldung.
+Provider-Fehler beenden eine ansonsten bedienbare Session nicht automatisch.
+Wie andere Activity-Daten unterliegen auch diese Einträge der Byte-Grenze;
+ein übergroßer Report erzeugt eine erkennbare Lücke statt gekürzter Nutzdaten.
+
+Session-Ende und Report-Abschluss sind getrennt. Ergebnisse können nach einem
+Session-Endevent oder dem Lifecycle-Zustand `Ended` eintreffen. Ein regulärer
+Session-Stopp lässt Reports abschließen. Das Serverende wartet auf Sessions und
+Report-Worker, aber nicht auf das Abholen ihrer Ergebnisse durch Clients.
+Die gemeinsame Serverfrist und ein erzwungener Stopp erreichen auch Reports bereits
+terminaler Sessions. `gh` samt eigener Prozessgruppe wird beendet und bereinigt;
+nach Abbruch beginnt weder ein weiterer Remote-Aufruf noch ein lokaler Fallback.
+Lokale Reads und Writes prüfen den Abbruch zwischen IO-Schritten und entfernen
+unveröffentlichte temporäre Dateien. Nicht unterbrechbare Dateisystemaufrufe können
+die Bereinigung verzögern; der Server wartet auf den tatsächlichen Ressourcenabschluss.
+Ein unterbrochener Remote-Aufruf kann bereits ein Issue angelegt haben.
+`interrupted` behauptet daher weder erfolgreiche Übertragung noch Rücknahme.
+Unvollständige Report-Arbeit führt beim Serverende zum Fehlerstatus.
 
 Nachweise:
 
 ```sh
+cargo test --no-default-features --lib report::provider -- --test-threads=1
 cargo test --all-features --test observation -- --test-threads=1
 cargo build --features cli --bin woodpecker
 python3 tests/observation.py
@@ -307,6 +400,112 @@ Terminal 1; der Verwaltungsaufruf bestätigt zunächst nur den Stoppauftrag.
 Relative Manifestpfade beziehen sich auf das Arbeitsverzeichnis des Servers.
 Die Config-Datei verschiebt diesen Bezug nicht.
 
+## Interaktive REPL
+
+```sh
+target/debug/woodpecker --address 127.0.0.1:4100 session repl "$ID"
+```
+
+Beispiele innerhalb der REPL:
+
+```text
+help
+tick warp 10000 pace 20
+pending
+inspect resource counter::Counter
+tick warp stop
+help inspect
+command {"command":"screenshot.capture","arguments":{"path":"shots/current.png"}}
+quit
+```
+
+Die Kurzformen entsprechen dem Zielvertrag. `command` dekodiert das gemeinsame
+Command-/Arguments-Objekt und erreicht auch Input- und Screenshot-Commands.
+Ein Parsefehler vergibt keine Request-ID. Fachliche Ablehnungen erscheinen
+dagegen als korreliertes Ergebnis eines angenommenen Commands.
+
+Die REPL beobachtet Activity ab der ersten serverseitigen Momentaufnahme und zeigt
+bereits offene Commands, auch von anderen Clients. Vergangene abgeschlossene Ergebnisse
+werden beim Einstieg nicht erneut ausgegeben. `pending` fragt den Server erneut ab;
+es ist keine Rekonstruktion aus möglicherweise bereits verdrängten Activity-Einträgen.
+Bei Wiederverbindung bleibt der bisherige Cursor erhalten. Eine Lücke wird ausdrücklich
+als unbekannter Ausgang gemeldet, danach geht die Beobachtung am ältesten behaltenen
+Eintrag weiter. Eine unbestätigte Einreichung wird nie automatisch wiederholt.
+
+Ein Netzwerkworker trennt blockierende Client-Aufrufe von der Terminaleingabe.
+Die lokalen Queues sind auf 16 Eingaben und 32 Antworten begrenzt; volle Eingabequeues
+werden sichtbar abgelehnt, nicht stillschweigend verworfen. Terminalausgabe ist synchron:
+Ein nicht lesender stdout-Empfänger kann sie wie bei anderen CLI-Ausgaben blockieren.
+Am Terminal funktionieren Unicode-Eingabe, Pfeiltasten, Home/End, Backspace/Delete und
+Ctrl+U. Ausgaben erhalten die aktuelle Eingabe; Steuerzeichen aus Nutzdaten werden escaped.
+`crossterm` und `unicode-width` sind nur im `cli`-Feature eingebunden.
+
+Quit, Ctrl+C und EOF trennen nur den Client. Der Netzwerkworker schließt dabei seine
+Verbindung und wird vollständig beendet, auch bei blockiertem Handshake oder Poll.
+`shutdown` fordert ausdrücklich den Session-Abschluss an. Ein von dieser REPL bestätigter
+Shutdown endet bei regulärem Lifecycle-Ende erfolgreich; unerwartetes Session-Ende und
+Terminal-I/O-Fehler liefern einen Fehler. Das REPL-Ende bestätigt keinen Abschluss noch
+laufender Reports. Während Replay ist nur Replay-Stop als Spielsteuerung möglich.
+
+## Scripts
+
+```sh
+target/debug/woodpecker --address 127.0.0.1:4100 \
+  session script "$ID" --file commands.json
+```
+
+Die Session-Auswahl steht außerhalb der Datei. Beispiel für `commands.json`:
+
+```json
+{
+  "version": 1,
+  "commands": [
+    {"command": "recording.start", "arguments": {"path": "recordings/script.jsonl"}},
+    {"command": "tick.warp.start", "arguments": {"ticks": 30}},
+    {"command": "recording.stop", "arguments": {}},
+    {"command": "shutdown", "arguments": {}}
+  ]
+}
+```
+
+`cli::script::Script::parse` liest keine Dateien und reicht keine Commands ein.
+Die CLI liest die Datei und validiert sie vollständig, bevor sie die Session bindet.
+Unbekannte oder doppelte Felder, andere Versionen, ungültige Command-Strukturen und
+Shutdown vor dem letzten Eintrag verhindern die gesamte Ausführung. `Script::new`
+wendet dieselben Regeln auf Rust-Listen an, einschließlich der JSON-Darstellbarkeit.
+Fachliche Vorbedingungen wie gültige Pace, vorhandene Handles oder aktives Recording
+bleiben bei der Session und können korrelierte Ablehnungen ergeben.
+
+Normale Commands werden in Dateireihenfolge ohne Ergebnisbarriere eingereicht.
+Ein Inspect unmittelbar nach einem Warp wartet **nicht** auf dessen Ende. Vor
+Recording-Start, Recording-Stop und Shutdown wartet der Script-Client dagegen alle
+vorherigen eigenen Ergebnisse ab. Fremde Client-Arbeit bleibt unter der Kontrolle
+der Session und kann dort weiterhin eine Ablehnung verursachen.
+
+Die JSON-Zusammenfassung enthält `kind: "passed"` und `completed`, oder `kind: "failed"`,
+`completed` und `failures`. Beide Listen sind nach der ursprünglichen, nullbasierten
+`command_index` sortiert. Erfolgreiche Einträge enthalten außerdem `request_id`,
+das vollständige `command`-Objekt und `output`. Fehlereinträge enthalten den Index,
+Command, eine optionale bestätigte ID und `reason`:
+
+- `rejected` oder `failed` behält den Fehlercode und die Meldung.
+- `unknown` bedeutet, dass kein verlässliches Ergebnis vorliegt. Eine fehlende ID
+  bei unbestätigter Einreichung beweist nicht, dass der Server nichts angenommen hat.
+- `not_submitted` bezeichnet wegen eines Abbruchs nicht mehr eingereichte Commands.
+
+Fachliche Ablehnungen verhindern nicht die Einreichung späterer Commands. Bei
+Verbindungsfehler, Activity-Lücke oder beschädigter Korrelation stoppt die Einreichung;
+bereits bekannte Ergebnisse bleiben erhalten. Offene Ausgänge werden ausdrücklich
+unbekannt, statt Erfolg oder Rücknahme zu behaupten. Es gibt keine automatische
+Wiederverbindung oder Wiederholung einer Script-Einreichung.
+
+Nur ausschließlich abgeschlossene Commands ergeben Exit-Code 0; eine leere Liste
+ist erfolgreich. Parsefehler liefern vor der Ausführung `invalid_script` mit optionalem
+Index. Bei Fehlern ist der Exit-Code ungleich 0. Ctrl+C unterbricht nur diesen Client,
+schließt seine Verbindung und sammelt den Worker ein. Angenommene Arbeit läuft weiter.
+stdin ist kein Script-Eingabekanal; EOF dort beendet weder das Script noch die Session.
+Es gibt keinen impliziten Stop oder Shutdown und keine pauschale Ausführungsfrist.
+
 ## Äußerer Codec, Version 1
 
 Die experimentellen Routen liegen unter `/v1` und sind für lokale Clients ohne
@@ -332,7 +531,14 @@ Kopierbare Codec-Fixtures:
 {"version":1,"call":1,"operation":{"kind":"submit","command":{"command":"tick.warp.start","arguments":{"ticks":3}}}}
 {"version":1,"call":1,"result":{"kind":"pending","request_id":1,"command":"tick.warp.start"}}
 {"version":1,"call":2,"operation":{"kind":"poll","cursor":null,"wait_ms":0}}
+{"version":1,"call":3,"operation":{"kind":"snapshot"}}
 ```
+
+`snapshot` antwortet mit `result: {kind: "snapshot", snapshot: {cursor, state, pending}}`.
+`pending` enthält nach Request-ID sortierte Objekte mit `request_id` und `command`.
+Der Server hält diese offenen Annahmen unabhängig von Activity-Eviction; ihre Updates
+und die zugehörigen Activity-Einträge erfolgen unter derselben Sperre. Die Abfrage
+verbraucht keine Session-Request-ID. Terminale Sessions besitzen keine offenen Commands.
 
 Poll liefert `entries` und `cursor`. Ein Cursor ist `{session_id, position}`;
 Position 0 liegt vor dem ersten Eintrag. `null` fordert den Anfang an, nicht
@@ -346,7 +552,8 @@ pro Session, konfigurierbar beim Serverstart. Ein zu großer Eintrag verdrängt
 die vorherigen Einträge und hinterlässt eine sichtbare Cursor-Lücke.
 
 Zeitstempel sind Unix-Millisekunden. Listen sind nach Zeitstempel, dann voller ID
-sortiert. Die CLI gibt ausschließlich JSON-Ergebnisse auf stdout aus.
+sortiert. Die einzelnen Verwaltungs-, Submit- und Poll-Aufrufe geben JSON-Ergebnisse
+auf stdout aus. Die REPL verwendet dagegen einen Prompt, Statuszeilen und JSON-Payloads.
 
 ## Nachweise
 
@@ -354,6 +561,8 @@ sortiert. Die CLI gibt ausschließlich JSON-Ergebnisse auf stdout aus.
 cargo test --features cli --lib --test session
 python3 tests/slice.py
 python3 tests/shutdown.py
+python3 tests/repl.py
+python3 tests/script.py
 cargo check --no-default-features --lib
 cargo check --no-default-features --features server --lib
 cargo check --no-default-features --features client --lib
@@ -375,17 +584,35 @@ unbekannte IDs, volle stderr-Pipe, Pending-Drop, History-Verdrängung, falsche
 Protokollversion, Event-Überlauf und einen Kindprozess, dessen Nachfolger die
 Pipes nach dem direkten Prozessende offen hält.
 
+`repl.py` prüft zwei echte Bevy-Sessions, laufenden Warp mit weiteren Eingaben,
+Pending anderer Clients, Replay-Gate, ausdrücklichen Shutdown und unerwartetes Ende.
+Pseudoterminal-Tests prüfen die teilweise eingegebene Zeile während Activity-Ausgabe,
+Ctrl+C, Ctrl+D und die Wiederherstellung des Terminalmodus. Pipe-EOF, Quit und SIGINT
+lassen angenommene Arbeit weiterlaufen. Rust-Netzwerkfixtures prüfen zusätzlich
+Wiederverbindung, Cursor-Lücke, ungewisse Einreichung ohne Wiederholung und den Abbruch
+blockierter Handshakes beziehungsweise Activity-Antworten.
+
+`script.py` prüft vollständige Vorvalidierung ohne ausgeführtes Präfix, weiterlaufende
+normale Commands, fachliche Ablehnungen, reale Recording-Header-/Footer-Barrieren,
+Shutdown sowie Ctrl+C bei weiterhin laufendem Warp. Netzwerkfixtures prüfen zusätzlich
+vertauschte Outcomes, fremde Request-IDs, Cursor-Lücken, verlorene Submit-Bestätigung,
+fehlerhafte Outputs und Session-Ende. Die Zusammenfassung behält ursprüngliche Indizes.
+
 ## Noch nicht enthalten
 
-Die oben genannten Folge-Durchstiche bleiben offen. Das gilt auch für
-Panic-/Tracing-Reports und deren Snapshot-Metadaten. `report` enthält bisher
-nur die validierte Konfiguration; aktiviertes Tracing wird abgelehnt.
-Spiel-stderr wird fortlaufend gelesen, aber noch nicht als laufender
-Diagnosestrom dargestellt. Startfehler enthalten einen begrenzten stderr-Auszug.
+Die vollständige Szenen-/Lastabnahme bleibt offen. Die
+[externe Agent-Abnahme mit pi](pi-acceptance.md) ist durchgeführt.
+Panic-/Tracing-Beobachtung, Snapshot-Metadaten, gemeinsame Report-Darstellung
+und beide Report-Provider einschließlich automatischer Server-Verarbeitung sind implementiert.
+Spiel-stderr bleibt ein laufender menschlicher Diagnosestrom;
+vollständig validierte interne Marker werden entfernt.
+Startfehler enthalten einen begrenzten stderr-Auszug.
 
 Die Activity-Grenze von 4 MiB ist ein vorläufiger Betriebswert, keine
 Vollständigkeitsgarantie. Große Inspect-Werte können sofort eine Lücke
-erzeugen. Die Bemessung mit echten Reports folgt mit deren Implementation.
+erzeugen. Die Bemessung unter anhaltender Fehlerlast bleibt offen. Ausstehende
+Report-Snapshots warten derzeit in einer unbeschränkten Queue je Session; ein langsamer
+Provider kann daher Speicherbedarf ansammeln, obwohl die fertige Activity begrenzt ist.
 Der Server meldet bei Fristablauf Fehler und wartet auf die Prozessbereinigung;
 er behauptet keine harte Zeitgarantie für nicht unterbrechbare Betriebssystemarbeit.
 

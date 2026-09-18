@@ -168,6 +168,12 @@ mit ausdrücklich unbekanntem Ausgang.
 Eine nach Verbindungsverlust nicht bestätigte Einreichung bleibt ungewiss und wird nicht
 automatisch erneut gesendet.
 
+Der gebundene Client kann zusätzlich eine aktuelle Momentaufnahme mit Lebenszyklus,
+offenen serverseitigen Commands und Activity-Cursor abfragen. Diese Abfrage nimmt keinen
+Spiel-Command an. Offene Commands bleiben unabhängig von der begrenzten Activity erhalten;
+Momentaufnahme und Cursor werden unter derselben Sperre gelesen. Die Momentaufnahme
+rekonstruiert keine verlorenen Outcomes.
+
 Eine Command-Annahme erscheint vor ihrem terminalen Ergebnis mit der von der Session
 vergebenen Request-ID und dem qualifizierten Command-Namen. Terminale Ergebnisse sind
 `completed`, `rejected` oder `failed`. Session-Events gehören keinem Command.
@@ -762,6 +768,8 @@ gehören zum versionierten Dateivertrag, nicht zum aktuellen Produktnamen.
 Absolute Pfade, `.` und `..` sind ungültige Konfiguration.
 `submit(&report, &session)` verwendet ausschließlich diese beim Start wirksame Auswahl.
 Die Wahl von Github ist die ausdrückliche Veröffentlichungsentscheidung.
+Die Anwendung veröffentlicht damit ohne zusätzliche Rückfrage oder Freigabe pro Report.
+`Local` veröffentlicht nichts auf GitHub.
 
 Local schreibt den vollständigen Markdown-Text nach
 `<output>/v1-sha256-<digest>.md`. Referenzen sind `PathBuf` relativ zum Artefakt-Root.
@@ -963,6 +971,7 @@ Unerwartetes Session-Ende und Terminal-I/O-Fehler beenden ihren Lauf mit Fehler.
 Festgelegte Eingaben:
 
 ```text
+command <command-json>
 tick warp <ticks> [pace max|<ticks-per-second>]
 tick warp pace max|<ticks-per-second>
 tick warp stop
@@ -976,6 +985,12 @@ inspect entity <index>:<generation>
 inspect resources
 inspect resource <type-path>
 ```
+
+`command` übernimmt den Rest der Zeile als gemeinsames Command-/Arguments-Objekt.
+Damit sind auch Commands ohne eigene REPL-Kurzform erreichbar, etwa Input und Screenshot.
+Die REPL startet ihre Beobachtung am Cursor der ersten Momentaufnahme und zeigt deren offene
+Commands. Historische, bereits abgeschlossene Activity wird beim Einstieg nicht erneut
+ausgegeben. Nach Verbindungsverlust verwendet sie dagegen den letzten Beobachtungscursor.
 
 Die vollständige Inspect-Form übernimmt den gesamten Rest der Zeile als gemeinsames
 Argumentobjekt. Die vier Kurzformen erzeugen Entity-Summary ohne Filter, Summary eines Handles,
@@ -1004,3 +1019,13 @@ Alle Outcomes werden eingesammelt.
 Nur ausschließlich `completed` ergibt `Passed`; sonst enthält `Failed` Command-Index,
 optionale vergebene ID, Command und Ursache. Fehler oder Client-Ende brechen angenommene
 Commands nicht versteckt ab.
+
+Die ausführbare CLI-Form ist `woodpecker --address <adresse> session script <id> --file <datei>`.
+Ihre Zusammenfassung behält auch die vollständigen erfolgreichen Outputs; Erfolgs- und
+Fehlerlisten sind nach dem nullbasierten ursprünglichen Command-Index sortiert. Fachliche
+Ablehnungen verhindern nicht die Einreichung späterer Commands. Verbindungsfehler,
+Activity-Lücken und beschädigte Korrelation beenden dagegen die weitere Einreichung.
+Bereits bekannte Ergebnisse bleiben erhalten. Offene Ergebnisse sind `unknown`, noch nicht
+eingereichte Commands `not_submitted`; eine unbestätigte Einreichung wird nie wiederholt.
+Vorvalidierung prüft Format, gemeinsame Command-Struktur und Shutdown-Position,
+nicht die fachlichen Laufzeitvorbedingungen der Session.

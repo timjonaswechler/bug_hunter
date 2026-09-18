@@ -19,9 +19,11 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
    [zu portierende Testfälle](implementation-plan.md#fachliche-testfälle-für-die-offenen-durchstiche)
    prüfen. Research und ADRs nur für die jeweilige technische Frage hinzunehmen.
 4. Den aktuellen Stand unter „Konkreter nächster Durchstich“ beachten.
-   Screenshot, Recording und Replay sind umgesetzt. Diese Übergabe gehört zum
-   Commit für Fehlerbeobachtung und Snapshot-Konstruktion auf `code_ownership`,
-   aufbauend auf `82cd34b`.
+   Screenshot, Recording und Replay sind umgesetzt. Fehlerbeobachtung und
+   Snapshot-Konstruktion liegen in `e655acd` auf `code_ownership`, aufbauend auf
+   `82cd34b`. Report-Darstellung, beide Provider, automatische Server-Reports und
+   serverseitige Activity-Momentaufnahmen liegen in `8fc09c0`.
+   REPL und Script-Ausführung samt Client-Abbruch und Abnahmen liegen in `8b6f5b3`.
    Keine Commits oder Subagenten ohne ausdrückliche Zustimmung.
    Reversible Implementierungsdetails innerhalb des beauftragten Umfangs
    selbstständig entscheiden.
@@ -84,6 +86,27 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
   Failure- und ObservationError-Events bleiben von Command-Outcomes getrennt.
   Der Server übernimmt die Events in Activity. `Report::create` kopiert die
   Startmetadaten und die aktuelle History; spätere Änderungen verändern den Snapshot nicht.
+- `Report::create` berechnet außerdem Titel und versionierte v1-Signatur.
+  `to_markdown` stellt den vollständigen Snapshot mit sicheren Code-Fences dar.
+  Die vier Signatur-Golden-Vectors, Normalisierung, Unicode-Titelgrenzen und
+  eingebettete Markdown-/HTML-Syntax sind geprüft. Der private Projektpfad
+  dient der Signaturnormalisierung und dem `gh`-Arbeitsverzeichnis, nicht als Kontextfeld.
+- `report::submit(&report, &session)` schreibt vollständiges Markdown mit dem
+  lokalen Provider. Der beim Start geöffnete Artefakt-Root und die Startkonfiguration
+  bleiben maßgeblich, auch nach Session-Ende. No-follow-Pfade, atomische Erstellung
+  ohne Überschreiben, Signaturkonflikte, temporäre Dateien und parallele Schreiber
+  sind geprüft.
+- Bei konfiguriertem `Github` sucht `report::submit` über `gh api --paginate`
+  in offenen und geschlossenen Issues und veröffentlicht ohne zusätzliche Rückfrage.
+  Titel und vollständiges Markdown gehen über stdin. Fehler führen zum lokalen
+  Speicherweg; `Fallback` beziehungsweise `FallbackFailed` behalten die Ursachen.
+  Prozessfixtures und eine echte Session mit isoliertem `gh`-Fixture prüfen diesen Weg.
+  Dabei wurden keine echten Issues angelegt.
+- Der Server erfasst Report-Snapshots sofort beim Failure-Empfang und führt
+  Provider-Arbeit auf einem separaten Worker je Session aus. Activity behält Report
+  und Ergebnis gemeinsam. Reports können nach Session-Ende abschließen; die gemeinsame
+  Serverfrist und erzwungener Stopp erreichen auch diese Worker und ihre `gh`-Prozessgruppen.
+  Ein Abbruch meldet ungewissen Ausgang und startet keinen Fallback.
 - CLI, headless Zähleranwendung, Einzel-Session-Stopp, gemeinsame Serverfrist,
   SIGTERM und erstes/zweites Ctrl+C sind vorhanden.
 - Der v2-Ausführungsweg ist entfernt: alte Host-/Driver-Fassade, Plugin- und
@@ -98,8 +121,9 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
   separatem Package.
 
 Das ist weiterhin ein experimenteller v3-Teildurchstich, keine vollständige
-Implementation des Zielvertrags. Insbesondere fehlen noch Report-Titel, Signatur,
-Markdown und Provider; alte Funktionen werden nicht durch Kompatibilitäts-Exports angeboten.
+Implementation des Zielvertrags. Insbesondere fehlen noch vollständige
+Szenen-/Lastabnahmen; alte Funktionen werden nicht durch
+Kompatibilitäts-Exports angeboten.
 
 ## Offene Aufgaben in empfohlener Reihenfolge
 
@@ -153,10 +177,13 @@ während aktiver Aufnahme beziehungsweise Wiedergabe.
   ergänzen; Beobachtung von Session-Transport und Command-Outcomes getrennt halten.
 - [x] Beim Start erforderliche Metadaten erfassen und über `Report::create`
   einen unveränderlichen Snapshot mit Failure und History konstruieren.
-- [ ] Titel, Markdown, Fehlerdaten und Signatur einschließlich Golden Vectors umsetzen.
-- [ ] Zuerst den lokalen Provider, danach GitHub mit Duplikatsuche und lokalem
-  Rückfall implementieren. Echte Veröffentlichung braucht ausdrückliche Freigabe.
-- [ ] Clientunabhängige Report-Arbeit in Activity und die gemeinsame Serverfrist
+- [x] Titel, Markdown, Fehlerdaten und Signatur einschließlich Golden Vectors umsetzen.
+- [x] Den lokalen Provider mit Pfadsandbox, atomischer Erstellung ohne Überschreiben,
+  Marker-Vergleich und konkurrierenden Aufrufen implementieren.
+- [x] GitHub mit Duplikatsuche und lokalem Rückfall implementieren.
+  Bei konfiguriertem GitHub-Provider ohne zusätzliche Rückfrage veröffentlichen;
+  `Local` veröffentlicht nichts.
+- [x] Clientunabhängige Report-Arbeit in Activity und die gemeinsame Serverfrist
   integrieren. Langsame Provider dürfen Event-Empfang und Pipe-Drain nicht blockieren.
 
 Abschluss: Beobachtete Fehler ergeben Reports ohne `failure.json`-Zwischenformat
@@ -165,13 +192,17 @@ Ausgänge bleiben sichtbar.
 
 ### 5. REPL, Script und Agent-Abnahme
 
-- [ ] Die REPL während ausstehender Commands ansprechbar halten; gemeinsame
+- [x] Die REPL während ausstehender Commands ansprechbar halten; gemeinsame
   Commands, Inspect-Kurzformen, Pending-Anzeige und Activity verwenden.
-- [ ] Scripts vollständig vor Ausführung parsen und validieren; Ergebniszuordnung
+- [x] Scripts vollständig vor Ausführung parsen und validieren; Ergebniszuordnung
   sowie die festgelegten Recording-/Shutdown-Barrieren umsetzen.
-- [ ] EOF, Quit und Client-Trennung ohne versteckten Stop oder Shutdown prüfen.
-- [ ] Den maschinenlesbaren CLI-Zugang mit einer vom Nutzer gestarteten externen
+- [x] EOF, Quit und Client-Trennung ohne versteckten Stop oder Shutdown prüfen.
+  REPL- und Script-Abnahmen prüfen weiterlaufende angenommene Arbeit. Script liest
+  eine vollständig validierte Datei, nicht stdin; Ctrl+C trennt seinen Client.
+- [x] Den maschinenlesbaren CLI-Zugang mit einer vom Nutzer gestarteten externen
   Agent-Laufzeit erproben. Modellzugang und Agent-Werkzeugschleife gehören nicht hierher.
+  Mit pi durchgeführt; Rohdaten und Recording gegengeprüft. Der Nutzer bestätigt
+  erfolgreiche REPL-Inspects und weiterlaufenden Warp nach beendetem pi-Prozess.
 
 Abschluss: Menschliche und maschinelle Bedienung nutzen denselben Ausführungsweg,
 auch bei parallelen Clients und Wiederverbindung.
@@ -198,13 +229,35 @@ Context-Menu-Sessions geprüft. Recording und Replay aus Block 3 sind implementi
 Die gerenderte Replay-Abnahme besteht in vier erneuten Läufen ohne Codeänderung.
 Die früheren schwarzen PNGs und die mögliche Display-Bedingung sind unten festgehalten.
 
-Die Diagnoseerfassung und Snapshot-Konstruktion aus Block 4 sind umgesetzt.
-`Report` enthält derzeit Failure und Context, noch keinen Titel, keine Signatur
-und kein Markdown. Als Nächstes diese gemeinsame Report-Darstellung gemäß Zielvertrag
-ergänzen, einschließlich Signatur-Golden-Vectors. Danach folgen Local, Github mit
-Fallback und die automatische clientunabhängige Report-Arbeit im Server.
-Aktuell werden Failure-Events weitergereicht, aber weder Reports automatisch
-persistiert noch veröffentlicht. Es gibt weiterhin kein `failure.json`.
+Die Diagnoseerfassung, Snapshot-Konstruktion und gemeinsame Report-Darstellung
+aus Block 4 sind umgesetzt. `Report` enthält Titel, Failure, Signatur und Context;
+`to_markdown` verwendet ausschließlich diesen unveränderlichen Snapshot.
+Local und Github einschließlich Duplikatsuche und Fallback sind umgesetzt.
+Die automatische clientunabhängige Report-Arbeit ist ebenfalls umgesetzt. Activity
+enthält Snapshot und `submitted`/`failed`/`interrupted` gemeinsam. Fristablauf und
+erzwungener Stopp brechen Provider-Arbeit ab und warten auf Ressourcenbereinigung.
+Ein direktes `report::submit` außerhalb des Servers bleibt synchron und ohne Serverfrist.
+Bei konfiguriertem GitHub-Provider veröffentlicht der Server ohne zusätzliche Freigabe
+pro Report. Entwicklungstests verwenden weiterhin Fixtures, damit sie keine echten Issues anlegen.
+Die REPL aus Block 5 ist auf dem bestehenden Client-/Activity-Vertrag umgesetzt.
+`woodpecker --address <adresse> session repl <id>` bietet die festgelegten Kurzformen
+und `command <command-json>` für alle gemeinsamen Commands. Ein separater Netzwerkworker
+hält Eingabe, Hilfe und Quit während ausstehender Commands und Netzwerkantworten bedienbar.
+`pending` liest eine serverseitige Momentaufnahme unabhängig von Activity-Eviction.
+Wiederverbindung behält den Cursor; unbestätigte Einreichungen werden nicht wiederholt.
+Activity-Lücken melden unbekannte Ausgänge statt Ergebnisse zu erfinden.
+Scripts sind ebenfalls umgesetzt: vollständige v1-Vorvalidierung, Zuordnung zu
+ursprünglichen Array-Indizes, normale Commands ohne Ergebnisbarriere und ausdrückliche
+Barrieren vor Recording-Start/-Stop und Shutdown. Teilweise bekannte Ergebnisse bleiben
+bei Client-Fehlern erhalten; unbekannte Ausgänge und nicht eingereichte Commands sind getrennt.
+Einstieg: `woodpecker --address <adresse> session script <id> --file <datei>`.
+Die externe Agent-Abnahme mit vom Nutzer gestartetem pi ist durchgeführt.
+[Nachweis und Startanleitung](pi-acceptance.md) dokumentieren CLI-Ergebnisse,
+Recording und die menschliche REPL-Bedienung nach Ende von pi.
+Der [Arbeitsauftrag](pi-task.md) bleibt für Wiederholungen verfügbar.
+Keinen Modellzugang oder eigene Agent-Werkzeugschleife in woodpecker ergänzen und keine
+externe Laufzeit ohne Auftrag starten. Als Nächstes folgt Block 6 mit System- und Lastabnahme.
+Es gibt weiterhin kein `failure.json`.
 Vor weiterer Arbeit den tatsächlichen Arbeitsbaum prüfen und spätere lokale
 Änderungen erhalten.
 
@@ -229,6 +282,185 @@ Die Reflection-Fixtures ergänzen die Varianten und Fehlerfälle aus Block 1,
 ohne dafür Fenster zu öffnen.
 
 ## Nachweise und bekannte Grenzen
+
+Nach Ergänzung der Script-Ausführung bestanden:
+
+- `cargo clippy --all-targets --all-features -- -D warnings`, Format- und Diff-Prüfung.
+- `cargo test --no-default-features --lib -- --test-threads=1`: 92 Tests.
+- Abschließender vollständiger Lauf `cargo test --all-features -- --test-threads=1`:
+  132 Bibliotheks-/CLI-Tests, 7 Beobachtungs- und 13 Session-Prozesstests.
+- Acht Script-Tests prüfen vollständige Vorvalidierung einschließlich später Fehler,
+  Shutdown-Position und nicht darstellbarer Rust-Werte, normale Einreichung ohne
+  Ergebnisbarriere, alle drei Abschlussbarrieren, vertauschte Ergebnisse und fremde IDs.
+  Vor-/Nachannahme-Ablehnungen, technische Fehler, beschädigte Outputs, Activity-Lücken,
+  verlorene Submit-Bestätigung und Session-Ende behalten ihre ursprünglichen Indizes.
+- Nach CLI- und Zähler-Vorbau bestanden `python3 tests/script.py`, `tests/repl.py`,
+  `tests/slice.py` und `tests/shutdown.py`. Die neue Script-Abnahme nutzt zwei echte
+  Bevy-Sessions, prüft die tatsächliche Recording-Datei und lässt einen angenommenen
+  Warp nach Ctrl+C weiterlaufen, bis ein anderer Client ihn ausdrücklich stoppt.
+
+In einem vorherigen Gesamtlauf bestanden 131 Bibliotheks-/CLI-Tests; der bestehende
+Test langsamer Server-Reports scheiterte. Das `gh`-Fixture erreichte die erwartete
+Warteposition nicht innerhalb von 30 Sekunden. Die Ursache ist weiterhin ungeklärt;
+die abgefragten Systemlogs lieferten diesmal keine Gatekeeper-Rejection. Der abschließende
+Lauf bestand ohne Änderung an diesem Test oder am Report-Provider. Das ist kein
+Behebungsnachweis für den bereits dokumentierten sporadischen Fehler.
+
+Script verwendet keine automatische Wiederverbindung und wiederholt keine Einreichungen.
+Bekannte Ergebnisse bleiben bei Abbruch erhalten; unbekannte Ausgänge und nicht
+eingereichte Positionen sind getrennt. Eine leere Liste ist erfolgreich. Lange Commands
+haben keinen pauschalen Script-Timeout; der CLI-Client bleibt über Ctrl+C abbrechbar.
+Keine neuen Abhängigkeiten, keine externe Agent-Laufzeit und keine echten
+GitHub-Veröffentlichungen in diesem Schritt. Keine Commits oder Pushes.
+
+Nach Ergänzung der REPL bestanden:
+
+- `cargo clippy --all-targets --all-features -- -D warnings`, Format- und Diff-Prüfung.
+- `cargo test --no-default-features --lib -- --test-threads=1`: 92 Tests.
+- Abschließender vollständiger Lauf `cargo test --all-features -- --test-threads=1`:
+  124 Bibliotheks-/CLI-Tests, 7 Beobachtungs- und 13 Session-Prozesstests.
+- Parser-Tests prüfen alle kopierbaren Inspect-Beispiele, vollständige Type Paths,
+  Handle-Grenzen, gemeinsame JSON-Commands und ungültige Eingaben.
+- Eine serverseitige Momentaufnahme behält Pending auch bei vollständiger
+  Activity-Verdrängung. Netzwerkfixtures prüfen Wiederverbindung mit altem Cursor,
+  sichtbare Lücken, ungewisse Einreichung ohne Wiederholung sowie das Beenden
+  blockierter Handshakes und Activity-Antworten.
+- Nach CLI- und Zähler-Build: `python3 tests/repl.py`, `tests/slice.py` und
+  `tests/shutdown.py`. Die REPL-Abnahme nutzt zwei echte Bevy-Sessions, Pseudoterminals,
+  parallele Clients, weiterlaufenden Warp nach Client-Ende, Replay-Stop und Shutdown.
+
+Ein vorheriger Gesamtlauf scheiterte erneut im bestehenden Mehrsession-Fristtest:
+Ein Prozessfixture wurde vor Ready mit SIGKILL beendet, zeitgleich steht eine
+Gatekeeper-Rejection im Systemlog. Der isolierte Test bestand unverändert.
+Ein weiterer Lauf meldete einen Fehler im bestehenden Panic-/Abort-Beobachtungstest;
+dessen Diagnose wurde durch gleichzeitig beschriebene Logdateien überschrieben und ist
+nicht belastbar rekonstruierbar. Der abschließende Lauf verwendete eine eindeutige
+Logdatei und bestand vollständig. Diese Wiederholungen belegen keine Behebung der
+sporadischen Fehler.
+
+Der erste Pseudoterminal-Test las nach einem Teil der großen Inspect-Ausgabe nicht weiter
+und blockierte dadurch den stdout-Schreiber. Der Test leert den Kanal jetzt auch beim
+Beenden. Ein eigener Supervisor hält das macOS-Pseudoterminal bis zur Prüfung der
+wiederhergestellten Terminalattribute offen. Produktcode musste für diese Testfehler
+nicht geändert werden. Terminalausgabe bleibt synchron; ein nicht lesender Empfänger
+kann sie blockieren. Vollständige Lastbemessung bleibt Block 6.
+
+Keine Script-Ausführung, externe Agent-Abnahme, echten GitHub-Veröffentlichungen,
+Commits oder Pushes in diesem Schritt.
+
+Nach Ergänzung automatischer Server-Reports bestanden:
+
+- `cargo clippy --all-targets --all-features -- -D warnings`.
+- `cargo test --no-default-features --lib -- --test-threads=1`: 92 Tests.
+- Ein vollständiger abschließender Lauf `cargo test --all-features -- --test-threads=1`:
+  115 Bibliotheks-/CLI-Tests, 7 Beobachtungs- und 13 Session-Prozesstests.
+- Server-Tests prüfen unveränderte Snapshots trotz späterer Commands, Report-Ergebnisse
+  nach Session-Ende, Submit-Fehler bei weiter bedienbarer Session und einen protokollseitig
+  markierten Panic während des Shutdowns. Dessen fehlgeschlagener Command darf den
+  getrennten Empfang von Failure, Endevent und Report nicht überspringen.
+- Sechs echte Bevy-Sessions mit blockierten `gh`-Fixtures prüfen regulären Abschluss,
+  gemeinsame Frist und erzwungenen Stopp. Auch Nachfolger halten dabei Pipes offen:
+  der Test erreicht den tatsächlichen Prozessgruppen-/Pipe-Abschluss, nicht nur einen
+  Timeout des aufrufenden Threads. Nach erzwungenem Abbruch entsteht kein Fallback.
+- Lokale Cancellation-Tests prüfen Reads sowie Abbruch vor und nach temporärem Schreiben.
+  Bereits abgebrochene wartende Jobs starten weder `gh` noch Local.
+- CLI-Build, Zähler-Vorbau und `python3 tests/observation.py` mit automatischen lokalen
+  Markdown-Dateien nach Client-Trennung; danach `tests/slice.py` und `tests/shutdown.py`.
+  Die Signal-Abnahme prüft vier Szenarien mit zwölf Spielprozessen.
+
+Ein vorheriger Gesamtlauf bestand mit 114 Bibliotheks-/CLI-Tests; danach wurde der
+Shutdown-Failure-Test ergänzt. In einem weiteren Lauf wurde ein Prozessfixture vor
+Ready mit SIGKILL beendet; das Systemlog enthält eine zeitlich passende Gatekeeper-Rejection.
+Im gleichen Lauf erreichte eines von zwei `gh`-Fixtures seine Warteposition nicht,
+obwohl beide Request-Dateien vollständig geschrieben waren. Diese zweite Ursache ist
+nicht geklärt. Zusätzliche Testdiagnose erkennt vorzeitige Provider-Ergebnisse und nennt
+den Aufrufer eines Timeouts. Der separate Test und der abschließende Gesamtlauf bestanden
+ohne Änderung am produktiven Provider für diesen Befund; das ist kein Behebungsnachweis.
+Ein Zähler-Abnahmelauf ohne den vorgeschriebenen separaten Vorbau blieb 90 Sekunden in
+`Starting`. Nach explizitem Vorbau bestanden Zähler- und Signal-Abnahme.
+
+Die Report-Queue je Session ist derzeit unbeschränkt; die Activity-Byte-Grenze begrenzt
+nur fertige Einträge. Anhaltende Fehlerlast bei langsamem Provider muss in Block 6
+vermessen werden. Lokales IO bleibt kooperativ abbrechbar, nicht hart unterbrechbar.
+Keine gerenderte Abnahme, echte GitHub-Veröffentlichung, Commits oder Pushes in diesem Schritt.
+Die früheren Display-/Glyphen-Einschränkungen bleiben unverändert.
+
+Nach Ergänzung des GitHub-Providers bestanden:
+
+- `cargo clippy --all-targets --all-features -- -D warnings`.
+- `cargo test --no-default-features --lib -- --test-threads=1`: 89 Tests.
+- `cargo test --all-features -- --test-threads=1`: 109 Bibliotheks-/CLI-Tests,
+  7 Beobachtungs- und 13 Session-Prozesstests.
+- Sieben GitHub-Provider-Tests verwenden ausführbare Prozessfixtures. Sie prüfen
+  paginierte offene/geschlossene Issues, Pull-Request-Ausschluss, vollständige
+  Marker, ungültige spätere Seiten, unveränderte Titel, vollständiges Markdown
+  über stdin und große gleichzeitige Pipe-Ausgaben.
+- Fehlendes Programm, Exit-Status und ungültige Antworten bleiben mit `Search` oder
+  `Publish` typisiert. Alle sechs Fehler-/Operationskombinationen prüfen lokalen
+  Fallback einschließlich vorhandener Dateien und doppeltem Fehler.
+- Ein zusätzlicher Bevy-Prozesstest nutzt die öffentliche Session-API mit einem
+  ausschließlich im Test-Unterprozess geänderten PATH. Er prüft `Created`,
+  `Existing`, Fallback, Projektarbeitspfad, Startkonfiguration und Aufrufe nach
+  Session-Ende. Der echte `gh`-Client wurde nicht für API-Aufrufe verwendet.
+
+Die `gh api`-Argumente wurden gegen die lokal installierte CLI-Hilfe geprüft.
+Die Suche liest alle von `--paginate` gelieferten JSON-Arrays; unvollständige
+Antworten führen nicht zu einer Veröffentlichung. Erfolgreiche Remote-Aufrufe
+erzeugen keine lokale Kopie. Ein Publish-Fehler kann trotzdem ein bereits angelegtes
+Issue bedeuten; der Provider meldet Fallback und wiederholt POST nicht automatisch.
+Zusätzliche Provider-Konfigurationsfelder werden für beide Provider abgelehnt.
+Automatische Server-Report-Arbeit, Deadline-Anbindung und gerenderte Abnahmen waren
+nicht Teil dieser Erweiterung. Keine echte Veröffentlichung, keine neuen Dependencies.
+
+Nach Ergänzung des lokalen Providers bestanden:
+
+- `cargo clippy --all-targets --all-features -- -D warnings`.
+- `cargo test --no-default-features --lib -- --test-threads=1`: 82 Tests.
+- `cargo test --all-features -- --test-threads=1`: 102 Bibliotheks-/CLI-Tests,
+  6 Beobachtungs- und 13 Session-Prozesstests, vollständig ohne Startfehler.
+- Acht Provider-Tests prüfen unabhängige Roots, Unicode-Verzeichnisse, unveränderte
+  bestehende Reports, volle Signaturen einschließlich Version/Algorithmus,
+  Diagnose-Fences, Symlinks einschließlich In-Root-Links, FIFOs, Pfadwechsel,
+  Lese-/Schreib-/Publikationsfehler und Cleanup.
+- Acht gleichzeitig bis zur Publikation synchronisierte Schreiber liefern genau
+  einmal `Created` und siebenmal `Existing`; die endgültige Datei ist vollständig.
+- Der zusätzliche Bevy-Prozesstest prüft tatsächliche Markdown-Dateien während der
+  laufenden Session und nach Session-Ende, Startkonfiguration, relative Artefakt-Roots
+  sowie unveränderte History und Events.
+
+Der Provider schreibt zunächst eine neue Datei im Zielverzeichnis, synchronisiert
+deren Inhalt und setzt den endgültigen Namen per Hardlink ohne Überschreiben ein.
+Dateisysteme ohne Hardlink-Unterstützung liefern einen Schreibfehler; es gibt keinen
+unsicheren Ersatzweg mit Überschreiben. Unix-Dateien werden mit Modus `0600` angelegt.
+Marker innerhalb von Code-Fences zählen nicht; mehrere eigene Markerzeilen sind
+mehrdeutig und ergeben `Conflict`. Config-Prüfung und Provider teilen die Pfadregel;
+auch innere `.`-Komponenten werden abgelehnt.
+GitHub, automatische Server-Report-Arbeit und Render-Abnahmen waren nicht Teil
+dieser Erweiterung. Die früheren SIGKILL-/Display-Befunde sind dadurch nicht behoben.
+
+Nach Ergänzung der gemeinsamen Report-Darstellung bestanden:
+
+- `cargo test --no-default-features --lib -- --test-threads=1`: 74 Tests.
+- `cargo clippy --all-targets --all-features -- -D warnings`.
+- Ein vollständiger Lauf `cargo test --all-features -- --test-threads=1` mit
+  94 Bibliotheks-/CLI-Tests, 5 Beobachtungs- und 13 Session-Prozesstests.
+- Acht neue Report-Tests prüfen die vier Golden Vectors, vollständige und
+  unvollständige ANSI-Sequenzen, beide Projektpfad-Schreibweisen, ASCII-Token-Grenzen,
+  Kalender-/Zeit-/Offset-Gültigkeit, Unicode-Skalargrenzen, fehlende Diagnosen
+  und vollständige Markdown-Nutzdaten mit langen Backtick-Folgen.
+- Der erweiterte reale Bevy-Snapshot-Test prüft die private Projektpfad-Normalisierung
+  und identisches Markdown nach History-Änderung und Session-Ende.
+
+Ein weiterer Gesamtlauf scheiterte in zwei bestehenden Session-Tests
+(`protocol_errors_are_correlated_without_poisoning_other_work` und
+`replay_technical_failures_are_completions_not_old_outcome_comparisons`):
+`process_fixture` endete vor Ready mit SIGKILL. Die Report- und Beobachtungstests
+bestanden auch dort. Die abgefragten macOS-Systemlogs enthalten Provenance-Einträge,
+aber keinen eindeutigen Kill-/Ablehnungsnachweis für diese Starts. Die Ursache
+bleibt offen; der erfolgreiche Gesamtlauf beweist keine Behebung dieses Befunds.
+Keine Prozess-, Sicherheits- oder Test-Wiederholungsregeln wurden geändert.
+Die Python-/Render-Abnahmen wurden für diese Darstellungserweiterung nicht erneut
+ausgeführt; deren bisherige Nachweise und Display-/Glyphen-Einschränkungen gelten weiter.
 
 Nach Fehlerbeobachtung und Snapshot-Konstruktion bestanden:
 
