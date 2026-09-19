@@ -68,7 +68,27 @@ the scene. Bevy's first Time update has zero delta; subsequent ticks use 20 ms e
 under a wall-clock pace limit. It does not yet test this scene's pointer observer
 or screenshots. Logs and CLI evidence remain in `target/logical-state-*`, including
 on failure. The [coverage matrix](../docs/api/next-steps.md#abdeckungsmatrix-für-block-6)
-records the remaining scenarios; `game_menu` is next.
+records the remaining scenarios.
+
+## Game menu acceptance
+
+With `slice`, `game_menu` installs `session::Plugin` and chooses 100 ms simulation
+ticks. Native time and input remain unchanged without the feature.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin game_menu
+python3 tests/game_menu.py
+```
+
+This desktop test uses the CLI to navigate from splash through display and sound
+settings into the game and back after its timer expires. It reads actual button
+positions through Inspect and sends virtual pointer input without native focus.
+It verifies explicit tick boundaries, persistent settings, screen hierarchies and
+`entity_not_found` for despawned screen/button handles. Input helpers do not tick.
+Logs and full CLI responses remain under `target/game-menu-*`, even on failure.
+Screenshots, keyboard shortcuts and the Quit button are not covered here.
+The next scene acceptance is `ui_drag_drop`.
 
 ## Native application fixtures
 

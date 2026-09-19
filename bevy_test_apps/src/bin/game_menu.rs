@@ -33,9 +33,10 @@ enum MenuState {
     Disabled,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Reflect, Resource)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Reflect, Resource)]
 enum DisplayQuality {
     Low,
+    #[default]
     Medium,
     High,
 }
@@ -55,12 +56,6 @@ impl DisplayQuality {
             Self::Medium => "Medium",
             Self::High => "High",
         }
-    }
-}
-
-impl Default for DisplayQuality {
-    fn default() -> Self {
-        Self::Medium
     }
 }
 
@@ -125,10 +120,16 @@ fn main() {
             title: "Controlled game menu test".into(),
             resolution: WindowResolution::new(800, 600).with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
     add_game_menu(&mut app);
+    #[cfg(feature = "slice")]
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(100),
+    ))
+    .add_plugins(woodpecker::session::Plugin);
     app.run();
 }
 
