@@ -1,6 +1,6 @@
+use bevy::window::WindowResolution;
 use bevy::{prelude::*, time::Fixed};
 use bevy_test_apps::composition;
-use bevy::window::WindowResolution;
 
 const SURFACE_WIDTH: u32 = 640;
 const SURFACE_HEIGHT: u32 = 360;
@@ -35,6 +35,7 @@ fn build_app() -> App {
             resolution: WindowResolution::new(SURFACE_WIDTH, SURFACE_HEIGHT)
                 .with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
@@ -46,15 +47,17 @@ fn build_app() -> App {
         .add_systems(Startup, setup)
         .add_systems(Update, record_update)
         .add_systems(FixedUpdate, record_fixed_update);
+    #[cfg(feature = "slice")]
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(20),
+    ))
+    .add_plugins(woodpecker::session::Plugin);
     app
 }
 
 fn setup(mut commands: Commands) {
     commands.spawn((Name::new("logical-camera"), Camera2d));
-    commands.spawn((
-        Name::new("logical-state"),
-        SessionObservation::default(),
-    ));
+    commands.spawn((Name::new("logical-state"), SessionObservation::default()));
     commands
         .spawn((
             Name::new("logical-button"),

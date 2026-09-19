@@ -49,6 +49,27 @@ python3 tests/ui.py --capture-dir target/ui-captures
 This test opens a real window and requires a desktop session.
 The CLI launch configuration is `tests/fixtures/context_menu.toml`.
 
+## Controlled time and input acceptance
+
+`logical_state` now installs `session::Plugin` with `slice`. The application chooses
+20 ms simulation ticks, a 10 ms fixed step and a repeating 40 ms timer. Without
+`slice` it still uses native input and automatic time.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin logical_state
+python3 tests/logical_state.py
+```
+
+This opens a real window. The test inspects the existing `SessionObservation`
+component through the CLI, checks Update/FixedUpdate/timer counts and queued
+keyboard press/hold/release, and proves that Inspect and real waiting do not advance
+the scene. Bevy's first Time update has zero delta; subsequent ticks use 20 ms even
+under a wall-clock pace limit. It does not yet test this scene's pointer observer
+or screenshots. Logs and CLI evidence remain in `target/logical-state-*`, including
+on failure. The [coverage matrix](../docs/api/next-steps.md#abdeckungsmatrix-für-block-6)
+records the remaining scenarios; `game_menu` is next.
+
 ## Native application fixtures
 
 The binaries without `slice` use native Bevy input. Their systems, semantic state,

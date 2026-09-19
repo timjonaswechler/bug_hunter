@@ -19,6 +19,8 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
    [zu portierende Testfälle](implementation-plan.md#fachliche-testfälle-für-die-offenen-durchstiche)
    prüfen. Research und ADRs nur für die jeweilige technische Frage hinzunehmen.
 4. Den aktuellen Stand unter „Konkreter nächster Durchstich“ beachten.
+   Für Block 6 zuerst die Abdeckungsmatrix und den konkreten Einstieg für
+   `game_menu` unten lesen.
    Screenshot, Recording und Replay sind umgesetzt. Fehlerbeobachtung und
    Snapshot-Konstruktion liegen in `e655acd` auf `code_ownership`, aufbauend auf
    `82cd34b`. Report-Darstellung, beide Provider, automatische Server-Reports und
@@ -114,7 +116,7 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
   `failure.json`-Architektur. Der Handle samt Lebensdauertests wurde nach
   [handle](../../src/handle.rs) übernommen.
 - Die Bevy-Szenen und ihre eigenen fachlichen Tests bleiben als native
-  Anwendungen erhalten. `counter` und `context_menu` sind an den neuen Session-Weg
+  Anwendungen erhalten. `counter`, `context_menu` und `logical_state` sind an den neuen Session-Weg
   angebunden. Die entfernte `automation`-Anbindung ist kein unterstützter Einstieg.
 - Die Bibliothek ohne Features benötigt weder Server-/CLI- noch UI-/Renderer-
   Abhängigkeiten. Render-Abhängigkeiten der Testanwendungen gehören zu deren
@@ -211,6 +213,9 @@ auch bei parallelen Clients und Wiederverbindung.
 
 - [ ] Die erhaltenen Bevy-Szenen über den neuen Weg automatisieren: Fokus/Text,
   Drag-and-drop, Menüs, Timer, Layout, tote Handles und Bilder.
+  Die Abdeckungsmatrix unten trennt vorhandene Nachweise von noch offenen Szenen.
+  Der erste zusätzliche Durchstich `logical_state` ist umgesetzt; der Gesamtpunkt
+  bleibt offen, insbesondere bis `game_menu`, Drag-and-drop und die 3D-Szenen geprüft sind.
 - [ ] Recording, Replay und Reports gemeinsam mit Client-Trennung, Activity-Lücken,
   Session-Ende und Server-Shutdown testen.
 - [ ] Die vorläufige Activity-Grenze von 4 MiB mit echten großen Inspect-Outputs und
@@ -218,6 +223,93 @@ auch bei parallelen Clients und Wiederverbindung.
 - [ ] Öffentliche API, Capabilities, Fehlerformen und Dokumentation gegen den
   vollständigen Zielvertrag prüfen. Pro abgeschlossenem Bereich Migrationsstatus
   und tatsächlichen Nachweis aktualisieren.
+
+### Abdeckungsmatrix für Block 6
+
+Stand nach Beginn der Systemabnahme. „CLI geprüft“ bedeutet ein echter Prozessweg
+über CLI → HTTP/WebSocket → Session → Bevy. Native App-Tests und direkte Plugin-Tests
+sind ergänzende Nachweise, aber kein Ersatz dafür. Bestehende Nachweise aus früheren
+Sitzungen sind nicht automatisch in dieser Sitzung erneut ausgeführt worden.
+
+| Bereich / Szene | Vorhandener Nachweis | Noch offen |
+| --- | --- | --- |
+| Grundsteuerung / `counter` | [tests/slice.py](../../tests/slice.py): Tickzahl, eingefrorener Zustand ohne Warp, Pace/Stop, getrennte Sessions, Recording/Replay und Verwaltungs-Stopp. | Kombinierte Fehler-/Lastfälle aus den folgenden Zeilen; der erfolgreiche Zähler allein schließt Block 6 nicht ab. |
+| Fokus, Text, gehaltene Tasten / `context_menu` | [tests/ui.py](../../tests/ui.py): zwei echte Fenster, virtuelle Pointer und Tastaturen, Fokuswechsel, Text erst nach Tick, unterschiedliche Unicode-Werte, fehlender Fokus und Textgrößengrenze. | Weitere Szenen mit Fokuswechsel und Hierarchie-Lebensdauer. Fehlende Glyphen bleiben auf Nutzerwunsch zurückgestellt; gespeicherte Textwerte sind geprüft, vollständige Glyphendarstellung nicht. |
+| Menüs, Layout und Bilder / `context_menu` | `tests/ui.py` findet benannte Entities per allgemeinem Inspect, liest tatsächliche Layout-Koordinaten, öffnet/schließt Menüs, prüft `Interaction`, PNG-Struktur und Pixeländerungen ohne zusätzliche Ticks. Recording/Replay der UI und Root-Isolation sind enthalten. | Kein Nachweis für sämtliche Layoutvarianten oder andere Szenen. Früher sporadisch schwarze Screenshots; Display-Voraussetzungen weiterhin beachten. |
+| Update, FixedUpdate und Timer / `logical_state` | **Neu:** [tests/logical_state.py](../../tests/logical_state.py) prüft den Session-Start, stabile Anfangswerte, reale Wartezeit ohne Fortschritt, 20-ms-Simulationstakte bei 10-ms-FixedUpdate und 40-ms-Timer sowie Keyboard-Press/Hold/Release. | Der Pointer-Observer dieser Szene und ihre Bilddarstellung werden damit nicht abgenommen. Pointer und Bilder besitzen bisher den gesonderten Context-Menu-Nachweis. |
+| Bildschirmwechsel, Einstellungen, Timer und tote Handles / `game_menu` | Native Tests `controlled_time_drives_splash_and_game_timers` und `navigation_updates_settings_and_despawns_old_screens` in [game_menu.rs](../../bevy_test_apps/src/bin/game_menu.rs). | Noch keine `session::Plugin`-Anbindung und keine CLI-Abnahme. Native Tests setzen unter anderem `Interaction` direkt; das ersetzt keinen virtuellen Klick. **Nächster Szenendurchstich.** |
+| UI-Drag-and-drop / `ui_drag_drop` | [ui_drag_drop.rs](../../bevy_test_apps/src/bin/ui_drag_drop.rs) bewahrt benannte Tiles, Belegung, reflektierte Drag-Phasen und Observer. | Session-Anbindung und End-to-End-Test fehlen: gültiges/ungültiges Ziel, Zwischenposition, Drop, DragEnd, Belegung und Layout nach Abschluss. Keine Abdeckung aus dem normalen Context-Menu-Klick ableiten. |
+| Mesh-Picking / `mesh_picking` | [mesh_picking.rs](../../bevy_test_apps/src/bin/mesh_picking.rs) bewahrt Mesh-Observer, reflektierten Zustand und Transforms. | Session-Anbindung, echte Hover-/Press-/Release-/Drag-Sequenz, zeitabhängige Rotation und Bildabnahme fehlen. |
+| Material-/Kamerazustand / `blend_modes` | Drei native Tests in [blend_modes.rs](../../bevy_test_apps/src/bin/blend_modes.rs) prüfen gehaltene Pfeiltasten, getrennte Moduswechsel und deterministische Farbsequenzen. | Session-Anbindung und CLI-/Bildabnahme fehlen. Native Materialzustände sind kein Nachweis für korrekt gerenderte Bilder. |
+| Allgemeines Inspect, Hierarchie, ungültige/tote Handles | [entities/tests.rs](../../src/session/inspect/entities/tests.rs), Reflection-Matrix und Plugin-Tests prüfen Filter, Projektionen, Hierarchietiefe und Handle-Ablehnungen. `tests/ui.py` nutzt lebende Handles über CLI. | Ein durch echten Szenenwechsel veralteter, zuvor über CLI gelesener Handle muss über CLI als `entity_not_found` abgelehnt werden. Dafür `game_menu` verwenden. |
+| Recording, Replay und Reports über Lebenszyklusgrenzen | `tests/slice.py`, `tests/ui.py`, `tests/observation.py`, `tests/session.rs` und `src/server/report_tests.rs` decken die einzelnen Abläufe, Client-Trennung und Report-Abschluss nach Session-Ende ab. | Kombinationen mit aktiver Aufnahme/Wiedergabe, Failure, Activity-Lücke und gemeinsamem Shutdown noch nicht als vollständige Szenariomatrix abgenommen. |
+| CLI, REPL, Script und externer Agent | `tests/repl.py`, `tests/script.py` sowie [pi-Abnahme](pi-acceptance.md): gemeinsame Session-Steuerung, Barrieren, Client-Ende ohne impliziten Stop. | Große Outputs und anhaltende Activity unter langsamen Clients gehören noch zur Lastabnahme. |
+| Activity- und Report-Last | Kleine Eviction-/Übergröße-/Cursor-Tests sowie kontrolliert langsame Provider sind vorhanden. | 4-MiB-Activity-Grenze mit realen großen Inspect-/Report-Outputs bemessen. Unbegrenzte wartende Report-Queue je Session bleibt offen; begrenzte fertige Activity begrenzt diese Queue nicht. |
+
+### Erster zusätzlicher Szenentest: logical_state
+
+Die erhaltene Szene bleibt ohne `slice` eine native Anwendung. Mit `slice` installiert
+sie nach ihren eigenen Systemen `session::Plugin` und die anwendungseigene
+`TimeUpdateStrategy::ManualDuration(20 ms)`. Der vorhandene FixedUpdate-Takt bleibt
+10 ms, der wiederholende Timer 40 ms. Es gibt keine Änderung am produktiven
+woodpecker-Koordinator oder dessen Zeitregeln.
+
+Bevys erster Time-Update initialisiert die Uhr mit Delta 0. Das ist im Test
+ausdrücklich berücksichtigt, nicht durch zusätzliche unsichtbare Ticks umgangen:
+
+| Ausgeführte Simulationsticks insgesamt | Erwartete Updates | FixedUpdates | Timer-Abschlüsse |
+| --- | --- | --- | --- |
+| 0 | 0 | 0 | 0 |
+| 1 | 1 | 0 | 0 |
+| 2 | 2 | 2 | 0 |
+| 3 | 3 | 4 | 1 |
+| 4, nach vorgemerkt gedrücktem `a` | 4 | 6 | 1 |
+| 7, davon drei Ticks mit Pace 25/s | 7 | 12 | 3 |
+| 8, nach vorgemerkt losgelassenem `a` | 8 | 14 | 3 |
+
+Press und Release ändern den reflektierten Zustand nicht vor dem Tick.
+Über mehrere gehaltene Ticks entsteht keine zusätzliche Press-Flanke.
+Pace begrenzt die reale Ausführungsgeschwindigkeit, nicht die simulierte Tickdauer.
+Inspect und kurze reale Wartezeiten lassen alle Beobachtungswerte unverändert.
+
+Reproduzierbarer Einstieg, vom Repository-Root:
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin logical_state
+python3 tests/logical_state.py
+```
+
+Der separate Vorbau ist erforderlich. Der Test öffnet ein echtes Fenster und benötigt
+eine verfügbare Desktop-Sitzung, jedoch keinen nativen Fokus oder physische Eingaben.
+Konfiguration: [tests/fixtures/logical_state.toml](../../tests/fixtures/logical_state.toml).
+Jeder Lauf behält `server.log`, `commands.jsonl` und Artefakte in einem eigenen
+`target/logical-state-*`-Ordner, auch bei Fehlern. Pfad und Ergebnis werden ausgegeben.
+Die JSONL-Datei enthält CLI-Aufruf, Exit-Code und vollständige stdout-/stderr-Antworten.
+Der Test verwendet Fortsetzungscursor, behandelt `gap` als Fehler und beendet seine
+eigene Session und seinen eigenen Server. Fremde laufende Sessions bleiben unberührt.
+
+### Konkreter Einstieg für die nächste Sitzung: game_menu
+
+1. Arbeitsbaum prüfen und spätere lokale Änderungen erhalten.
+   Die neue `logical_state`-Abnahme nicht erneut implementieren.
+2. [game_menu.rs](../../bevy_test_apps/src/bin/game_menu.rs) und seine zwei nativen
+   Tests lesen. Bei `slice` die Session-Anbindung und eine ausdrücklich
+   anwendungseigene Zeitkonfiguration ergänzen; den nativen Weg erhalten.
+3. Ein CLI-Szenario für Splash → Hauptmenü → Einstellungen → Hauptmenü → Spiel →
+   timerbedingte Rückkehr umsetzen. Alle Layout-/Zustandsfortschritte ausdrücklich
+   per Warp auslösen. OnEnter-/StateTransition-Zeitpunkte messen, nicht durch
+   beliebige Schlafzeiten oder versteckte `app.update()`-Aufrufe überbrücken.
+4. Buttons per allgemeinem Entity-Inspect und Name finden, die tatsächlichen
+   Layoutkoordinaten lesen und über virtuelle Pointer-Commands bedienen.
+   Keine direkten `Interaction`-Änderungen oder neuen Automation-Marker einführen.
+5. Einen Handle des alten Bildschirms behalten. Nach dessen Despawn über denselben
+   CLI-Weg `entity_not_found` nachweisen, dann den neuen Bildschirm frisch abfragen.
+   Einstellungen, Hierarchie und Timer über registrierte Anwendungsdaten prüfen.
+6. Fehlende und ausgeführte Nachweise in dieser Matrix aktualisieren. Danach
+   `ui_drag_drop`, `mesh_picking` und `blend_modes` bearbeiten. Erst anschließend
+   die übergreifende Lebenszyklus-/Lastmatrix schließen. Keinen ganzen Block allein
+   wegen eines erfolgreichen neuen Szenentests abhaken.
 
 ## Konkreter nächster Durchstich
 
@@ -256,7 +348,9 @@ Die externe Agent-Abnahme mit vom Nutzer gestartetem pi ist durchgeführt.
 Recording und die menschliche REPL-Bedienung nach Ende von pi.
 Der [Arbeitsauftrag](pi-task.md) bleibt für Wiederholungen verfügbar.
 Keinen Modellzugang oder eigene Agent-Werkzeugschleife in woodpecker ergänzen und keine
-externe Laufzeit ohne Auftrag starten. Als Nächstes folgt Block 6 mit System- und Lastabnahme.
+externe Laufzeit ohne Auftrag starten. Block 6 ist begonnen: Abdeckungsmatrix und
+`logical_state`-CLI-Abnahme sind ergänzt. Als Nächstes folgt `game_menu` nach dem
+konkreten Einstieg oben; System- und Lastabnahme insgesamt bleiben offen.
 Es gibt weiterhin kein `failure.json`.
 Vor weiterer Arbeit den tatsächlichen Arbeitsbaum prüfen und spätere lokale
 Änderungen erhalten.
@@ -282,6 +376,35 @@ Die Reflection-Fixtures ergänzen die Varianten und Fehlerfälle aus Block 1,
 ohne dafür Fenster zu öffnen.
 
 ## Nachweise und bekannte Grenzen
+
+Nach dem ersten zusätzlichen Szenendurchstich aus Block 6 bestanden:
+
+- CLI-Build und separater Build von `logical_state` mit `slice`.
+- `python3 tests/logical_state.py`: vollständiger CLI-/Bevy-Lauf mit
+  8 Updates, 14 FixedUpdates, 3 Timer-Abschlüssen und Keyboard-Press/Hold/Release.
+  Zwei vollständige Läufe bestanden unverändert nach Erweiterung um die Keyboard-
+  und Pace-Prüfungen. Letzter Ergebnisordner:
+  `target/logical-state-9q3u1qau`.
+- `cargo test --manifest-path bevy_test_apps/Cargo.toml --all-features --all-targets`:
+  alle 8 vorhandenen App-/Kompositionstests bestanden, einschließlich der nativen
+  Menü- und Materialtests.
+- `cargo clippy --manifest-path bevy_test_apps/Cargo.toml --features slice --bin logical_state -- -D warnings`.
+- `cargo check --manifest-path bevy_test_apps/Cargo.toml --no-default-features --bin logical_state`:
+  der native Weg bleibt baubar.
+- Root-Formatprüfung, gezielte Formatprüfung der geänderten Szene und `git diff --check`.
+
+Der neue Test wurde zuerst ohne Session-Anbindung ausgeführt und scheiterte am fehlenden
+Ready. Nach Ergänzung des Plugins bestand der Start-/Stillstandstest. Anschließend
+scheiterte die genaue FixedUpdate-Prüfung mit der bisherigen Echtzeitkonfiguration.
+Die Szene erhielt daraufhin ausschließlich unter `slice` ihre eigene feste 20-ms-Dauer.
+Damit besteht der Timer-Test; die Zeitregeln von woodpecker wurden nicht verändert.
+Die fehlgeschlagenen Läufe sind unter `target/logical-state-2kt4gu3c` und
+`target/logical-state-y98gftbo` erhalten.
+
+Beim Linken des Fensterbinaries erschien die bekannte macOS-Warnung über eine zu große
+`__eh_frame`-Sektion; Build und Abnahme bestanden. Es gab keinen neuen Screenshot- oder
+Font-Nachweis. Root-Gesamttests, Context-Menu-CLI-Abnahme und Lasttests wurden in diesem
+Schritt nicht erneut ausgeführt. Keine Commits, Pushes oder externen Agent-Läufe.
 
 Nach Ergänzung der Script-Ausführung bestanden:
 
