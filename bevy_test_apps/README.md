@@ -88,7 +88,26 @@ It verifies explicit tick boundaries, persistent settings, screen hierarchies an
 `entity_not_found` for despawned screen/button handles. Input helpers do not tick.
 Logs and full CLI responses remain under `target/game-menu-*`, even on failure.
 Screenshots, keyboard shortcuts and the Quit button are not covered here.
-The next scene acceptance is `ui_drag_drop`.
+
+## UI drag-and-drop acceptance
+
+With `slice`, `ui_drag_drop` installs `session::Plugin` and chooses 20 ms simulation
+ticks. Without it, native input and automatic time remain unchanged.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin ui_drag_drop
+python3 tests/ui_drag_drop.py
+```
+
+This desktop test reads actual tile positions and sizes through Inspect. Virtual
+pointer commands drag Amber onto Blue, then over empty background. Explicit ticks
+drive each input step. Assertions cover the intermediate position, active tile,
+ordered drag phases, swapped or unchanged occupancy, all final tile positions and
+restored transform, outline and z-index. Idle ticks must not repeat drag events.
+No native focus or physical input is needed. Evidence remains under
+`target/ui-drag-drop-*`, including on failure. This does not test screenshots.
+The next scene acceptance is `mesh_picking`.
 
 ## Native application fixtures
 

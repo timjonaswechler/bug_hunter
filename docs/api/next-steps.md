@@ -20,7 +20,7 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
    prüfen. Research und ADRs nur für die jeweilige technische Frage hinzunehmen.
 4. Den aktuellen Stand unter „Konkreter nächster Durchstich“ beachten.
    Für Block 6 zuerst die Abdeckungsmatrix und den konkreten Einstieg für
-   `ui_drag_drop` unten lesen.
+   `mesh_picking` unten lesen.
    Screenshot, Recording und Replay sind umgesetzt. Fehlerbeobachtung und
    Snapshot-Konstruktion liegen in `e655acd` auf `code_ownership`, aufbauend auf
    `82cd34b`. Report-Darstellung, beide Provider, automatische Server-Reports und
@@ -116,7 +116,7 @@ Interfaces in [goal.rs](goal.rs), Migrationsstatus und Nachweise im
   `failure.json`-Architektur. Der Handle samt Lebensdauertests wurde nach
   [handle](../../src/handle.rs) übernommen.
 - Die Bevy-Szenen und ihre eigenen fachlichen Tests bleiben als native
-  Anwendungen erhalten. `counter`, `context_menu`, `logical_state` und `game_menu` sind an den neuen Session-Weg
+  Anwendungen erhalten. `counter`, `context_menu`, `logical_state`, `game_menu` und `ui_drag_drop` sind an den neuen Session-Weg
   angebunden. Die entfernte `automation`-Anbindung ist kein unterstützter Einstieg.
 - Die Bibliothek ohne Features benötigt weder Server-/CLI- noch UI-/Renderer-
   Abhängigkeiten. Render-Abhängigkeiten der Testanwendungen gehören zu deren
@@ -214,8 +214,8 @@ auch bei parallelen Clients und Wiederverbindung.
 - [ ] Die erhaltenen Bevy-Szenen über den neuen Weg automatisieren: Fokus/Text,
   Drag-and-drop, Menüs, Timer, Layout, tote Handles und Bilder.
   Die Abdeckungsmatrix unten trennt vorhandene Nachweise von noch offenen Szenen.
-  Die zusätzlichen Durchstiche `logical_state` und `game_menu` sind umgesetzt.
-  Der Gesamtpunkt bleibt offen, insbesondere für Drag-and-drop und die 3D-Szenen.
+  Die zusätzlichen Durchstiche `logical_state`, `game_menu` und `ui_drag_drop` sind umgesetzt.
+  Der Gesamtpunkt bleibt offen, insbesondere für die 3D-Szenen.
 - [ ] Recording, Replay und Reports gemeinsam mit Client-Trennung, Activity-Lücken,
   Session-Ende und Server-Shutdown testen.
 - [ ] Die vorläufige Activity-Grenze von 4 MiB mit echten großen Inspect-Outputs und
@@ -238,7 +238,7 @@ Sitzungen sind nicht automatisch in dieser Sitzung erneut ausgeführt worden.
 | Menüs, Layout und Bilder / `context_menu` | `tests/ui.py` findet benannte Entities per allgemeinem Inspect, liest tatsächliche Layout-Koordinaten, öffnet/schließt Menüs, prüft `Interaction`, PNG-Struktur und Pixeländerungen ohne zusätzliche Ticks. Recording/Replay der UI und Root-Isolation sind enthalten. | Kein Nachweis für sämtliche Layoutvarianten oder andere Szenen. Früher sporadisch schwarze Screenshots; Display-Voraussetzungen weiterhin beachten. |
 | Update, FixedUpdate und Timer / `logical_state` | **Neu:** [tests/logical_state.py](../../tests/logical_state.py) prüft den Session-Start, stabile Anfangswerte, reale Wartezeit ohne Fortschritt, 20-ms-Simulationstakte bei 10-ms-FixedUpdate und 40-ms-Timer sowie Keyboard-Press/Hold/Release. | Der Pointer-Observer dieser Szene und ihre Bilddarstellung werden damit nicht abgenommen. Pointer und Bilder besitzen bisher den gesonderten Context-Menu-Nachweis. |
 | Bildschirmwechsel, Einstellungen, Timer und tote Handles / `game_menu` | [tests/game_menu.py](../../tests/game_menu.py): Session-Anbindung, Splash → Hauptmenü → Display-/Sound-Einstellungen → Hauptmenü → Spiel → Timer-Rückkehr. Virtuelle Klicks auf ausgelesene Layoutkoordinaten, Hierarchien, persistente Einstellungen und `entity_not_found` für despawnte Bildschirm-/Button-Handles. Zwei native Tests bleiben ergänzend erhalten. | Keine Bildabnahme, keine CLI-Abnahme der Keyboard-Kurzwege oder des Quit-Buttons. |
-| UI-Drag-and-drop / `ui_drag_drop` | [ui_drag_drop.rs](../../bevy_test_apps/src/bin/ui_drag_drop.rs) bewahrt benannte Tiles, Belegung, reflektierte Drag-Phasen und Observer. | Session-Anbindung und End-to-End-Test fehlen: gültiges/ungültiges Ziel, Zwischenposition, Drop, DragEnd, Belegung und Layout nach Abschluss. Keine Abdeckung aus dem normalen Context-Menu-Klick ableiten. |
+| UI-Drag-and-drop / `ui_drag_drop` | [tests/ui_drag_drop.py](../../tests/ui_drag_drop.py): echte virtuelle Pointer-Sequenzen für gültigen Drop auf eine andere Tile und ungültiges Ziel auf leerem Hintergrund. Prüft Zwischenposition, aktive Tile, geordnete Drag-Phasen, Belegung, Hierarchie, Layout aller Tiles und Rücksetzen von Transform/Outline/Z-Index. | Keine Bildabnahme, kein Multi-Pointer-Test oder Despawn während eines aktiven Drags. |
 | Mesh-Picking / `mesh_picking` | [mesh_picking.rs](../../bevy_test_apps/src/bin/mesh_picking.rs) bewahrt Mesh-Observer, reflektierten Zustand und Transforms. | Session-Anbindung, echte Hover-/Press-/Release-/Drag-Sequenz, zeitabhängige Rotation und Bildabnahme fehlen. |
 | Material-/Kamerazustand / `blend_modes` | Drei native Tests in [blend_modes.rs](../../bevy_test_apps/src/bin/blend_modes.rs) prüfen gehaltene Pfeiltasten, getrennte Moduswechsel und deterministische Farbsequenzen. | Session-Anbindung und CLI-/Bildabnahme fehlen. Native Materialzustände sind kein Nachweis für korrekt gerenderte Bilder. |
 | Allgemeines Inspect, Hierarchie, ungültige/tote Handles | [entities/tests.rs](../../src/session/inspect/entities/tests.rs), Reflection-Matrix und Plugin-Tests prüfen Filter, Projektionen, Hierarchietiefe und Handle-Ablehnungen. `tests/ui.py` nutzt lebende Handles über CLI. `tests/game_menu.py` prüft Bildschirm-/Button-Despawn, Ablehnung alter Handles auch nach Neuanlage eines gleichnamigen Bildschirms und frisch abgefragte Hierarchien. | Weitere Hierarchie-Lebenszyklen in Drag-and-drop und Mesh-Szenen; der geplante Game-Menu-Handle-Nachweis ist abgeschlossen. |
@@ -334,22 +334,59 @@ und Artefakte unter `target/game-menu-*`. Fortsetzungscursor verhindern das erne
 Lesen alter Activity; Lücken und unerwartete Outcomes führen zum Fehler.
 Cleanup betrifft nur den eigenen Server und seine Session.
 
-### Konkreter Einstieg für die nächste Sitzung: ui_drag_drop
+### Dritter zusätzlicher Szenentest: ui_drag_drop
 
-1. Arbeitsbaum prüfen und vorhandene Änderungen erhalten. `logical_state` und
-   `game_menu` sind umgesetzt; nicht erneut beginnen.
-2. [ui_drag_drop.rs](../../bevy_test_apps/src/bin/ui_drag_drop.rs) lesen.
-   Bei `slice` Session-Anbindung und nötige anwendungseigene Zeitkonfiguration
-   ergänzen, den nativen Weg erhalten.
-3. Tiles und Zielbereiche über allgemeines Inspect und Namen finden. Tatsächliche
-   Layoutkoordinaten lesen, virtuelle Pointer-Commands verwenden und jeden
-   Simulationsfortschritt ausdrücklich per Warp auslösen.
-4. Gültiges und ungültiges Ziel, Zwischenposition, Drop und DragEnd durchspielen.
-   Reflektierte Drag-Phasen, aktive Tile, Belegung und Layout nach Abschluss prüfen.
-   Nicht von erfolgreichen normalen Menüklicks auf Drag-Abdeckung schließen.
-5. Matrix und Testnachweise aktualisieren. Danach `mesh_picking` und `blend_modes`,
-   anschließend die übergreifende Lebenszyklus-/Lastmatrix bearbeiten.
-   Block 6 bleibt bis zur vollständigen Abnahme offen.
+Mit `slice` installiert die Szene `session::Plugin` und wählt anwendungseigene
+20-ms-Ticks. Ohne `slice` bleiben automatische Zeit und native Eingaben erhalten.
+Die bestehenden Drag-Observer und ihre Zustandsregeln bleiben unverändert.
+
+[tests/ui_drag_drop.py](../../tests/ui_drag_drop.py) findet Grid und Tiles über
+Namen im allgemeinen Entity-Inspect. Nach einem ausdrücklichen Layouttick liest
+der Test tatsächliche Positionen und für das ungültige Ziel auch Tile-Größen.
+Input-Helfer senden nur Commands; jeder Warp steht ausdrücklich im Szenario.
+
+- Gültiger Drop: Amber über eine Zwischenposition auf Blue ziehen. Die Folge ist
+  `DragStart, Drag, Drag, DragDrop, DragEnd`. Die Belegung wird
+  `[Blue, Amber, Green, Rose]`; die tatsächlichen Positionen beider Tiles tauschen.
+- Ungültiges Ziel: Amber über leeren Hintergrund außerhalb aller ruhenden Tiles
+  ziehen. Die Folge ist `DragStart, Drag, DragEnd`, ohne weiteren akzeptierten Drop.
+  Belegung bleibt unverändert, Amber kehrt an seinen Platz zurück.
+- Während des Drags stimmen aktive Tile und Zwischenposition; Z-Index und Outline
+  ändern sich. Nach beiden Abschlüssen sind Transform, Outline und Z-Index wieder
+  im Ausgangszustand. Grid-Hierarchie und Layout aller vier Tiles werden geprüft.
+- Angenommene Eingaben und reale Wartezeit ändern den Zustand ohne Tick nicht.
+  Zwei abschließende Leerticks erzeugen keine wiederholten Drag-/Drop-Ereignisse.
+
+Der vollständige Lauf umfasst 12 Simulationsticks, zwei DragStarts, drei Drags,
+einen akzeptierten DragDrop und zwei DragEnds. Es gibt keine Screenshot-Prüfung.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin ui_drag_drop
+python3 tests/ui_drag_drop.py
+```
+
+Eine Desktop-Sitzung ist nötig, nativer Fokus nicht. Die Konfiguration steht in
+[tests/fixtures/ui_drag_drop.toml](../../tests/fixtures/ui_drag_drop.toml).
+Jeder Lauf behält `server.log`, vollständige CLI-Antworten in `commands.jsonl` und
+Artefakte unter `target/ui-drag-drop-*`. Der Test verwendet Fortsetzungscursor,
+meldet Activity-Lücken als Fehler und beendet nur seinen eigenen Server samt Session.
+
+### Konkreter Einstieg für die nächste Sitzung: mesh_picking
+
+1. Arbeitsbaum prüfen und vorhandene Änderungen erhalten. `game_menu` liegt in
+   `9eadb7d`; den aktuellen Commitstatus der Drag-Abnahme prüfen.
+2. [mesh_picking.rs](../../bevy_test_apps/src/bin/mesh_picking.rs) lesen.
+   Bei `slice` Session-Anbindung und anwendungseigene Zeitkonfiguration ergänzen,
+   den nativen Weg erhalten.
+3. Meshes, Kamera und reflektierten Zustand über allgemeines Inspect lesen.
+   Pointer-Ziele aus der tatsächlichen Kamera-/Objektgeometrie bestimmen;
+   keine neuen Automation-Marker oder direkten Observer-Aufrufe einführen.
+4. Hover, Press, Release und Drag mit virtuellen Pointer-Commands sowie
+   zeitabhängige Rotation durch ausdrückliche Warps prüfen. Bildabnahme ergänzen;
+   bloß korrekte Transforms beweisen keine korrekte Darstellung.
+5. Matrix und Testnachweise aktualisieren. Danach `blend_modes`, anschließend
+   die übergreifende Lebenszyklus-/Lastmatrix bearbeiten. Block 6 bleibt offen.
 
 ## Konkreter nächster Durchstich
 
@@ -389,7 +426,7 @@ Recording und die menschliche REPL-Bedienung nach Ende von pi.
 Der [Arbeitsauftrag](pi-task.md) bleibt für Wiederholungen verfügbar.
 Keinen Modellzugang oder eigene Agent-Werkzeugschleife in woodpecker ergänzen und keine
 externe Laufzeit ohne Auftrag starten. Block 6 ist begonnen: Abdeckungsmatrix und
-`logical_state`- und `game_menu`-CLI-Abnahmen sind ergänzt. Als Nächstes folgt `ui_drag_drop` nach dem
+`logical_state`-, `game_menu`- und `ui_drag_drop`-CLI-Abnahmen sind ergänzt. Als Nächstes folgt `mesh_picking` nach dem
 konkreten Einstieg oben; System- und Lastabnahme insgesamt bleiben offen.
 Es gibt weiterhin kein `failure.json`.
 Vor weiterer Arbeit den tatsächlichen Arbeitsbaum prüfen und spätere lokale
@@ -416,6 +453,35 @@ Die Reflection-Fixtures ergänzen die Varianten und Fehlerfälle aus Block 1,
 ohne dafür Fenster zu öffnen.
 
 ## Nachweise und bekannte Grenzen
+
+Nach dem `ui_drag_drop`-Durchstich bestanden:
+
+- CLI-Build und separater Build von `ui_drag_drop` mit `slice`.
+- Vollständige CLI-Abnahmen mit gültigem und ungültigem Drop, unter anderem
+  `target/ui-drag-drop-6dp197a2`, `target/ui-drag-drop-72zzje5d` und
+  `target/ui-drag-drop-kp42tkcg`, unverändert nach Ergänzung beider Szenarien.
+  Nach der Rustfmt-Korrektur erneut gebaut und bestanden:
+  `target/ui-drag-drop-uhob_pu5`.
+- `cargo test --manifest-path bevy_test_apps/Cargo.toml --all-features --all-targets`:
+  alle 8 App-/Kompositionstests. `ui_drag_drop` selbst besitzt keine nativen Unit-Tests;
+  der neue fachliche Nachweis läuft über CLI und echte Session.
+- `cargo clippy --manifest-path bevy_test_apps/Cargo.toml --features slice --bin ui_drag_drop -- -D warnings`:
+  ohne Lint-Ausnahmen bestanden.
+- `cargo check --manifest-path bevy_test_apps/Cargo.toml --no-default-features --bin ui_drag_drop`.
+- Root-Formatprüfung, gezielte Rustfmt-Prüfung der Szene und `git diff --check`.
+
+Vor der Session-Anbindung scheiterte der neue Starttest erwartungsgemäß am fehlenden
+Ready (`target/ui-drag-drop-ccbqfkp9`). Nach Ergänzung des Plugins bestand der
+Start-/Stillstandstest, anschließend beide Drag-Szenarien. Keine Änderung an der
+produktiven Session-/Pointer-Mechanik oder den Drag-Regeln.
+Rustfmt verlangte zusätzlich die Umformatierung eines bestehenden mehrzeiligen
+`let`-Patterns in `drag::drop`; keine fachliche Änderung.
+Die bekannte nicht fatale macOS-Linkerwarnung zur `__eh_frame`-Größe erschien erneut.
+
+Der vorherige Game-Menu-Stand wurde auf Nutzerauftrag als `9eadb7d` committed,
+nicht gepusht. Die danach ergänzte Drag-Abnahme wurde nicht committed.
+Root-Gesamttests, ältere Python-Abnahmen, Screenshots und Lasttests wurden in
+diesem Schritt nicht erneut ausgeführt. Keine Subagenten oder externen Agent-Läufe.
 
 Nach dem `game_menu`-Durchstich bestanden:
 

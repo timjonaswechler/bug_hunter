@@ -73,6 +73,7 @@ fn main() {
             title: "UI drag and drop test".into(),
             resolution: WindowResolution::new(640, 480).with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
@@ -83,8 +84,13 @@ fn main() {
         .register_type::<TileId>()
         .register_type::<DragPhase>()
         .register_type::<SceneState>()
-        .add_systems(Startup, setup)
-        .run();
+        .add_systems(Startup, setup);
+    #[cfg(feature = "slice")]
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(20),
+    ))
+    .add_plugins(woodpecker::session::Plugin);
+    app.run();
 }
 
 fn setup(mut commands: Commands) {
@@ -244,8 +250,12 @@ mod drag {
         if source == destination {
             return;
         }
-        let Ok([(source_tile, mut source_node), (destination_tile, mut destination_node)]) =
-            tiles.get_many_mut([source, destination])
+        let Ok(
+            [
+                (source_tile, mut source_node),
+                (destination_tile, mut destination_node),
+            ],
+        ) = tiles.get_many_mut([source, destination])
         else {
             return;
         };
