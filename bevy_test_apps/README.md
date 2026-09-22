@@ -107,7 +107,65 @@ ordered drag phases, swapped or unchanged occupancy, all final tile positions an
 restored transform, outline and z-index. Idle ticks must not repeat drag events.
 No native focus or physical input is needed. Evidence remains under
 `target/ui-drag-drop-*`, including on failure. This does not test screenshots.
-The next scene acceptance is `mesh_picking`.
+
+## Mesh-picking acceptance
+
+With `slice`, `mesh_picking` uses 20 ms ticks and activates its 3D camera on the
+first explicit tick, after which Bevy can render initialized light clusters.
+The native application still starts with an active camera and automatic time.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin mesh_picking
+python3 tests/mesh_picking.py
+```
+
+The test derives pointer positions from inspected camera and mesh geometry.
+It reads actual render dimensions and scale rather than assuming the requested
+window size. It checks hover, press, release and out on all three meshes, a
+horizontal cube drag, exact timed rotation and 13 screenshots over 24 explicit
+ticks. Local pixel checks distinguish neutral, cyan and yellow material states;
+other objects must not inherit the selected object's material.
+
+Evidence remains under `target/mesh-picking-*`. Use an available desktop.
+The [controlled visibility tests](../docs/api/diagnostics/capture-scene-visibility.md)
+confirmed a skipped screenshot copy under full window occlusion on macOS/Metal.
+Visible, partially covered and restored-window acceptance passed. The adapter
+rejects captures without a window surface instead of writing an unfilled buffer.
+This does not establish the cause of every historical black PNG or a lid-related
+cause.
+
+## Blend-mode acceptance
+
+With `slice`, `blend_modes` uses 20 ms ticks and activates its 3D camera on the
+first explicit tick. Native input and time remain unchanged without the feature.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin blend_modes
+python3 tests/blend_modes.py
+```
+
+Two real sessions verify held arrow keys, camera orbit, alpha limits, separate
+HDR/unlit/color key presses, stable material identities and two reproducible color
+sequences. The first session executes 189 ticks, the second 16.
+Six screenshots check all five blend modes at alpha endpoints, restoration,
+lit/unlit rendering, rendering with HDR enabled and a color change.
+The test reads actual render dimensions and reuses the mesh test's PNG and
+quaternion helpers. Evidence remains under `target/blend-modes-*`.
+
+The image checks are not a complete blend-equation or HDR-range test.
+Premultiplied receives the same non-premultiplied RGB values as the other modes
+in this fixture, so its color remains visible at alpha zero.
+All seven scenes now have CLI acceptance; combined lifecycle and load scenarios
+remain open, with per-scene limits listed in the coverage matrix.
+Two full blend-mode runs passed, but a later rebuild run returned an all-black
+first screenshot. The subsequent diagnosis found a skipped GPU copy when the
+window surface is unavailable. The adapter now rejects that condition with
+`screenshot_window_unavailable` instead of writing the unfilled readback.
+Strict blend, mesh and context-menu image tests still fail if their windows lose
+the render surface. Their assertions remain unchanged. Reliable capture of fully
+occluded windows remains open; this guard prevents false success, not occlusion.
 
 ## Native application fixtures
 
