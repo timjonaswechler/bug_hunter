@@ -916,6 +916,8 @@ Aufrufers; technische Details bleiben in `message`.
 | Screenshot | `invalid_screenshot_path`, `screenshot_window_unavailable`, `screenshot_unavailable`, `screenshot_failed` |
 
 Fensterfehler umfassen fehlende oder nicht eindeutige benötigte Fenster.
+`screenshot_window_unavailable` umfasst auch eine im Capture-Frame nicht verfügbare
+Fenster-Renderoberfläche. Ein nicht gefüllter Readback darf nicht als Erfolg gespeichert werden.
 `screenshot_failed` fasst Readback-, PNG- und Schreibfehler zusammen.
 Warp-Stop und Wire-Shutdown haben außer `invalid_arguments` keinen fachlichen Ablehnungscode.
 Shutdown-Vorbedingungen werden vor dem Wire geprüft.

@@ -17,9 +17,11 @@ use std::{
     collections::VecDeque,
     io::Cursor,
     path::Path,
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex, OnceLock, mpsc},
     time::{Duration, Instant},
 };
+
+mod surface;
 
 const READBACK_TIMEOUT: Duration = Duration::from_secs(30);
 const COMMAND: &str = "screenshot.capture";
@@ -35,6 +37,7 @@ struct Active {
     entity: Entity,
     since: Instant,
     writing: bool,
+    surface: Arc<OnceLock<bool>>,
 }
 
 #[derive(Resource)]
@@ -85,6 +88,7 @@ pub(super) fn install(app: &mut App, root: &Path) {
         sender,
         receiver: Mutex::new(receiver),
     });
+    surface::install(app);
 }
 
 fn window(world: &World) -> Result<Entity, Diagnostic> {
@@ -165,12 +169,39 @@ pub(super) fn poll(world: &mut World) -> Vec<Message> {
         .collect();
     world.resource_scope(|world, mut service: Mut<Service>| {
         let mut responses = Vec::new();
+        if service
+            .active
+            .as_ref()
+            .is_some_and(|active| !active.writing && active.surface.get() == Some(&false))
+        {
+            let active = service.active.take().unwrap();
+            world.despawn(active.entity);
+            responses.push(response(
+                active.job.id,
+                Err(Diagnostic::new(
+                    "screenshot_window_unavailable",
+                    "primary window has no render surface for this capture frame",
+                )),
+            ));
+        }
         for (entity, image) in images {
             if let Some(active) = service
                 .active
                 .as_mut()
                 .filter(|a| a.entity == entity && !a.writing)
             {
+                if active.surface.get() != Some(&true) {
+                    responses.push(response(
+                        active.job.id,
+                        Err(Diagnostic::new(
+                            "screenshot_failed",
+                            "capture frame render surface was not verified",
+                        )),
+                    ));
+                    world.despawn(entity);
+                    service.active = None;
+                    continue;
+                }
                 active.writing = true;
                 let path = active.job.path.clone();
                 let root = service.root.clone();
@@ -221,6 +252,7 @@ pub(super) fn poll(world: &mut World) -> Vec<Message> {
                     entity,
                     since: Instant::now(),
                     writing: false,
+                    surface: Arc::default(),
                 });
                 break;
             }
@@ -272,11 +304,118 @@ mod tests {
                 entity,
                 since: Instant::now(),
                 writing: false,
+                surface: Arc::default(),
             }),
             sender,
             receiver: Mutex::new(receiver),
         });
         (world, entity, images)
+    }
+
+    #[test]
+    fn prepared_readback_without_render_surface_is_rejected_not_encoded() {
+        let sandbox = Sandbox::new();
+        let root = sandbox.root("root");
+        let reader = root.try_clone().unwrap();
+        let (mut world, entity, images) = fixture(root);
+        // Reproduce the render-world condition that makes Bevy skip its Copy:
+        // a prepared request but no acquired window view. The adapter still
+        // receives an Image, as it does from Bevy's zero-initialized buffer.
+        let active = world.resource::<Service>().active.as_ref().unwrap();
+        let mut render = World::new();
+        render.insert_resource(super::surface::Frame::new(
+            active.job.window,
+            active.surface.clone(),
+        ));
+        render.insert_resource(bevy::render::view::window::ExtractedWindows::default());
+        render.run_system_cached(super::surface::check).unwrap();
+        let mut black = image();
+        black.data.as_mut().unwrap().fill(0);
+        images.send((entity, black)).unwrap();
+        let responses = poll(&mut world);
+        assert!(
+            matches!(&responses[..], [Message::Rejected { request_id: 17, error, .. }]
+            if error.code == "screenshot_window_unavailable"),
+            "{responses:?}"
+        );
+        assert!(!reader.exists("images/a.png"));
+        assert!(!world.resource::<Service>().pending(17));
+        assert!(world.get_entity(entity).is_err());
+        images.send((entity, image())).unwrap();
+        assert!(
+            poll(&mut world).is_empty(),
+            "late readback revived a rejected capture"
+        );
+    }
+
+    #[test]
+    fn verified_black_image_is_valid_even_if_a_later_frame_loses_its_surface() {
+        let sandbox = Sandbox::new();
+        let root = sandbox.root("root");
+        let reader = root.try_clone().unwrap();
+        let (mut world, entity, images) = fixture(root);
+        let active = world.resource::<Service>().active.as_ref().unwrap();
+        active.surface.set(true).unwrap();
+        let mut render = World::new();
+        render.insert_resource(super::surface::Frame::new(
+            active.job.window,
+            active.surface.clone(),
+        ));
+        render.insert_resource(bevy::render::view::window::ExtractedWindows::default());
+        render.run_system_cached(super::surface::check).unwrap();
+        assert_eq!(active.surface.get(), Some(&true));
+        let mut black = image();
+        black.data.as_mut().unwrap().fill(0);
+        images.send((entity, black)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let response = loop {
+            if let Some(response) = poll(&mut world).into_iter().next() {
+                break response;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        };
+        assert!(matches!(
+            response,
+            Message::Completed { request_id: 17, .. }
+        ));
+        let png = image::load_from_memory(&reader.read("images/a.png").unwrap()).unwrap();
+        assert_eq!(png.to_rgb8().into_raw(), vec![0; 6]);
+    }
+
+    #[test]
+    fn unavailable_surface_preserves_existing_file_without_waiting_for_readback() {
+        let sandbox = Sandbox::new();
+        let root = sandbox.root("root");
+        root.create_dir("images").unwrap();
+        root.write("images/a.png", b"existing file").unwrap();
+        let reader = root.try_clone().unwrap();
+        let (mut world, entity, images) = fixture(root);
+        let active = world.resource::<Service>().active.as_ref().unwrap();
+        active.surface.set(false).unwrap();
+        // A later available frame cannot approve an earlier uncopied buffer.
+        assert!(active.surface.set(true).is_err());
+        assert!(
+            matches!(&poll(&mut world)[..], [Message::Rejected { error, .. }]
+            if error.code == "screenshot_window_unavailable")
+        );
+        images.send((entity, image())).unwrap();
+        assert!(poll(&mut world).is_empty());
+        assert_eq!(reader.read("images/a.png").unwrap(), b"existing file");
+    }
+
+    #[test]
+    fn unverified_readback_fails_closed() {
+        let sandbox = Sandbox::new();
+        let root = sandbox.root("root");
+        let reader = root.try_clone().unwrap();
+        let (mut world, entity, images) = fixture(root);
+        images.send((entity, image())).unwrap();
+        assert!(
+            matches!(&poll(&mut world)[..], [Message::Rejected { error, .. }]
+            if error.code == "screenshot_failed")
+        );
+        assert!(!reader.exists("images/a.png"));
     }
 
     #[test]
@@ -289,6 +428,14 @@ mod tests {
         assert!(!reader.exists("images/a.png"));
         assert!(world.resource::<Service>().pending(17));
         let elapsed = world.resource::<Time<Virtual>>().elapsed();
+        world
+            .resource::<Service>()
+            .active
+            .as_ref()
+            .unwrap()
+            .surface
+            .set(true)
+            .unwrap();
         images.send((entity, image())).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let response = loop {

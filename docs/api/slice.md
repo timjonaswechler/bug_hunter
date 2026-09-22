@@ -86,6 +86,20 @@ GPU-Readback wird nach 30 realen Sekunden mit `screenshot_failed` abgeschlossen;
 die Anwendung wird dafür nicht getickt. Verspätete Readbacks werden verworfen.
 Die Frist gilt nicht für bereits laufendes Schreiben.
 
+Für jeden Request prüft der Adapter im tatsächlichen Capture-Frame nach der
+Render-Vorbereitung, ob der Fenster-View und sein Format verfügbar sind.
+Bevy 0.19.1 überspringt ohne diese Ressourcen die Bildkopie, liefert aber trotzdem
+einen nullinitialisierten Readback. Der Adapter lehnt diesen Fall mit
+`screenshot_window_unavailable` ab, ohne eine PNG-Datei zu schreiben oder eine
+vorhandene Datei zu ersetzen. Der Befund bleibt an diesen Request/Frame gebunden:
+Eine später verfügbare Surface kann den alten Readback nicht nachträglich freigeben.
+Fehlt die Frame-Verifikation selbst, lautet der Fehler `screenshot_failed`.
+
+Diese Absicherung erzeugt keine zusätzlichen Ticks, verändert keinen Fensterfokus
+und wiederholt den Request nicht. Sie macht die Aufnahme eines vollständig
+verdeckten Fensters auf Metal noch nicht möglich. Eine tatsächlich schwarze Szene
+bleibt ein gültiges Bild; Pixelwerte werden nicht zur Verfügbarkeitsprüfung benutzt.
+
 `tests/ui.py` prüft vollständige PNGs, sichtbare Menüänderung nach einem ausdrücklichen
 Tick, Überschreiben, parallele Requests und Session-Isolation. Tickzähler,
 simulierte Zeit und Anwendungszustand bleiben während Capture unverändert.

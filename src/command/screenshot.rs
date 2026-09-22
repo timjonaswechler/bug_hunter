@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Capture the primary rendered window beneath the session's artifact directory.
+///
+/// An unavailable render surface (for example, an occluded window on Metal)
+/// is rejected rather than saved as an unfilled readback image.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capture {
