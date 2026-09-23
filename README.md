@@ -11,8 +11,15 @@ Remote operation is not supported.
 
 The experimental v3 slice supports tick warps, pace changes, stop, reflected
 resource and entity inspection, virtual pointer, keyboard and text input, PNG screenshots,
-session management, JSONL recording and shutdown. Replay, reporting, REPL and scripts remain planned work.
+session management, JSONL recording/replay, reporting, REPL, scripts and shutdown.
 The v2 API and its `host`/`driver` features have been removed.
+
+The target is [headless agent interaction](docs/api/target.md#headless-betrieb):
+images and virtual input without a native window or display server. This is not
+implemented yet. Rendered fixtures and the current capture/input adapters still
+use a primary window; their screenshot guard remains in place until replacement.
+The [next implementation block](docs/api/implementation-plan.md#headless-durchstich)
+covers offscreen output, explicit simulation control and windowless interaction.
 
 Controlled sessions ignore native mouse, touch, keyboard and IME input. Their pointers
 do not move the OS cursor or require window focus. Applications using Bevy UI must

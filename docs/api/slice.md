@@ -1,5 +1,11 @@
 # Experimenteller Durchstich
 
+Dieses Dokument beschreibt den vorhandenen ausführbaren Stand, nicht den bereits
+umgesetzten Headless-Zielvertrag. Gerenderte Szenen, Capture und Teile der
+Eingabeadapter benötigen derzeit ein primäres Fenster. Headless-Rendering,
+fensterlose UI-/Picking-Zuordnung und relative Blicksteuerung sind noch offen.
+Der nächste Umbau steht im [Headless-Plan](implementation-plan.md#headless-durchstich).
+
 Dieser Build ist keine vollständige v3-Implementation. Er implementiert Warp,
 Resource-/Entity-Inspect, Pointer-/Keyboard-/Text-Input, Screenshot, Recording, Replay und Shutdown.
 Fehlerbeobachtung, Report-Snapshots, Report-Darstellung sowie Local und GitHub sind vorhanden.
@@ -614,8 +620,11 @@ fehlerhafte Outputs und Session-Ende. Die Zusammenfassung behält ursprüngliche
 
 ## Noch nicht enthalten
 
-Die vollständige Szenen-/Lastabnahme bleibt offen. Die
-[externe Agent-Abnahme mit pi](pi-acceptance.md) ist durchgeführt.
+Die vollständige Szenen-/Lastabnahme bleibt offen. Ein früherer externer pi-Lauf
+prüfte CLI, Inspect, Warp und Recording am Zähler sowie das Weiterlaufen nach
+Agent-Ende. Er war keine Headless-Bild-/Interaktionsabnahme; gleichzeitige
+menschliche Bedienung und abschließendes Cleanup wurden in diesem Lauf nicht
+bestätigt. Das ausführliche Protokoll bleibt im Git-Stand `b8d18e5` erhalten.
 Panic-/Tracing-Beobachtung, Snapshot-Metadaten, gemeinsame Report-Darstellung
 und beide Report-Provider einschließlich automatischer Server-Verarbeitung sind implementiert.
 Spiel-stderr bleibt ein laufender menschlicher Diagnosestrom;

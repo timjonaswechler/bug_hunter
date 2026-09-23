@@ -1,6 +1,10 @@
 // Rust-ähnliche Interface-Skizze, kein kompilierbarer Quelltext.
 // Verhalten: target.md. Umsetzung: implementation-plan.md.
 // Fehlende Körper und ausgelassene Enum-Varianten sind Skizzen, keine leeren Implementierungen.
+// Ziel ist fensterlose Bildausgabe mit virtuellen Eingaben. Die unten vorhandenen
+// Command-Formen bleiben Migrationsbasis, nicht Nachweis einer Headless-Implementation.
+// Offen: Bildziel-Konfiguration/Metadaten, Renderbereitschaft, relative Blickbewegung
+// und die versionierte Ablösung der bisherigen *_window_unavailable-Fehler.
 
 mod handle {
     pub struct Handle {
@@ -57,6 +61,9 @@ mod command {
         }
 
         mod pointer {
+            // MoveTo/MoveBy beziehen sich im Ziel auf den logischen Bildzielraum.
+            // MoveBy bleibt begrenzte Pointerverschiebung. Relative Blickbewegung
+            // ohne Cursorgrenzen braucht noch eine ausdrücklich festgelegte Command-Form.
             enum Command {
                 Press {
                     button: PointerButton,
@@ -289,6 +296,8 @@ mod command {
     }
 
     pub mod screenshot {
+        // Nimmt das primäre Bildziel auf, nicht den Inhalt eines OS-Fensters.
+        // Die sichere Dateiablage und Request-Korrelation bleiben erhalten.
         pub enum Command {
             Capture {
                 path: String,

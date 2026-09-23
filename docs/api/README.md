@@ -10,6 +10,12 @@
 Eine Regel hat eine maßgebliche Stelle. Interface-Kommentare erklären nur, was zum Verständnis
 der Signatur nötig ist. Die Skizze muss nicht kompilieren.
 
+Aktuelles Produktziel ist [Headless-Betrieb](target.md#headless-betrieb) mit
+Bildaufnahme und virtueller Interaktion, noch nicht der Stand des ausführbaren
+Durchstichs. [ADR-0025](../adr/0025-headless-agent-interaction.md) hält die
+Entscheidung fest. Die abgeschlossene Fensterdiagnose ist auf
+[relevante Rendering-Befunde](diagnostics/rendering-findings.md) reduziert.
+
 Der vorhandene Code ist technische Referenz, keine automatische Zielanforderung.
 [Research](research/) liefert technische Nachweise;
 [ADRs](../adr/README.md) bewahren Entscheidungsherkunft. Beide werden bei Bedarf gelesen,

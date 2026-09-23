@@ -4,7 +4,69 @@ Dieser Plan führt zum [Ziel](target.md), ohne es auf den ersten Durchstich zu r
 Die hier genannten Ausgestaltungen sind Implementierungsaufgaben, keine bereits
 vorhandenen Funktionen.
 
-## Erster Durchstich
+## Headless-Durchstich
+
+Dies ist der nächste Implementierungsblock. Der vorhandene Fensterpfad bleibt
+bis zu einem geprüften Ersatz unverändert; insbesondere bleibt sein
+Screenshot-Guard aktiv. Weitere Verdeckungsmatrizen oder eine Bevy-Korrektur
+sind keine Voraussetzung. [Rendering-Befunde](diagnostics/rendering-findings.md)
+und [ADR-0025](../adr/0025-headless-agent-interaction.md) erklären diese Grenze.
+
+### Offene Entscheidungen vor der Integration
+
+- Ein primäres Bildziel mit Größe, Skalierung und eindeutiger Zuordnung der
+  Spiel- und UI-Kameras festlegen. Konfiguration und für Clients lesbare
+  Metadaten gemeinsam entwerfen; keine erfundenen nativen Fenster voraussetzen.
+- Runner und Renderfortschritt vom Simulations-Warp trennen. Gegen den
+  gelockten Bevy-Stand prüfen, welche öffentlichen Schnittstellen genügen.
+  Kein Upgrade oder Fork allein aufgrund eines Beispiels auf `main`.
+- Den für einen Capture erforderlichen Renderfortschritt definieren:
+  Kameraausgabe, verwendete Assets/Pipelines, Copy und Mapping müssen zum
+  Request passen. Behandlung dynamisch nachladender Inhalte, Frist und
+  Fehlerabschluss festlegen. Kein pauschales Warten auf alle Assets im Spiel.
+- Relative Blickbewegung von der begrenzten Pointerposition trennen.
+  Command-Form, Zustandsregeln, Recording/Replay und Ablösung der bisherigen
+  `*_window_unavailable`-Fehler einschließlich Versionierung vor Produktintegration
+  festlegen. Die offene Form in `goal.rs` nicht als fertigen Vertrag ausgeben.
+
+### Kleine Umsetzungsschritte
+
+1. **Bild ohne Fenster:** Eine bekannte Szene in einem isolierten Durchstich
+   direkt in ein Image-Ziel rendern und ein requestkorreliertes PNG erzeugen.
+   Kein Displayserver, keine native Window-Surface. Die vorhandene sichere
+   Dateiablage wiederverwenden, kein zweiter öffentlicher Screenshot-Command.
+2. **Stillstand:** Render-/Readback-Fortschritt bei konstantem Tickzähler,
+   `Time<Virtual>` und Spielzustand nachweisen. Nach Initialisierung nur
+   ausdrücklich angeforderte Warps; fehlende Cluster-/Assetinitialisierung
+   nicht durch versteckte Startticks kaschieren.
+3. **Interaktion:** Per virtueller Tastatur bewegen, per relativer Mausbewegung
+   umsehen, per absolutem Pointer ein Weltobjekt und ein UI-Element treffen.
+   Tatsächliche Kamera-/Bildzielgeometrie verwenden. Tastaturzustände,
+   UI-Layout, Picking und Textfokus dürfen kein natives Fenster benötigen.
+4. **Integration:** Erst dann den Session-Capture-Adapter ersetzen, gemeinsame
+   Annahme-/Outcome-, Datei-, Timeout- und Shutdown-Regeln bewahren und die
+   bestehenden Szenentests auf den neuen Weg umstellen.
+5. **Systemabnahme:** Zwei Sessions, Recording/Replay, Fehlerabschluss,
+   Client-Trennung und Ressourcenbereinigung über die echte CLI prüfen.
+   Alte Adapter und nicht mehr gültige Tests erst nach gleichwertigem Ersatz
+   entfernen. Eine optionale Fenstervorschau ist kein Teil dieser Abnahme.
+
+### Abnahmekriterien
+
+| Grenze | Erforderlicher Nachweis |
+| --- | --- |
+| Umgebung | Gerenderte Session ohne natives Fenster; auf Linux zusätzlich ohne Displayserver-Verbindung. Gewähltes Backend/Gerät dokumentieren. |
+| Bild | Bekannter Szeneninhalt und tatsächliche Maße stimmen; UI-Overlay enthalten. Legitim schwarze Szene wird korrekt akzeptiert. |
+| Bereitschaft | Verzögerte Render-Voraussetzungen führen zu definiertem Warten oder Fehler, nicht zu einem ungeprüften erfolgreichen Buffer. Command-Verarbeitung bleibt erreichbar. |
+| Simulation | Capture, Inspect und reine Eingabeannahme verändern weder Tickzahl noch Simulationszeit oder Spielzustand. |
+| Input | Bewegung, Blickrichtung, Welt-Picking, UI-Klick und Text wirken erst im ausdrücklich ausgeführten Tick. Gehaltene Eingaben bleiben sessionlokal. |
+| Lifecycle | Sichere Pfade, gültiges Überschreiben, späte Readbacks, Fristen, Stop und Prozessbereinigung behalten ihre geprüften Regeln. |
+| Replay | Die vereinbarten neuen Eingaben und Zielparameter sind reproduzierbar; inkompatible alte Aufnahmen werden nicht still umgedeutet. |
+
+## Bestehender erster Durchstich
+
+Die folgenden Abschnitte dokumentieren den Aufbau des vorhandenen
+Session-/Serverwegs. Sie sind kein Auftrag, ihn für Headless neu zu bauen.
 
 Ein realer CLI-Client startet einen lokalen Server, erstellt eine Session mit einer kleinen
 Bevy-Testanwendung, bindet sich daran, führt einen Tick-Warp aus, beobachtet den geänderten
@@ -120,7 +182,7 @@ Die Entfernung des v2-Einstiegs schließt die noch fehlenden v3-Funktionen nicht
 | `src/screenshot.rs` | `command::screenshot`, privater Capture-Adapter | überarbeiten | Optionales `screenshot`-Feature implementiert. [Capture-Tests](../../src/session/screenshot/capture.rs) prüfen verzögerten Abschluss, PNG, Fenster und Readback-Timeout; [Pfadtests](../../src/session/screenshot/destination.rs) prüfen Root-Isolation, atomischen Ersatz und Symlink-Wechsel. [UI-Abnahme](../../tests/ui.py) prüft echte 640×360-PNGs in zwei Sessions, parallele Requests und unveränderte Ticks/Zeit. |
 | `src/host/recording.rs`, `replay.rs`; `tests/driver_recording.rs` und alte JSONL-Fixture | `command::recording`, `command::replay`, `session` | überarbeiten | Recording und Replay implementiert. [Recording-Tests](../../src/session/recording/tests.rs) prüfen Dateibarrieren und Schreibfehler; [Replay-Tests](../../src/session/replay/tests.rs) prüfen striktes Laden, effektive Warps, Stop und Blockierungen. [Prozessfixtures](../../tests/session.rs) sowie Zähler-/UI-Abnahmen prüfen Roundtrips und Ressourcenabschluss. Die alte Fixture ist kein gültiger v1-Nachweis. |
 | `src/host/report.rs`, `issue_report.rs`, `github.rs`, Fehleranteile von `diagnostics.rs`; alte Report-Tests | `report`, privater Session-Observer | überarbeiten / Zwischenformat löschen | `failure.json` entfernt. Privater Markerparser, Panic-/Tracing-Erfassung und `Report::create` mit Titel, Failure, v1-Signatur und Context implementiert. [Report-Tests](../../src/report/tests.rs) prüfen Golden Vectors und Markdown. `report::submit` unterstützt Local und Github; [Local-Tests](../../src/report/provider/local/tests.rs) und [GitHub-Prozessfixtures](../../src/report/provider/github/tests.rs) prüfen Pfade, Konkurrenz, Pagination, stdin, Fehler und Fallback. Automatische Server-Reports behalten Snapshot und Ergebnis in Activity. [Server-Tests](../../src/server/report_tests.rs) prüfen späte Ergebnisse, Frist, erzwungene Prozessgruppenbereinigung und Shutdown-Failures; [CLI-Abnahme](../../tests/observation.py) prüft echte lokale Dateien nach Client-Trennung. Lastbemessung bleibt offen. |
-| `src/host/repl.rs`, `script.rs` | `cli::repl`, `cli::script` über `client` | überarbeiten | REPL und Script über gemeinsamen Client umgesetzt. `tests/repl.py` prüft reale Bevy-Sessions und Terminalbedienung. Script validiert vollständig vor Ausführung, korreliert Outcomes und wartet an Recording-/Shutdown-Barrieren. Netzwerkfixtures und `tests/script.py` prüfen Fehler, Reihenfolge und Client-Trennung ohne versteckten Stop. Die [externe Abnahme mit pi](pi-acceptance.md) bestätigt CLI-/Script-Bedienung und weiterlaufende Arbeit nach Agent-Ende. |
+| `src/host/repl.rs`, `script.rs` | `cli::repl`, `cli::script` über `client` | überarbeiten | REPL und Script über gemeinsamen Client umgesetzt. `tests/repl.py` prüft reale Bevy-Sessions und Terminalbedienung. Script validiert vollständig vor Ausführung, korreliert Outcomes und wartet an Recording-/Shutdown-Barrieren. Netzwerkfixtures und `tests/script.py` prüfen Fehler, Reihenfolge und Client-Trennung ohne versteckten Stop. |
 | `bevy_test_apps` mit `automation`, `tests/logical_state.rs`, `examples/*_controller.rs` | normale Testanwendungen; neue Client-Abnahmen | ersetzen | v2-Anbindung und Controller entfernt. Native Bevy-Anwendungen und datenbasierte UI-Komposition bleiben erhalten. Alle sieben Szenen sind mit `slice` angebunden. Context-Menu-/UI-Abnahme prüft Menüs und Eingaben erst beim Tick. [tests/logical_state.py](../../tests/logical_state.py) prüft Update, FixedUpdate, Timer und Keyboard über CLI. [tests/game_menu.py](../../tests/game_menu.py) prüft virtuelle Klicks, Einstellungen, Timergrenzen, Hierarchien und tote Handles nach Bildschirmwechseln. [tests/ui_drag_drop.py](../../tests/ui_drag_drop.py) prüft gültigen/ungültigen Drop, Drag-Phasen, Belegung und Layout. [tests/mesh_picking.py](../../tests/mesh_picking.py) prüft Picking, Rotation und Materialwechsel im Bild. [tests/blend_modes.py](../../tests/blend_modes.py) prüft Keyboard, Kamera, Alpha, HDR/Unlit, reproduzierbare Farben und Blend-Bilder. Die [Abdeckungsmatrix](next-steps.md#abdeckungsmatrix-für-block-6) benennt verbleibende Varianten; kombinierte Lebenszyklus-/Lastabnahmen stehen noch aus. |
 
 ### Reflection-Matrix

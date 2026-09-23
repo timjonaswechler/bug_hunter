@@ -128,7 +128,7 @@ ticks. Local pixel checks distinguish neutral, cyan and yellow material states;
 other objects must not inherit the selected object's material.
 
 Evidence remains under `target/mesh-picking-*`. Use an available desktop.
-The [controlled visibility tests](../docs/api/diagnostics/capture-scene-visibility.md)
+The [recorded visibility findings](../docs/api/diagnostics/rendering-findings.md)
 confirmed a skipped screenshot copy under full window occlusion on macOS/Metal.
 Visible, partially covered and restored-window acceptance passed. The adapter
 rejects captures without a window surface instead of writing an unfilled buffer.

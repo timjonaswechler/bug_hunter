@@ -11,6 +11,37 @@ Der [Umsetzungsplan](implementation-plan.md) steht getrennt davon.
 Die nummerierten ADRs dokumentieren Entscheidungsherkunft, nicht
 einen zusätzlich zu pflegenden Zielstand.
 
+## Headless-Betrieb
+
+Der Agent muss eine Spiel-Session ohne natives Fenster und ohne Displayserver
+steuern können: Bild anfordern, virtuelle Tastatur- oder Mauseingaben vormerken,
+explizite Ticks ausführen und das Ergebnis erneut beobachten. Ein geeignetes
+Grafik-Backend bleibt erforderlich; Headless bedeutet nicht Rendering ohne
+Grafikgerät oder Treiber.
+
+Eine gerenderte Session besitzt ein eindeutiges primäres **Bildziel**, unabhängig
+von einer Fensteroberfläche. Seine Pixelgröße, logische Größe, Skalierung und
+Kamerazuordnung müssen für Capture, UI-Layout und Pointer-Picking übereinstimmen
+und für den Client ermittelbar sein. Absolute Eingaben und Bildausgabe beziehen
+sich auf denselben Koordinatenraum. Ein fehlendes Betriebssystemfenster ist kein
+Eingabe- oder Capture-Fehler.
+
+Rendering, GPU-Readback und Command-Verarbeitung dürfen ohne Simulationsfortschritt
+weiterlaufen. Nur Warps führen Spiel- und Eingabesysteme aus. Weder Bildaufnahme
+noch Renderbereitschaft dürfen versteckte Ticks, Fokusänderungen oder einen
+physischen Cursor benötigen.
+
+Eine optionale Fenstervorschau ist nicht Voraussetzung und noch nicht beschlossen.
+Unterstützung beliebiger unveränderter Fensteranwendungen ist nicht automatisch
+zugesagt. Die Spielanwendung integriert den Renderer und ihre Kameras ausdrücklich;
+`woodpecker` bleibt ohne Renderer für reine Zustandsuntersuchungen nutzbar.
+
+Dies ist das Ziel, nicht der heutige Implementierungsstand. Der
+[Durchstich](slice.md) verwendet noch Fensteradapter. Die konkrete Konfiguration
+des Bildziels, Bereitschaftskriterien, relative Blicksteuerung und die Migration
+der bisherigen fensterbezogenen Fehlerformen sind Aufgaben des
+[Headless-Plans](implementation-plan.md#headless-durchstich).
+
 ## Verantwortlichkeiten
 
 | Modul | Besitzt |
@@ -409,16 +440,23 @@ Ohne Session-Plugin bleibt die native Bedienung unverändert.
 
 Der virtuelle Pointer verwendet Bevys Picking-Eingabe mit eigener Pointer-Identität.
 Seine Position steht am zugehörigen `PointerLocation`, nicht am Betriebssystemfenster.
-Bevys UI-`Interaction` muss ebenfalls diesen Pointer verwenden. Fenster-Metadaten und
-Fensterverwaltung, etwa Resize und Close, bleiben nativ; direkte Betriebssystemabfragen
-und `RawWinitWindowEvent` sind keine kontrollierten Eingabekanäle.
+Bevys UI-`Interaction` muss ebenfalls diesen Pointer verwenden. UI-Layout und
+Picking erhalten Größe und Kamera vom Bildziel, nicht von einem nativen Fenster.
+Direkte Betriebssystemabfragen und `RawWinitWindowEvent` sind keine kontrollierten
+Eingabekanäle. Falls eine Anwendung zusätzlich native Fenster besitzt, dürfen
+deren Fokus und Sichtbarkeit die virtuelle Eingabe nicht bestimmen.
 Textfokus bezeichnet ausschließlich den Fokus innerhalb des jeweiligen Bevy World.
 
 Keyboard verwendet eigene stabile, layoutunabhängige Key-Tokens mit fester interner Abbildung
 auf physisches `KeyCode` und logisches Bevy-`Key`.
-Pointer verwendet das Spielfenster. `MoveTo` benutzt logische Pixel vom linken oberen Rand,
+Pointer verwendet das Bildziel. `MoveTo` benutzt logische Pixel vom linken oberen Rand,
 `MoveBy` ein Delta zur bekannten Position. Das Ziel muss `0 <= x < width` und
 `0 <= y < height` erfüllen; Ablehnung verändert die Position nicht.
+Relative Mausbewegung zur Blicksteuerung muss auch ohne Cursorposition und
+Cursor-Capture des Betriebssystems möglich sein. Sie ist von der begrenzten
+Pointerverschiebung `MoveBy` zu unterscheiden. Ihr Command-Format und ihre
+Bevy-Zustellung werden im Headless-Durchstich festgelegt; die bestehende
+`MoveBy`-Semantik darf nicht stillschweigend umgedeutet werden.
 Buttons sind `left`, `right`, `middle` und wirken an der aktuellen Position.
 Scroll übergibt horizontales und vertikales Delta samt Vorzeichen in Bevy-Zeileneinheiten;
 `[0,0]` ist erlaubt. Text geht an den eindeutigen lebenden, editierbaren Bevy-Fokus
@@ -430,7 +468,8 @@ Erst beim nächsten Tick erhält dieses Feld den vorgemerkten Edit; Bevys normal
 Selektions-, Zeichenfilter- und Längenregeln bestimmen dessen Verarbeitung.
 Ist das Feld dann nicht mehr vorhanden oder editierbar, wird nichts an ein anderes
 Feld zugestellt. Der bestätigte Command-Erfolg bleibt eine Vormerkungsbestätigung.
-Leerer Text ist zulässig, er benötigt dieselben Fenster- und Fokusprüfungen.
+Leerer Text ist zulässig, er benötigt dieselben UI-Fokusprüfungen.
+Keyboard und Text benötigen kein natives Fenster.
 
 ### Tick-Warp
 
@@ -510,10 +549,23 @@ Fixtures gegen Bevy 0.19.1 sichern den Vertrag bei Upgrades.
 
 ### Screenshot
 
-`Capture { path }` nimmt genau das primäre gerenderte Spielfenster auf. Die Response wartet
-auf Renderdurchlauf, asynchronen GPU-Readback und erfolgreiches PNG-Schreiben.
+`Capture { path }` nimmt das primäre Bildziel einschließlich seiner zugeordneten
+Kamera- und UI-Ausgaben auf. Die Response wartet auf Renderdurchlauf,
+asynchronen GPU-Readback und erfolgreiches PNG-Schreiben.
 Simulationsticks und simulierte Zeit bleiben unverändert.
-Ohne vollständige Unterstützung oder eindeutiges Fenster wird der Command abgelehnt.
+Ohne vollständige Unterstützung oder eindeutiges Bildziel wird der Command abgelehnt.
+Erfolg erfordert die Zuordnung der gerenderten Ausgabe, GPU-Kopie und Bilddaten
+zum Request. Ein vorbereiteter Buffer oder ein erfolgreiches Mapping allein
+genügt nicht. Eine tatsächlich schwarze Szene bleibt gültig; Pixelwerte sind
+keine allgemeine Bereitschaftsprüfung.
+
+Der Adapter benötigt begrenztes Warten auf seine Render-/Readback-Voraussetzungen
+mit ausdrücklichem Fehlerabschluss, ohne Simulationsticks. Die beobachtbaren
+Bereitschaftskriterien für Assets, Pipelines und Kameraausgabe müssen im
+Durchstich festgelegt und getestet werden. Eine pauschale Anzahl Startframes
+oder wiederholte Captures bis zum ersten passenden Bild sind kein Zielverhalten.
+Session-`Ready` bestätigt den Handshake, nicht automatisch die Bereitschaft
+jedes späteren Bildes.
 
 Der konkrete Pfad ist normalisiert, nicht leer, UTF-8, relativ zum Artefakt-Root und endet auf
 `.png`. Er verwendet `/`, keine leeren Komponenten, `.`/`..` oder Backslashes und darf
@@ -915,6 +967,12 @@ Aufrufers; technische Details bleiben in `message`.
 | Inspect | `unknown_type_path`, `entity_not_found` |
 | Screenshot | `invalid_screenshot_path`, `screenshot_window_unavailable`, `screenshot_unavailable`, `screenshot_failed` |
 
+Die oben aufgeführten `*_window_unavailable`-Codes beschreiben noch die
+vorhandenen Fensteradapter. Vor der Headless-Integration sind ihre Ablösung
+für fehlende Bildziele, betroffene Clients und die Protokollversionierung
+festzulegen. Sie dürfen im Zielbetrieb nicht wegen eines fehlenden nativen
+Fensters zurückgegeben oder ohne dokumentierte Migration umgedeutet werden.
+Die folgenden Regeln beschreiben den bis dahin geschützten Fensterpfad:
 Fensterfehler umfassen fehlende oder nicht eindeutige benötigte Fenster.
 `screenshot_window_unavailable` umfasst auch eine im Capture-Frame nicht verfügbare
 Fenster-Renderoberfläche. Ein nicht gefüllter Readback darf nicht als Erfolg gespeichert werden.
