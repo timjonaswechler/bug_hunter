@@ -1,4 +1,0 @@
-{"version":1,"sequence":41,"type":"session_started","context":{"session_id":"alpha","mode":"logical","protocol_version":2,"configuration":{"surface":{"width":640,"height":360}}}}
-{"version":1,"sequence":42,"type":"controller_action","controller":{"origin":"repl"},"action":{"type":"time","action":{"type":"advance","frames":1,"step_nanoseconds":16666667}}}
-{"version":1,"sequence":43,"type":"game_response","request_sequence":7,"status":"completed","result":{}}
-{"version":1,"sequence":44,"type":"recording_stopped"}

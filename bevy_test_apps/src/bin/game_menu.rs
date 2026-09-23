@@ -8,9 +8,6 @@ use bevy::{
     window::{Window, WindowResolution},
 };
 
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
-
 const TEXT_COLOR: Color = Color::srgb(0.92, 0.92, 0.92);
 const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);
 const HOVERED_BUTTON: Color = Color::srgb(0.25, 0.25, 0.25);
@@ -36,9 +33,10 @@ enum MenuState {
     Disabled,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Reflect, Resource)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Reflect, Resource)]
 enum DisplayQuality {
     Low,
+    #[default]
     Medium,
     High,
 }
@@ -58,12 +56,6 @@ impl DisplayQuality {
             Self::Medium => "Medium",
             Self::High => "High",
         }
-    }
-}
-
-impl Default for DisplayQuality {
-    fn default() -> Self {
-        Self::Medium
     }
 }
 
@@ -128,10 +120,16 @@ fn main() {
             title: "Controlled game menu test".into(),
             resolution: WindowResolution::new(800, 600).with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
     add_game_menu(&mut app);
+    #[cfg(feature = "slice")]
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(100),
+    ))
+    .add_plugins(woodpecker::session::Plugin);
     app.run();
 }
 
@@ -168,10 +166,7 @@ fn add_game_menu(app: &mut App) {
 
 fn setup(mut commands: Commands) {
     commands.spawn((Name::new("menu-camera"), Camera2d));
-    let entity = commands
-        .spawn((Name::new("game-menu-state"), SessionObservation::default()))
-        .id();
-    mark_target(&mut commands, entity);
+    commands.spawn((Name::new("game-menu-state"), SessionObservation::default()));
 }
 
 fn present_splash(mut commands: Commands) {
@@ -403,7 +398,7 @@ fn create_screen<S: States + Copy>(
     state: S,
     color: Color,
 ) -> Entity {
-    let entity = commands
+    commands
         .spawn((
             Name::new(name),
             DespawnOnExit(state),
@@ -418,9 +413,7 @@ fn create_screen<S: States + Copy>(
             },
             BackgroundColor(color),
         ))
-        .id();
-    mark_target(commands, entity);
-    entity
+        .id()
 }
 
 fn menu_screen(commands: &mut Commands, name: &'static str, state: MenuState) -> Entity {
@@ -482,7 +475,6 @@ fn add_button(
         Pickable::IGNORE,
     ));
     commands.entity(parent).add_child(button);
-    mark_target(commands, button);
     button
 }
 
@@ -609,14 +601,6 @@ fn update_observation(
         .as_ref()
         .map_or(0.0, |timer| timer.elapsed_secs());
 }
-
-#[cfg(feature = "automation")]
-fn mark_target(commands: &mut Commands, entity: Entity) {
-    commands.entity(entity).insert(AutomationTarget);
-}
-
-#[cfg(not(feature = "automation"))]
-fn mark_target(_commands: &mut Commands, _entity: Entity) {}
 
 #[cfg(test)]
 mod tests {

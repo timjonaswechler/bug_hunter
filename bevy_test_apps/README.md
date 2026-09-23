@@ -1,120 +1,214 @@
 # Bevy test applications
 
-This package holds small Bevy applications used to exercise `bug_hunter`. Each application is an explicit binary, so another application only needs a new `src/bin/*.rs` file and `[[bin]]` entry.
+This is a separate Cargo package, not a workspace member. Run commands from the
+repository root with `--manifest-path bevy_test_apps/Cargo.toml`.
 
-Rendered binaries use `composition::rendered` with a configured window. Without features, it builds a Player Run with Bevy's native input plugins. With `--features automation`, it builds a Rendered Mode Controlled Session with `InputPlugin` and `GilrsPlugin` disabled, screenshot support enabled, and `bug_hunter` supplying Virtual Input over protocol v2.
+## Headless session acceptance
 
-With `--features automation`, `logical_state` uses `composition::logical`. Without the feature it uses the rendered composition as a native Player Run, like the other binaries. The logical composition installs no Winit, `WindowPlugin`, `RenderPlugin`, `InputPlugin`, Gilrs, or native pointer producer. It creates one data-only `Window` component with fixed dimensions so Bevy UI layout and Virtual Pointer coordinates share a session-local surface. No operating-system window backs that entity.
+`counter` is the headless woodpecker integration. It uses `session::Plugin`,
+an application-owned simulation schedule and a reflected counter resource.
 
-Controlled compositions still register the empty low-level Bevy input message channels and state resources required by UI, focus, and picking systems. These are compatibility prerequisites, not native input producers or operating-system connections. The control plugin clears native message buffers before focused-input dispatch.
-
-## Context menu
-
-Run the application with native mouse and keyboard input:
-
-```bash
-cargo run -p bevy_test_apps --bin context_menu
+```sh
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin counter
 ```
 
-The controller launches the automation composition and checks pointer buttons, scrolling, keyboard state, focused text entry, reflected state, and screenshots through the public `driver::Session` interface:
+Start it through the CLI using `tests/fixtures/counter.toml`; see the
+[walkthrough](../docs/api/slice.md#ausführen). The raw game binary expects the
+session's internal launch environment.
 
-```bash
-cargo run -p bug_hunter --example bevy_controller --features driver
+## Rendered session acceptance
+
+`context_menu` also uses `session::Plugin` when built with `slice`. Without that
+feature it remains a native application. The acceptance test finds named entities
+through general Inspect, reads layout coordinates, queues pointer input and checks
+that application state changes only after an explicit Warp.
+`slice` enables `woodpecker/ui` so both picking observers and legacy `Interaction`
+use the virtual pointer. The controlled window starts without requesting focus.
+The test runs two concurrent sessions with independent pointer/button states.
+It also presses, holds and releases `a` independently in both sessions and checks
+the reflected key counters. Keyboard events do not insert text.
+The test then focuses each text field with its virtual pointer and submits different
+Unicode strings through `input.text.input`. The reflected text is sampled after
+Bevy applies text edits, so a single explicit tick shows the resulting value.
+`slice` also enables `woodpecker/screenshot`. The test captures the closed and open
+menu, validates PNG chunks and pixel data, and checks that capture changes neither
+the reflected tick counter nor simulated time. It covers overwrite, concurrent
+requests, symlink escape rejection and separate session artifact roots.
+The first session is also recorded. The test validates its JSONL header, footer,
+command count, input and screenshot entries, and exclusions for recording controls
+and commands from the second session.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin context_menu
+python3 tests/ui.py
+# Retain the screenshots for visual inspection:
+python3 tests/ui.py --capture-dir target/ui-captures
 ```
 
-## Blend modes
+This test opens a real window and requires a desktop session.
+The CLI launch configuration is `tests/fixtures/context_menu.toml`.
 
-Run the adapted 3D blend-modes scene as a Player Run:
+## Controlled time and input acceptance
 
-```bash
-cargo run -p bevy_test_apps --bin blend_modes
+`logical_state` now installs `session::Plugin` with `slice`. The application chooses
+20 ms simulation ticks, a 10 ms fixed step and a repeating 40 ms timer. Without
+`slice` it still uses native input and automatic time.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin logical_state
+python3 tests/logical_state.py
 ```
 
-Add `--features automation` to run it as a Controlled Session. The camera and five blend-mode spheres have stable names and `AutomationTarget` markers. The camera's reflected `blend_modes::SceneState` reports alpha, HDR, unlit mode, camera angle, color seed, color-change count, and the five sphere colors. Each sphere exposes its session-local material asset ID through the reflected `blend_modes::ObservedMaterialHandle` component, alongside Bevy's `MeshMaterial3d<StandardMaterial>` component.
+This opens a real window. The test inspects the existing `SessionObservation`
+component through the CLI, checks Update/FixedUpdate/timer counts and queued
+keyboard press/hold/release, and proves that Inspect and real waiting do not advance
+the scene. Bevy's first Time update has zero delta; subsequent ticks use 20 ms even
+under a wall-clock pace limit. It does not yet test this scene's pointer observer
+or screenshots. Logs and CLI evidence remain in `target/logical-state-*`, including
+on failure. The [coverage matrix](../docs/api/next-steps.md#abdeckungsmatrix-für-block-6)
+records the remaining scenarios.
 
-The scene uses seed `0x5eedb1e5`. Each `C` press derives colors from that seed, the color-change count, and the object's stable color slot. Identical seeds and key sequences therefore produce identical observed colors.
+## Game menu acceptance
 
-The rendered controller checks held arrow keys, controlled time, separate mode-key presses, reflected state, camera and material components, and screenshots at fixed controlled frames:
+With `slice`, `game_menu` installs `session::Plugin` and chooses 100 ms simulation
+ticks. Native time and input remain unchanged without the feature.
 
-```bash
-cargo run -p bug_hunter --example blend_modes_controller --features driver
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin game_menu
+python3 tests/game_menu.py
 ```
 
-## Mesh picking
+This desktop test uses the CLI to navigate from splash through display and sound
+settings into the game and back after its timer expires. It reads actual button
+positions through Inspect and sends virtual pointer input without native focus.
+It verifies explicit tick boundaries, persistent settings, screen hierarchies and
+`entity_not_found` for despawned screen/button handles. Input helpers do not tick.
+Logs and full CLI responses remain under `target/game-menu-*`, even on failure.
+Screenshots, keyboard shortcuts and the Quit button are not covered here.
 
-Run the 3D picking scene with native pointer input:
+## UI drag-and-drop acceptance
 
-```bash
-cargo run -p bevy_test_apps --bin mesh_picking
+With `slice`, `ui_drag_drop` installs `session::Plugin` and chooses 20 ms simulation
+ticks. Without it, native input and automatic time remain unchanged.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin ui_drag_drop
+python3 tests/ui_drag_drop.py
 ```
 
-The rendered controller drives the same binary through Virtual Input and controlled time. It checks mesh hover, press, release, drag, reflected transforms and interaction state, deterministic rotation, and screenshots:
+This desktop test reads actual tile positions and sizes through Inspect. Virtual
+pointer commands drag Amber onto Blue, then over empty background. Explicit ticks
+drive each input step. Assertions cover the intermediate position, active tile,
+ordered drag phases, swapped or unchanged occupancy, all final tile positions and
+restored transform, outline and z-index. Idle ticks must not repeat drag events.
+No native focus or physical input is needed. Evidence remains under
+`target/ui-drag-drop-*`, including on failure. This does not test screenshots.
 
-```bash
-cargo run -p bug_hunter --example picking_controller --features driver
+## Mesh-picking acceptance
+
+With `slice`, `mesh_picking` uses 20 ms ticks and activates its 3D camera on the
+first explicit tick, after which Bevy can render initialized light clusters.
+The native application still starts with an active camera and automatic time.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin mesh_picking
+python3 tests/mesh_picking.py
 ```
 
-## UI drag and drop
+The test derives pointer positions from inspected camera and mesh geometry.
+It reads actual render dimensions and scale rather than assuming the requested
+window size. It checks hover, press, release and out on all three meshes, a
+horizontal cube drag, exact timed rotation and 13 screenshots over 24 explicit
+ticks. Local pixel checks distinguish neutral, cyan and yellow material states;
+other objects must not inherit the selected object's material.
 
-Run the adapted UI grid with native pointer input:
+Evidence remains under `target/mesh-picking-*`. Use an available desktop.
+The [recorded visibility findings](../docs/api/diagnostics/rendering-findings.md)
+confirmed a skipped screenshot copy under full window occlusion on macOS/Metal.
+Visible, partially covered and restored-window acceptance passed. The adapter
+rejects captures without a window surface instead of writing an unfilled buffer.
+This does not establish the cause of every historical black PNG or a lid-related
+cause.
 
-```bash
-cargo run -p bevy_test_apps --bin ui_drag_drop
+## Blend-mode acceptance
+
+With `slice`, `blend_modes` uses 20 ms ticks and activates its 3D camera on the
+first explicit tick. Native input and time remain unchanged without the feature.
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin blend_modes
+python3 tests/blend_modes.py
 ```
 
-The rendered controller derives tile centers from observed UI bounds, then builds complete drags from pointer moves, a press, controlled frames, and a release. It checks the Bevy `DragStart`, `Drag`, `DragDrop`, and `DragEnd` lifecycle, reflected layout and presentation components, valid and invalid drops, and screenshots of the initial, dragging, and dropped states:
+Two real sessions verify held arrow keys, camera orbit, alpha limits, separate
+HDR/unlit/color key presses, stable material identities and two reproducible color
+sequences. The first session executes 189 ticks, the second 16.
+Six screenshots check all five blend modes at alpha endpoints, restoration,
+lit/unlit rendering, rendering with HDR enabled and a color change.
+The test reads actual render dimensions and reuses the mesh test's PNG and
+quaternion helpers. Evidence remains under `target/blend-modes-*`.
 
-```bash
-cargo run -p bug_hunter --example ui_drag_drop_controller --features driver
+The image checks are not a complete blend-equation or HDR-range test.
+Premultiplied receives the same non-premultiplied RGB values as the other modes
+in this fixture, so its color remains visible at alpha zero.
+All seven scenes now have CLI acceptance; combined lifecycle and load scenarios
+remain open, with per-scene limits listed in the coverage matrix.
+Two full blend-mode runs passed, but a later rebuild run returned an all-black
+first screenshot. The subsequent diagnosis found a skipped GPU copy when the
+window surface is unavailable. The adapter now rejects that condition with
+`screenshot_window_unavailable` instead of writing the unfilled readback.
+Strict blend, mesh and context-menu image tests still fail if their windows lose
+the render surface. Their assertions remain unchanged. Reliable capture of fully
+occluded windows remains open; this guard prevents false success, not occlusion.
+
+## Native application fixtures
+
+The binaries without `slice` use native Bevy input. Their systems, semantic state,
+reflection registrations and unit tests are retained for later Input, Inspect
+and Screenshot acceptance. They do not expose the removed v2 integration.
+There is no `automation` feature or automation marker.
+
+| Binary | Purpose |
+| --- | --- |
+| `context_menu` | Pointer actions, context menus, keyboard and editable text |
+| `blend_modes` | Deterministic colors, material state, camera and keyboard interaction |
+| `mesh_picking` | Mesh hover, press, release, drag and reflected transforms |
+| `ui_drag_drop` | Valid and invalid drops, layout and drag lifecycle |
+| `game_menu` | Menu navigation, state-scoped entities, settings and timers |
+| `logical_state` | Update/FixedUpdate, held keys, pointer presses and reflected timer state |
+
+For example:
+
+```sh
+cargo run --manifest-path bevy_test_apps/Cargo.toml --bin context_menu
+cargo test --manifest-path bevy_test_apps/Cargo.toml --all-features --all-targets
 ```
 
-## Game menu
+`composition::rendered` installs a normal rendered application.
+`composition::logical` remains a data-only UI composition used by tests, without
+a native window or renderer. It does not install woodpecker or advance a controlled session.
 
-Run the adapted multi-screen menu as a Player Run:
-
-```bash
-cargo run -p bevy_test_apps --bin game_menu
-```
-
-With `--features automation`, the persistent `game-menu-state` target reflects the active game state, menu state, display quality, volume, and both timer positions. Screen roots, navigation buttons, and setting buttons have stable names and session-local target handles.
-
-The rendered controller navigates with Virtual Pointer and Virtual Keyboard input, verifies state-scoped despawning and stale-handle rejection, and captures the main menu, settings, display settings, and game screen:
-
-```bash
-cargo run -p bug_hunter --example game_menu_controller --features driver
-```
-
-## Logical state
-
-`logical_state` covers UI layout, Virtual Pointer presses, held Virtual Keyboard input, timers, `Update`, `FixedUpdate`, and reflected state without a display server or render adapter:
-
-```bash
-cargo run -p bevy_test_apps --bin logical_state --features automation
-```
-
-The driver integration test removes display environment variables and controls the child through the public session API:
-
-```bash
-cargo test -p bug_hunter --features driver --test logical_state -- --test-threads=1
-```
-
-## Application conventions
-
-- Put application systems, components, and semantic test state in the binary that owns them. Shared code belongs in `composition::rendered` or `composition::logical` only when every app in that mode needs it.
-- Give observable entities stable, descriptive `Name` values. Names must not depend on spawn order or an entity handle. Use lowercase kebab-case where a name has multiple words.
-- Add `AutomationTarget` only to entities a Controller must find or operate. Keep the marker behind `cfg(feature = "automation")`.
-- Store assertions that span several UI systems in a small application-owned component. Derive `Reflect`, add `#[reflect(Component)]`, and register the type with `App::register_type`.
+Give entities stable `Name` values and keep semantic state in application-owned,
+registered reflected components. Do not reintroduce marker requirements.
+The [migration plan](../docs/api/implementation-plan.md#migration-und-bereinigung)
+records which v2 controller assertions still need to be ported.
 
 ## Source and license
 
-`context_menu` adapts Bevy 0.19.1's [`examples/usage/context_menu.rs`](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/usage/context_menu.rs). The text-input field, semantic session state, stable names, and Controlled Session integration are Star Sim changes.
+These applications adapt Bevy examples with application-owned state, deterministic
+test data and descriptive entity names. The original adaptations came from Star Sim.
 
-`blend_modes` adapts Bevy 0.19.1's [`examples/3d/blend_modes.rs`](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/3d/blend_modes.rs). Stable targets, reflected state, deterministic colors, fixed window dimensions, and Controlled Session integration are Star Sim changes.
+- [`context_menu`](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/usage/context_menu.rs)
+- [`blend_modes`](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/3d/blend_modes.rs)
+- [`mesh_picking`](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/picking/mesh_picking.rs)
+- [`ui_drag_drop`](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/ui/ui_drag_and_drop.rs)
+- [`game_menu`](https://github.com/bevyengine/bevy/blob/v0.19.0/examples/showcase/game_menu.rs)
 
-`mesh_picking` adapts Bevy 0.19.1's [`examples/picking/mesh_picking.rs`](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/picking/mesh_picking.rs). Star Sim reduces the scene to three stable targets and adds Controlled Session input, deterministic rotation checks, reflected interaction state, and screenshot assertions.
-
-`ui_drag_drop` adapts Bevy 0.19.1's [`examples/ui/ui_drag_and_drop.rs`](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/ui/ui_drag_and_drop.rs). Star Sim uses a compact grid with stable targets and adds reflected lifecycle state, Controlled Session gestures, invalid-drop checks, and semantic screenshot assertions.
-
-`game_menu` adapts Bevy 0.19's [`examples/showcase/game_menu.rs`](https://github.com/bevyengine/bevy/blob/v0.19.0/examples/showcase/game_menu.rs). Star Sim removes external image assets, adds stable target names, reflects menu state and timer progress, supports keyboard navigation, and supplies a Controlled Session controller.
-
-Bevy distributes these examples under either the MIT License or Apache License 2.0, as recorded in Bevy's [repository license files](https://github.com/bevyengine/bevy/tree/v0.19.1#license).
+Bevy distributes these examples under the MIT License or Apache License 2.0,
+as recorded in its [repository license files](https://github.com/bevyengine/bevy/tree/v0.19.1#license).

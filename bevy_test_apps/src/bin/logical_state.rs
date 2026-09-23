@@ -1,12 +1,6 @@
+use bevy::window::WindowResolution;
 use bevy::{prelude::*, time::Fixed};
 use bevy_test_apps::composition;
-#[cfg(feature = "automation")]
-use bevy_test_apps::LogicalSurface;
-
-#[cfg(not(feature = "automation"))]
-use bevy::window::WindowResolution;
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
 
 const SURFACE_WIDTH: u32 = 640;
 const SURFACE_HEIGHT: u32 = 360;
@@ -34,9 +28,6 @@ fn main() {
 
 fn build_app() -> App {
     let mut app = App::new();
-    #[cfg(feature = "automation")]
-    composition::logical(&mut app, LogicalSurface::new(SURFACE_WIDTH, SURFACE_HEIGHT));
-    #[cfg(not(feature = "automation"))]
     composition::rendered(
         &mut app,
         Window {
@@ -44,6 +35,7 @@ fn build_app() -> App {
             resolution: WindowResolution::new(SURFACE_WIDTH, SURFACE_HEIGHT)
                 .with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
@@ -55,17 +47,17 @@ fn build_app() -> App {
         .add_systems(Startup, setup)
         .add_systems(Update, record_update)
         .add_systems(FixedUpdate, record_fixed_update);
+    #[cfg(feature = "slice")]
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(20),
+    ))
+    .add_plugins(woodpecker::session::Plugin);
     app
 }
 
 fn setup(mut commands: Commands) {
     commands.spawn((Name::new("logical-camera"), Camera2d));
-    commands.spawn((
-        Name::new("logical-state"),
-        SessionObservation::default(),
-        #[cfg(feature = "automation")]
-        AutomationTarget,
-    ));
+    commands.spawn((Name::new("logical-state"), SessionObservation::default()));
     commands
         .spawn((
             Name::new("logical-button"),
@@ -78,8 +70,6 @@ fn setup(mut commands: Commands) {
                 height: px(100),
                 ..default()
             },
-            #[cfg(feature = "automation")]
-            AutomationTarget,
         ))
         .observe(
             |_: On<Pointer<Press>>, mut state: Single<&mut SessionObservation>| {

@@ -1,62 +1,44 @@
 [package]
-name = "bug_hunter"
+name = "woodpecker"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [features]
 default = []
-# Debug Host process management and controller workflows.
-host = ["dep:clap", "dep:ctrlc", "dep:toml"]
-# Compatibility alias for callers that still enable the former feature name.
-driver = ["host"]
+ui = ["bevy/bevy_ui", "bevy/bevy_input_focus"]
+screenshot = ["bevy/bevy_render", "dep:image"]
+server = ["dep:axum", "dep:tokio", "dep:getrandom"]
+client = ["server", "dep:ureq", "dep:tungstenite"]
+cli = ["client", "dep:clap", "dep:toml", "dep:crossterm", "dep:unicode-width"]
 
 [dependencies]
-bevy = { version = "0.19.0", default-features = false, features = ["bevy_input_focus", "bevy_ui", "bevy_picking", "bevy_window", "bevy_render", "debug"] }
-cap-std = "4.0"
+base64 = "0.22"
+sha2 = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
+cap-std = "3"
+cap-fs-ext = "3"
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+axum = { version = "0.8", features = ["ws"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "signal"], optional = true }
+getrandom = { version = "0.4", optional = true }
+ureq = { version = "3", default-features = false, features = ["json"], optional = true }
+tungstenite = { version = "0.29", optional = true }
+libc = "0.2"
+bevy = { version = "0.19.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_window", "bevy_camera", "bevy_picking", "bevy_log", "mouse", "keyboard", "touch", "debug"] }
 clap = { version = "4.5", features = ["derive", "string"], optional = true }
-ctrlc = { version = "3.4", optional = true }
-image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["raw_value"] }
 toml = { version = "0.8", optional = true }
+crossterm = { version = "0.29", optional = true }
+unicode-width = { version = "0.2", optional = true }
+
+[[bin]]
+name = "woodpecker"
+path = "src/cli/main.rs"
+required-features = ["cli"]
 
 [[example]]
-name = "bevy_controller"
-required-features = ["host"]
-
-[[example]]
-name = "picking_controller"
-required-features = ["host"]
-
-[[example]]
-name = "blend_modes_controller"
-required-features = ["host"]
-
-[[example]]
-name = "game_menu_controller"
-required-features = ["host"]
-
-[[example]]
-name = "ui_drag_drop_controller"
-required-features = ["host"]
-
-[[example]]
-name = "render_readiness_stress"
-required-features = ["host"]
-
-[[test]]
-name = "driver_recording"
-required-features = ["host"]
-
-[[test]]
-name = "issue_report"
-required-features = ["host"]
-
-[[test]]
-name = "github_report"
-required-features = ["host"]
-
-[[test]]
-name = "logical_state"
-required-features = ["host"]
+name = "observation_fixture"
+path = "tests/fixtures/observation.rs"

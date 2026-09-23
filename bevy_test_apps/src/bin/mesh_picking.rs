@@ -6,9 +6,6 @@ use bevy::{
     window::{Window, WindowResolution},
 };
 
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
-
 #[derive(Component)]
 struct RotatingMesh;
 
@@ -44,6 +41,7 @@ fn main() {
             title: "Mesh picking test".into(),
             resolution: WindowResolution::new(640, 360).with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
@@ -53,8 +51,20 @@ fn main() {
         .register_type::<PickingInteraction>()
         .register_type::<MeshInteractionState>()
         .add_systems(Startup, setup_scene)
-        .add_systems(Update, rotate_meshes)
-        .run();
+        .add_systems(Update, rotate_meshes);
+    #[cfg(feature = "slice")]
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(20),
+    ))
+    .add_systems(
+        First,
+        // Bevy's GPU clustering cannot render a camera before its first
+        // simulation update has initialized cluster dimensions.
+        (|mut camera: Single<&mut Camera, With<Camera3d>>| camera.is_active = true)
+            .run_if(run_once),
+    )
+    .add_plugins(woodpecker::session::Plugin);
+    app.run();
 }
 
 fn setup_scene(
@@ -107,6 +117,10 @@ fn setup_scene(
     commands.spawn((
         Name::new("scene-camera"),
         Camera3d::default(),
+        Camera {
+            is_active: !cfg!(feature = "slice"),
+            ..default()
+        },
         Transform::from_xyz(0.0, 4.0, 10.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
     ));
     commands.spawn((
@@ -127,7 +141,7 @@ fn spawn_test_mesh(
     transform: Transform,
     materials: &MaterialPalette,
 ) {
-    let entity = commands
+    commands
         .spawn((
             Name::new(name),
             Mesh3d(mesh),
@@ -154,9 +168,7 @@ fn spawn_test_mesh(
             materials.hover.clone(),
             MeshEvent::Release,
         ))
-        .observe(rotate_on_drag)
-        .id();
-    mark_automation_target(commands, entity);
+        .observe(rotate_on_drag);
 }
 
 fn update_on<E: EntityEvent>(
@@ -194,11 +206,3 @@ fn rotate_meshes(mut meshes: Query<&mut Transform, With<RotatingMesh>>, time: Re
         transform.rotate_y(time.delta_secs() / 2.0);
     }
 }
-
-#[cfg(feature = "automation")]
-fn mark_automation_target(commands: &mut Commands, entity: Entity) {
-    commands.entity(entity).insert(AutomationTarget);
-}
-
-#[cfg(not(feature = "automation"))]
-fn mark_automation_target(_commands: &mut Commands, _entity: Entity) {}

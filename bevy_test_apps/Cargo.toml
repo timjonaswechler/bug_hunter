@@ -7,12 +7,12 @@ autobins = false
 
 [dependencies]
 bevy = { version = "0.19.1", features = [] }
-bug_hunter = { path = "../", optional = true }
+woodpecker = { path = "../", optional = true }
 rand = "0.9"
 
 [features]
 default = []
-automation = ["dep:bug_hunter"]
+slice = ["dep:woodpecker", "woodpecker/ui", "woodpecker/screenshot"]
 
 [[bin]]
 name = "context_menu"
@@ -37,3 +37,8 @@ path = "src/bin/ui_drag_drop.rs"
 [[bin]]
 name = "logical_state"
 path = "src/bin/logical_state.rs"
+
+[[bin]]
+name = "counter"
+path = "src/bin/counter.rs"
+required-features = ["slice"]

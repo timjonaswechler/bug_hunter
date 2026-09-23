@@ -5,9 +5,6 @@ use bevy::{
     window::{Window, WindowResolution},
 };
 
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
-
 const TILE_SIZE: f32 = 120.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Reflect)]
@@ -76,6 +73,7 @@ fn main() {
             title: "UI drag and drop test".into(),
             resolution: WindowResolution::new(640, 480).with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
@@ -86,8 +84,13 @@ fn main() {
         .register_type::<TileId>()
         .register_type::<DragPhase>()
         .register_type::<SceneState>()
-        .add_systems(Startup, setup)
-        .run();
+        .add_systems(Startup, setup);
+    #[cfg(feature = "slice")]
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(20),
+    ))
+    .add_plugins(woodpecker::session::Plugin);
+    app.run();
 }
 
 fn setup(mut commands: Commands) {
@@ -126,7 +129,6 @@ fn setup(mut commands: Commands) {
                     SceneState::default(),
                 ))
                 .id();
-            mark_automation_target(&mut root.commands(), grid);
             root.commands().entity(grid).with_children(|grid| {
                 for (index, tile, color) in [
                     (0, TileId::Amber, Color::from(AMBER_500)),
@@ -145,7 +147,7 @@ fn spawn_tile(parent: &mut ChildSpawnerCommands, index: i16, tile: TileId, color
     let column = index % 2 + 1;
     let border = color.darker(0.12);
     let (name, label) = tile.metadata();
-    let entity = parent
+    parent
         .spawn((
             Name::new(name),
             Tile(tile),
@@ -200,9 +202,7 @@ fn spawn_tile(parent: &mut ChildSpawnerCommands, index: i16, tile: TileId, color
             TextFont::from_font_size(20.0),
             TextColor(Color::WHITE),
             Pickable::IGNORE,
-        ))
-        .id();
-    mark_automation_target(&mut parent.commands(), entity);
+        ));
 }
 
 mod drag {
@@ -250,8 +250,12 @@ mod drag {
         if source == destination {
             return;
         }
-        let Ok([(source_tile, mut source_node), (destination_tile, mut destination_node)]) =
-            tiles.get_many_mut([source, destination])
+        let Ok(
+            [
+                (source_tile, mut source_node),
+                (destination_tile, mut destination_node),
+            ],
+        ) = tiles.get_many_mut([source, destination])
         else {
             return;
         };
@@ -295,11 +299,3 @@ mod drag {
         }
     }
 }
-
-#[cfg(feature = "automation")]
-fn mark_automation_target(commands: &mut Commands, entity: Entity) {
-    commands.entity(entity).insert(AutomationTarget);
-}
-
-#[cfg(not(feature = "automation"))]
-fn mark_automation_target(_commands: &mut Commands, _entity: Entity) {}
