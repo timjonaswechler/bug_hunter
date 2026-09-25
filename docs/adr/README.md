@@ -15,5 +15,8 @@ Abwägen sinnvoll; sie ersetzt keine laufende Pflege des Zielvertrags.
 
 [ADR-0025](0025-headless-agent-interaction.md) legt Headless-Interaktion als
 Produktziel fest. Die vorhandenen Timing-, Session- und Replay-Entscheidungen
-bleiben erhalten; ältere Fensterannahmen sind kein Hindernis für den neuen
-Bildzielvertrag. Die Headless-Implementation ist damit noch nicht abgeschlossen.
+bleiben erhalten. Seine ursprüngliche offene/enge Integrationsreichweite ist
+historischer Kontext; der aktuelle transparente Window-/Kamera-Vertrag und die
+Abgrenzung der Imagefixtures stehen in
+[headless-integration.md](../api/headless-integration.md). Die
+Headless-Implementation ist damit noch nicht abgeschlossen.

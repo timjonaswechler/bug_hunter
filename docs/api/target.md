@@ -19,28 +19,47 @@ explizite Ticks ausführen und das Ergebnis erneut beobachten. Ein geeignetes
 Grafik-Backend bleibt erforderlich; Headless bedeutet nicht Rendering ohne
 Grafikgerät oder Treiber.
 
-Eine gerenderte Session besitzt ein eindeutiges primäres **Bildziel**, unabhängig
-von einer Fensteroberfläche. Seine Pixelgröße, logische Größe, Skalierung und
-Kamerazuordnung müssen für Capture, UI-Layout und Pointer-Picking übereinstimmen
-und für den Client ermittelbar sein. Absolute Eingaben und Bildausgabe beziehen
-sich auf denselben Koordinatenraum. Ein fehlendes Betriebssystemfenster ist kein
-Eingabe- oder Capture-Fehler.
+Ziel ist ein nahezu unverändertes Bevy-Spiel. Die Anwendung behält ihre echte
+Main-World-`Window`-Identität sowie Camera2d/Camera3d, Projektion/FoV, Viewports,
+Kamera-Order und -Stacks, Transforms, Materialien, Licht, UI und normalen
+Picking-Observer. Woodpecker verlangt keine markierte Capture-Kamera, keinen
+manuellen 2D-/3D-Schalter, keine Parallelkamera und keine Umschreibung der
+Spielkamera auf `RenderTarget::Image`. Eine konfigurierte Window-Entity ist
+weder automatisch ein OS-Fenster noch eine erfundene Dummyidentität.
+
+Woodpecker übernimmt zentral nur Ausgabequelle, virtuelle Eingabequelle und die
+bereits vorhandene explizite Ticksteuerung. Bevy bleibt für Kameraableitung,
+Rendering, UI-Layout und Picking verantwortlich. Woodpecker baut keine eigene
+Projektionsformel, Raycasting- oder Sichtbarkeitslogik und verlangt keinen
+Szenenadapter.
+
+Eine gerenderte Session besitzt eine eindeutig gewählte primäre
+**Ausgabeidentität**, unabhängig von einer Fensteroberfläche. Ihre Pixelgröße,
+logische Größe, Skalierung und normalisierte Zielidentität müssen für Capture,
+UI-Layout und Pointer-Picking übereinstimmen. Absolute Eingaben und Bildausgabe
+beziehen sich auf denselben Koordinatenraum. Mehrere Kameras desselben Ziels
+bilden einen Stack; mehrere unabhängige Ziele dürfen nicht still durch „erste
+Kamera“ entschieden werden.
+
+Die Anwendung besitzt ihre Kameras und darf Projektion, Zoom, FoV, Blickrichtung,
+Viewport und Stack durch Spielregeln verändern. Headless verändert diese Werte
+nicht stillschweigend. Capture und Picking müssen denselben Kamera-, Projektions-,
+Viewport- und Zielstand verwenden. Resize, Skalierungs- und Zielwechsel dürfen
+nicht zu veralteten Koordinaten oder einem falsch zugeordneten Readback führen.
 
 Rendering, GPU-Readback und Command-Verarbeitung dürfen ohne Simulationsfortschritt
 weiterlaufen. Nur Warps führen Spiel- und Eingabesysteme aus. Weder Bildaufnahme
 noch Renderbereitschaft dürfen versteckte Ticks, Fokusänderungen oder einen
-physischen Cursor benötigen.
+physischen Cursor benötigen. Der vorhandene Capture-Service behält Queue,
+Protokoll-v3-Requestkorrelation, Deadline, PNG-Schreiben, sichere Pfade und
+Cleanup; Headless eröffnet keinen zweiten Screenshot-Service.
 
-Eine optionale Fenstervorschau ist nicht Voraussetzung und noch nicht beschlossen.
-Unterstützung beliebiger unveränderter Fensteranwendungen ist nicht automatisch
-zugesagt. Die Spielanwendung integriert den Renderer und ihre Kameras ausdrücklich;
-`woodpecker` bleibt ohne Renderer für reine Zustandsuntersuchungen nutzbar.
-
-Dies ist das Ziel, nicht der heutige Implementierungsstand. Der
-[Durchstich](slice.md) verwendet noch Fensteradapter. Die konkrete Konfiguration
-des Bildziels, Bereitschaftskriterien, relative Blicksteuerung und die Migration
-der bisherigen fensterbezogenen Fehlerformen sind Aufgaben des
-[Headless-Plans](implementation-plan.md#headless-durchstich).
+Dies ist das Ziel, nicht der heutige Implementierungsstand. Der aktuelle
+Marker-/Imagekameraweg ist eine begrenzte Fixture und bleibt nur bis zu grünen
+Ersatznachweisen erhalten. Öffentliche Bevy-0.19.1-Anschlussstellen sind
+CPU-seitig belegt; GPU-, Readback- und Pixelparität sind es noch nicht. Der
+maßgebliche IST/ZIEL-Stand und die dateigenaue Reihenfolge stehen in
+[`headless-integration.md`](headless-integration.md).
 
 ## Verantwortlichkeiten
 

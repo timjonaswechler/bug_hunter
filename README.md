@@ -15,22 +15,33 @@ session management, JSONL recording/replay, reporting, REPL, scripts and shutdow
 The v2 API and its `host`/`driver` features have been removed.
 
 The target is [headless agent interaction](docs/api/target.md#headless-betrieb):
-images and virtual input without a native window or display server. This is not
-implemented yet. Rendered fixtures and the current capture/input adapters still
-use a primary window; their screenshot guard remains in place until replacement.
-The [next implementation block](docs/api/implementation-plan.md#headless-durchstich)
-covers offscreen output, explicit simulation control and windowless interaction.
+run a nearly unchanged Bevy game without a native window or display server while
+preserving its Window identity, cameras, projections, viewports, stacks,
+transforms, UI and normal Bevy picking. Woodpecker should centrally provide the
+output attachment, virtual input source and explicit tick control; it should not
+require a marked capture camera, a manual 2D/3D choice, an application-owned
+parallel image camera or scene-specific raycasting.
 
-Controlled sessions ignore native mouse, touch, keyboard and IME input. Their pointers
-do not move the OS cursor or require window focus. Applications using Bevy UI must
-enable `woodpecker/ui`, which also enables focused text input. The context-menu fixture
-enables it through `slice`.
+That transparent backend is **not implemented yet**. The current opt-in
+`headless-2d` and `headless-3d` marker/image-target paths are narrow fallback
+fixtures with successful bounded GPU evidence. The `game_menu` image-target flow
+also completed its authorized Medium → High → Back → Play acceptance. These runs
+validate the existing fixtures only, not general PBR, shadow, text, camera-stack,
+HDR/MSAA/tonemapping or readback parity. A CPU-only Bevy 0.19.1 probe has
+identified a feasible public attachment/readback seam, but did not run the
+render schedule or GPU.
 
+Controlled sessions ignore native mouse, touch, keyboard and IME input. Their
+pointers do not move the OS cursor or require window focus. Applications using
+Bevy UI must currently enable `woodpecker/ui`, which also enables Bevy UI picking
+and focused text input.
+
+- [Authoritative headless integration and file-by-file migration plan](docs/api/headless-integration.md)
 - [Target contract](docs/api/target.md)
-- [Implementation and migration status](docs/api/implementation-plan.md#migration-und-bereinigung)
-- [Handoff and remaining tasks](docs/api/next-steps.md)
+- [Immediate next step](docs/api/next-steps.md)
+- [Broader implementation plan](docs/api/implementation-plan.md)
 - [Runnable CLI walkthrough and acceptance tests](docs/api/slice.md)
-- [Bevy test applications](bevy_test_apps/README.md)
+- [Bevy test applications and fixture status](bevy_test_apps/README.md)
 
 ## Build and run
 
@@ -64,6 +75,8 @@ The default library has no HTTP/CLI dependencies and does not require a renderer
 | --- | --- |
 | `ui` | Virtual legacy UI interaction and focused text input |
 | `screenshot` | GPU readback and sandboxed PNG output in rendered applications |
+| `headless-2d` | Current legacy fixture: explicit single full-image `Camera2d` target |
+| `headless-3d` | Current legacy fixture: explicit single fixed-perspective `Camera3d` target |
 | `server` | Local session management and HTTP/WebSocket serving |
 | `client` | Network management and fixed-session access |
 | `cli` | The `woodpecker` executable |

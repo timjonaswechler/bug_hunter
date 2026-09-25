@@ -37,8 +37,9 @@ fn extract(service: Extract<Res<Service>>, mut frame: ResMut<Frame>) {
     *frame = service
         .active
         .as_ref()
-        .filter(|active| active.surface.get().is_none())
-        .map(|active| Frame::new(active.job.window, active.surface.clone()))
+        .and_then(super::Active::window_surface)
+        .filter(|(_, surface)| surface.get().is_none())
+        .map(|(window, surface)| Frame::new(window, surface))
         .unwrap_or_default();
 }
 

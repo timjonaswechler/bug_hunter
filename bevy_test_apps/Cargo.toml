@@ -12,7 +12,13 @@ rand = "0.9"
 
 [features]
 default = []
-slice = ["dep:woodpecker", "woodpecker/ui", "woodpecker/screenshot"]
+slice = [
+    "dep:woodpecker",
+    "woodpecker/ui",
+    "woodpecker/screenshot",
+    "woodpecker/headless-2d",
+]
+headless-3d-session = ["slice", "woodpecker/headless-3d"]
 
 [[bin]]
 name = "context_menu"
@@ -42,3 +48,13 @@ path = "src/bin/logical_state.rs"
 name = "counter"
 path = "src/bin/counter.rs"
 required-features = ["slice"]
+
+[[bin]]
+name = "headless_session"
+path = "src/bin/headless_session.rs"
+required-features = ["slice"]
+
+[[bin]]
+name = "headless_session_3d"
+path = "src/bin/headless_session_3d.rs"
+required-features = ["headless-3d-session"]

@@ -1,121 +1,76 @@
-# Weiterarbeit an woodpecker
+# Unmittelbar nächste Schritte
 
-## Ziel und aktueller Stand
+Maßgeblicher Ziel- und Migrationsplan:
+[headless-integration.md](headless-integration.md). Dieses Dokument enthält
+bewusst nur den nächsten ausführbaren Entwicklungsschritt und die Bedingungen
+für die beiden Folgephasen.
 
-Der Agent soll ein Spiel **headless über Bilder und virtuelle Eingaben steuern**.
-Maßgeblich sind [target.md](target.md#headless-betrieb) und
-[ADR-0025](../adr/0025-headless-agent-interaction.md).
-Die [Interface-Skizze](goal.rs) markiert noch offene Headless-Interfaces;
-der [Implementierungsplan](implementation-plan.md#headless-durchstich) beschreibt
-die Baufolge. [slice.md](slice.md) beschreibt weiterhin den ausführbaren Stand.
+## Jetzt: Schritt 1 — kleinster zentraler Integrationsschritt
 
-Vorhanden sind Session-/Prozessverwaltung, Warps, Inspect, virtuelle Eingaben,
-Fenster-Capture, Recording/Replay, Fehlerbeobachtung und Reports sowie
-Server/Client/CLI/REPL/Script. Diese Module nicht neu bauen.
-Die gerenderten Szenen benötigen bisher ein Fenster. Fenstervorschau,
-Headless-Adapter und relative Blicksteuerung sind nicht implementiert.
+Implementiere im vorhandenen Session-/Capture-Service einen internen
+Outputadapter für genau ein eindeutig gewähltes normales Bevy-Windowziel. Die
+Spielwelt, insbesondere `mesh_picking`, bleibt dabei unverändert:
 
-Die Fensterdiagnose ist abgeschlossen und auf
-[wesentliche Rendering-Befunde](diagnostics/rendering-findings.md) reduziert.
-Die ausführlichen eingecheckten Werkzeuge bleiben über Git verfügbar.
-Unveröffentlichte Linux-Folgearbeit wird nicht übernommen. Keine weiteren
-Verdeckungsmatrizen oder Treiberdiagnosen als Voraussetzung für Headless starten.
+- keine Markerpflicht,
+- keine Parallelkamera und keine Umschreibung zu `RenderTarget::Image`,
+- keine feste 2D-/3D-Auswahl,
+- keine eigene Projektions-, Raycasting- oder Sichtbarkeitslogik,
+- kein neuer Screenshot-Service und kein versteckter Tick.
 
-## Nächster Schritt: kleiner Headless-Durchstich
+Ausgangspunkt sind die CPU-belegten öffentlichen Bevy-0.19.1-Anschlussstellen:
+`ViewTargetAttachments`, `OutputColorAttachment`, ein internes `GpuImage`, eine
+mögliche `Readback::texture`-Kette sowie echte Windowidentität für
+`camera_system`, `RayMap` und Input. Der Renderhook wurde bisher nicht ausgeführt;
+deshalb muss die Implementierung zunächst durch CPU-Verträge begrenzt werden.
 
-1. Arbeitsbaum und geltende Projektanweisungen prüfen; bestehende Änderungen
-   erhalten. Kein Bevy-Upgrade, Fork oder erneutes Anbinden der vorhandenen Szenen.
-2. Gegen den gelockten Bevy-Stand die Integration von Bildziel, Runner,
-   Kameras und Readback entwerfen. Das offizielle Headless-Beispiel ist eine
-   Referenz, kein übernehmbarer Session-Runner.
-3. Offene Verträge konkretisieren: Bildzielgröße/-skalierung und Client-Metadaten,
-   Renderbereitschaft/Fristen, relative Blickbewegung und Migration der
-   fensterbezogenen Fehlerformen. Produktkonflikte vorlegen.
-4. Eine bekannte Szene ohne natives Fenster aufnehmen. Zustand und virtuelle
-   Zeit bleiben während Capture unverändert. Danach dieselbe Szene über
-   explizite Warps bewegen, umsehen und Welt-/UI-Elemente anklicken.
-5. Erst nach diesem Nachweis in die vorhandenen Session-Adapter integrieren.
-   Sichere Dateiablage, Request-Korrelation, Fristen und Stop weiterverwenden.
-   Den heutigen Surface-Guard nicht entfernen, solange sein Fensterpfad existiert.
+### Erforderliche Verträge
 
-Abnahme über CLI → Session → Bevy, nicht nur einen alleinstehenden Bildexport:
+1. Main-World-Kameras, Projektionen/FoV, Viewports, Order/Stacks, Transforms und
+   `RenderTarget::Window` sind vor und nach der Outputvorbereitung unverändert.
+2. Attachmentmapping bewahrt vollständige normalisierte Targetidentität,
+   physische Größe, Scale und Format; Resize und Targetwechsel werden
+   requestgenau revalidiert.
+3. Mehrere Kameras desselben Targets bleiben ein Stack. Mehrere unabhängige
+   Targets werden nicht implizit durch „erste Kamera“ entschieden.
+4. Queue, Protokoll-v3-Korrelation, Deadline, PNG-Worker, sichere Pfade,
+   atomischer Ersatz und Cleanup bleiben im bestehenden Service.
+5. Capture bleibt ein No-Tick-Vorgang; Input erreicht das Spiel erst im Warp.
+6. Keyboard und Pointer nutzen eine tatsächlich vorhandene Window-/Targetentity
+   und Bevys `ButtonInput`, `RayMap`, Picking und UI-Systeme; keine
+   Dummyidentität oder eigene Raylogik.
+7. Fenstercapture und sein requestbezogener Surfaceguard bleiben intakt.
+8. Die heutigen Marker-/Imagefixtures und ihre Tests bleiben bis zu grünen
+   Ersatznachweisen verfügbar.
 
-- Kein natives Fenster; auf Linux keine Displayserver-Verbindung nötig.
-- Tatsächlicher Bildinhalt, Maße, UI-Overlay und Pointer-Koordinaten stimmen.
-- Eingaben wirken erst beim Warp, gehaltene Tasten bleiben sessionlokal.
-- Blickbewegung hängt nicht an Cursorgrenzen oder Betriebssystemfokus.
-- Rendering und Readback sind ohne versteckte Ticks bedienbar und begrenzt.
-- Schwarze Szenen bleiben gültig; unfertige oder unkopierte Buffer werden nicht
-  allein wegen eines erfolgreichen Mappings als fertige Aufnahme ausgegeben.
-- Anschließend zwei Sessions, Recording/Replay und geregelten Shutdown prüfen.
+Die dateigenauen Änderungen und Nachweise stehen in der
+[Migrationsmatrix](headless-integration.md#dateigenaue-migrationsmatrix).
+`PerspectiveState` ist ein read-only Capture-Snapshot und darf nicht als
+Kameraeingriff behandelt oder vorschnell entfernt werden.
 
-## Abdeckungsmatrix für Block 6
+## Danach nur unter folgenden Bedingungen
 
-Die bisherigen Nachweise gelten für den vorhandenen Ausführungsweg, nicht als
-Headless-Abnahme. Build- und Startbefehle: [Bevy-Testapps](../../bevy_test_apps/README.md).
+### Schritt 2 — GPU-Parität
 
-| Bereich | Vorhandener Nachweis | Nächste relevante Lücke |
-| --- | --- | --- |
-| Session/Ticks | [tests/slice.py](../../tests/slice.py), [Prozesstests](../../tests/session.rs): Stillstand, Pace/Stop, Isolation, Recording/Replay | Headless-Runner ohne zusätzliche Simulationsschritte |
-| UI | [tests/ui.py](../../tests/ui.py): Pointer, Keyboard, Text, Layout, PNG, Recording/Replay, zwei Sessions | Layout, Textfokus und Picking ohne Fenster |
-| Logik | [tests/logical_state.py](../../tests/logical_state.py): Update, FixedUpdate, Timer, gehaltene Eingaben | Headless-Integration ohne veränderte Ticksemantik |
-| Menüs/Drag | [tests/game_menu.py](../../tests/game_menu.py), [tests/ui_drag_drop.py](../../tests/ui_drag_drop.py): Navigation, Handles, Drag-Phasen und Layout | Gleiche Abläufe am Bildziel |
-| 3D | [tests/mesh_picking.py](../../tests/mesh_picking.py), [tests/blend_modes.py](../../tests/blend_modes.py): Picking, Transformationen, Materialien und Bilder | Fensterlose Kameraziele sowie relative Blicksteuerung |
-| Inspect | [Reflection-Matrix](implementation-plan.md#reflection-matrix), [Entity-Tests](../../src/session/inspect/entities/tests.rs) | Bildziel-Metadaten ohne neue parallele Inspect-Architektur |
-| Reports/Lifecycle | [tests/observation.py](../../tests/observation.py), [Server-Tests](../../src/server/report_tests.rs) | Capture, Failure, Client-Trennung und Shutdown kombiniert |
-| Client/Agent | [REPL](../../tests/repl.py), [Script](../../tests/script.py) | Reale Headless-Agentenschleife; große Outputs und langsame Clients |
+Erst nach grünen CPU-Verträgen und **separater ausdrücklicher GPU-Freigabe**.
+Fenster- und Headlesslauf müssen denselben realen `mesh_picking`-Inhalt, dieselben
+Bevy-Einstellungen, Ticks und Inputs verwenden. Zu belegen sind mindestens PBR,
+Licht, Schatten, Text/UI, Camera3d, normaler Picking-Observer, Teilviewport/
+Kamerastack, tatsächlicher Readback sowie die relevanten MSAA-/HDR-/Tonemapping-
+Eigenschaften. Der Lauf darf keine automatischen Retries oder Szenenpatches
+enthalten.
 
-## Danach: Systemabnahme vervollständigen
+### Schritt 3 — alte Einschränkungen abbauen
 
-- Aktive Aufnahme, Failure, lokalen Report, Client-Trennung, Replay und
-  Verwaltungs-Stopp kombinieren. Dateiinhalte und unveränderliche Snapshots prüfen.
-- Activity-Lücken und gemeinsame Serverfrist prüfen; unbekannte Outcomes nicht
-  automatisch erneut einreichen.
-- Die vorläufige 4-MiB-Activity-Grenze mit echten großen Outputs bemessen.
-  Die wartende Report-Queue je Session ist bisher unbeschränkt.
-- Erst nach der Integration verbleibende Szenenvarianten, API und
-  Dokumentation gegen den Zielvertrag abgleichen.
+Erst nach grünem Ersatznachweis für die jeweilige Funktion. Dann werden
+Markerpflicht, feste Imagekamera-/2D-/3D-Auswahl, Fixturekonfigurationen, Tests
+und Anleitungen koordiniert geändert oder als historische Evidenz abgegrenzt.
+Der Window-Surfacepfad bleibt, solange sein Funktionsumfang nicht nachweislich
+ersetzt ist.
 
-## Nachweise und bekannte Grenzen
+## Nicht als nächster Schritt
 
-Nach dieser Bereinigung bestanden erneut 136 Root-Unit-/CLI-, 7 Beobachtungs-
-und 13 Sessiontests sowie Format- und Diff-Prüfung.
-Log: `target/headless-plan-tests.MebS4c`. Root-Clippy war beim vorherigen
-Push-Check grün; Produktionscode und Dependencies wurden hier nicht verändert.
-Das ist kein Headless- oder neuer Grafiknachweis.
-
-Die macOS-Fenstertests bestanden sichtbar, teilweise verdeckt und nach
-Wiederherstellung. Vollverdeckung führte zur Guard-Ablehnung, nicht zu einer
-erfolgreichen Bildabnahme. Details und historische Commit-Referenzen stehen in
-den [Rendering-Befunden](diagnostics/rendering-findings.md).
-
-Zu erhalten beziehungsweise ausdrücklich zu prüfen:
-
-- Die 3D-Fixtures aktivieren ihre Kamera im ersten expliziten Tick zur
-  Clusterinitialisierung. Kein versteckter Starttick als Ersatz.
-- Einzelne macOS-Prozessfixtures hatten Ready-Verzögerungen/SIGKILL; ein langsames
-  `gh`-Fixture hatte ungeklärte Timeouts. Spätere Erfolge belegen keine Behebung.
-- Fehlende Glyphen für Umlaute, Emoji und Japanisch bleiben zurückgestellt;
-  gespeicherte Unicode-Werte stimmen.
-- Synchrones REPL-stdout kann blockieren; lokales Datei-I/O ist nur kooperativ
-  abbrechbar. Der lokale Report-Provider benötigt Hardlinks.
-- Ein unbestätigter GitHub-POST kann trotzdem veröffentlicht worden sein.
-  Kein automatisches Wiederholen. Ein separater `panic=abort`-Build ist ungeprüft.
-- Prozessverwaltung unterstützt derzeit Unix.
-
-Vorläufige Clippy-Ausnahmen gelten nur beim gezielten CLI-Aufruf:
-`game_menu`: `type_complexity`, `too_many_arguments`;
-`mesh_picking`: `type_complexity`; `blend_modes`: `too_many_arguments`.
-Keine `allow`-Attribute oder Cargo-Features ergänzen. Nach Bevy-Updates ohne
-Ausnahmen neu prüfen; Root-Clippy bleibt ohne Ausnahmen.
-
-## Arbeitsregeln
-
-- Keine Commits, Pushes oder Subagenten ohne ausdrücklichen Auftrag.
-- Fachliche Modulhierarchien und vorhandene Quellen der Wahrheit verwenden.
-- Lokale Reports oder isolierte `gh`-Fixtures verwenden, keine echten
-  Veröffentlichungen durch Tests. URL und Report-Signaturbezeichner unverändert lassen.
-- Lokale Clients bleiben vertrauenswürdig; keine neue Auth-Schicht oder
-  Remote-Unterstützung hinzufügen.
-- Kein Architekturentscheid wird durch Löschen historischer Diagnosewerkzeuge
-  als implementiert oder getestet ausgegeben.
+- kein weiterer `game_menu`- oder feste-3D-Fixture-GPU-Lauf,
+- kein Linux-/DISPLAY-loser Paritätslauf ohne separate Freigabe,
+- kein Enginefork und keine Dependency-/Featuremigration,
+- keine szenenspezifische Kamera-, Material-, Licht- oder Clusteranpassung,
+- kein pauschales Löschen fehlerschließender Readiness- oder Surfaceguard-Tests.

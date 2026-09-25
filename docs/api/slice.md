@@ -192,8 +192,8 @@ Eine vorher angenommene Recording-Dateibarriere hält auch den Loader zurück.
 `tests/slice.py` prüft eine echte Zähleraufnahme, vollständige Vorabvalidierung
 ohne Tick sowie Verwaltungs-Stopp bei gleichzeitigem Replay und Recording.
 `tests/ui.py` enthält zusätzlich die Wiederholung der vollständigen UI-Aufnahme.
-Der aktuelle Nachweis und offene Render-Befund stehen in
-[next-steps.md](next-steps.md#nachweise-und-bekannte-grenzen).
+Die Headless-Renderinggrenzen und ihr aktueller Nachweis stehen in
+[headless-integration.md](headless-integration.md#noch-offene-nachweise).
 
 ## Fehlerbeobachtung und Snapshots
 

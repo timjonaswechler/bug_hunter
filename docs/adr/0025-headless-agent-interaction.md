@@ -22,5 +22,20 @@ kleinen Durchstich festgelegt. Ein Bevy-Fork ist nicht beschlossen.
 
 Die bestehenden Fensteradapter bleiben bis zu ihrem nachgewiesenen Ersatz
 geschützt. Eine optionale Fenstervorschau und unveränderte Unterstützung beliebiger
-Fensteranwendungen sind keine mit dieser Entscheidung zugesagten Funktionen.
-Der gültige Vertrag steht in [target.md](../api/target.md#headless-betrieb).
+Fensteranwendungen waren in dieser ursprünglichen Entscheidung noch keine
+zugesagten Funktionen.
+
+## Spätere Präzisierung
+
+Die nachfolgende CPU-Untersuchung zeigte für Bevy 0.19.1 eine öffentliche
+zentrale Anschlussstelle, die Windowidentität und unveränderte Spielkameras
+bewahren kann. Das aktuelle Ziel verlangt deshalb ein nahezu unverändertes Spiel
+ohne Markerpflicht, Parallelkamera, manuelle 2D-/3D-Auswahl oder eigene
+Pickinglogik. Das ändert nicht die hier entschiedene Fensterlosigkeit und
+explizite Tickkontrolle; es grenzt die damals offene Integration enger ein.
+
+Der gültige Vertrag steht in [target.md](../api/target.md#headless-betrieb), der
+IST-/Migrationsstand in
+[headless-integration.md](../api/headless-integration.md). Historische enge
+Imageziel-Demos belegen nur ihre jeweilige Fixture und sind keine konkurrierende
+Zielarchitektur.

@@ -116,6 +116,508 @@ fn warp(app: &mut App, tx: &mpsc::Sender<String>, id: u64) {
     app.update();
 }
 
+#[cfg(feature = "headless-2d")]
+#[derive(Resource, Default)]
+struct HeadlessButtonSeen(u32);
+
+#[cfg(feature = "headless-2d")]
+#[test]
+fn headless_image_pointer_drives_a_real_ui_button_only_in_warps() {
+    use bevy::{
+        asset::AssetPlugin,
+        camera::{ComputedCameraValues, ImageRenderTarget, RenderTarget, RenderTargetInfo},
+        image::{ImagePlugin, TextureAtlasPlugin},
+        mesh::MeshPlugin,
+        picking::{InteractionPlugin, PickingPlugin},
+        render::render_resource::TextureFormat,
+        text::TextPlugin,
+        transform::TransformPlugin,
+        ui::UiPlugin,
+    };
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .add_plugins(AssetPlugin::default())
+        .add_plugins((
+            TransformPlugin,
+            ImagePlugin::default(),
+            TextureAtlasPlugin,
+            MeshPlugin,
+            bevy::camera::CameraPlugin,
+            TextPlugin,
+            PickingPlugin,
+            InteractionPlugin,
+            UiPlugin,
+        ))
+        .init_resource::<HeadlessButtonSeen>();
+    let image = app
+        .world_mut()
+        .resource_mut::<Assets<Image>>()
+        .add(Image::new_target_texture(
+            800,
+            600,
+            TextureFormat::Rgba8UnormSrgb,
+            None,
+        ));
+    let camera = app
+        .world_mut()
+        .spawn((
+            Camera2d,
+            Camera {
+                computed: ComputedCameraValues {
+                    target_info: Some(RenderTargetInfo {
+                        physical_size: UVec2::new(800, 600),
+                        scale_factor: 2.0,
+                    }),
+                    ..default()
+                },
+                ..default()
+            },
+            RenderTarget::Image(ImageRenderTarget {
+                handle: image,
+                scale_factor: 2.0,
+            }),
+            crate::session::HeadlessCaptureCamera2d,
+            IsDefaultUiCamera,
+        ))
+        .id();
+    let button = app
+        .world_mut()
+        .spawn((
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(100),
+                top: px(80),
+                width: px(100),
+                height: px(50),
+                ..default()
+            },
+            UiTargetCamera(camera),
+        ))
+        .observe(
+            |press: On<Pointer<Press>>, mut buttons: Query<&mut Interaction, With<Button>>| {
+                *buttons.get_mut(press.event_target()).unwrap() = Interaction::Pressed;
+            },
+        )
+        .observe(
+            |release: On<Pointer<Release>>, mut buttons: Query<&mut Interaction, With<Button>>| {
+                *buttons.get_mut(release.event_target()).unwrap() = Interaction::None;
+            },
+        )
+        .id();
+    app.add_systems(
+        Update,
+        |buttons: Query<&Interaction, (Changed<Interaction>, With<Button>)>,
+         mut seen: ResMut<HeadlessButtonSeen>| {
+            seen.0 += buttons
+                .iter()
+                .filter(|interaction| **interaction == Interaction::Pressed)
+                .count() as u32;
+        },
+    );
+
+    let (tx, input) = mpsc::channel();
+    let (output, rx) = mpsc::channel();
+    install(&mut app, input, output, warp::Pace::AsFastAsPossible);
+    let send = |id, command: Command| tx.send(protocol::encode(id, &command)).unwrap();
+    let response = |id| {
+        let message = rx.try_recv().unwrap().0;
+        assert_eq!(message.id(), Some(id));
+        message
+    };
+
+    warp(&mut app, &tx, 1); // Initialize camera and real Bevy UI layout.
+    assert!(matches!(response(1), Message::Completed { .. }));
+    send(
+        2,
+        pointer::MoveTo {
+            position: [150.0, 105.0],
+        }
+        .into(),
+    );
+    send(
+        3,
+        pointer::Press {
+            button: "left".into(),
+        }
+        .into(),
+    );
+    app.update();
+    assert!(matches!(response(2), Message::Completed { .. }));
+    assert!(matches!(response(3), Message::Completed { .. }));
+    assert_eq!(
+        app.world().get::<Interaction>(button),
+        Some(&Interaction::None)
+    );
+    assert_eq!(app.world().resource::<HeadlessButtonSeen>().0, 0);
+
+    warp(&mut app, &tx, 4);
+    assert!(matches!(response(4), Message::Completed { .. }));
+    assert_eq!(
+        app.world().get::<Interaction>(button),
+        Some(&Interaction::Pressed)
+    );
+    assert_eq!(app.world().resource::<HeadlessButtonSeen>().0, 1);
+
+    send(
+        5,
+        pointer::Release {
+            button: "left".into(),
+        }
+        .into(),
+    );
+    app.update();
+    assert!(matches!(response(5), Message::Completed { .. }));
+    assert_eq!(
+        app.world().get::<Interaction>(button),
+        Some(&Interaction::Pressed)
+    );
+    warp(&mut app, &tx, 6);
+    assert!(matches!(response(6), Message::Completed { .. }));
+    assert_eq!(
+        app.world().get::<Interaction>(button),
+        Some(&Interaction::None)
+    );
+}
+
+#[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+#[derive(Resource, Default)]
+struct HeadlessKeyboardSeen {
+    ticks: u64,
+    position: i32,
+    physical: Vec<(bool, bool, bool)>,
+    logical: Vec<(bool, bool, bool)>,
+    native_events: usize,
+}
+
+#[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+fn headless_keyboard_app(
+    spawn_target: fn(&mut App) -> Entity,
+) -> (
+    App,
+    mpsc::Sender<String>,
+    mpsc::Receiver<(Message, Option<mpsc::Sender<()>>)>,
+) {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<HeadlessKeyboardSeen>()
+        .add_systems(
+            Update,
+            |physical: Res<ButtonInput<KeyCode>>,
+             logical: Res<ButtonInput<Key>>,
+             mut events: MessageReader<KeyboardInput>,
+             mut seen: ResMut<HeadlessKeyboardSeen>| {
+                seen.ticks += 1;
+                if physical.pressed(KeyCode::KeyD) {
+                    seen.position += 1;
+                }
+                seen.physical.push((
+                    physical.pressed(KeyCode::KeyD),
+                    physical.just_pressed(KeyCode::KeyD),
+                    physical.just_released(KeyCode::KeyD),
+                ));
+                seen.logical.push((
+                    logical.pressed(Key::Character("d".into())),
+                    logical.just_pressed(Key::Character("d".into())),
+                    logical.just_released(Key::Character("d".into())),
+                ));
+                seen.native_events += events.read().count();
+            },
+        );
+    spawn_target(&mut app);
+    let (tx, input) = mpsc::channel();
+    let (output, rx) = mpsc::channel();
+    install(&mut app, input, output, warp::Pace::AsFastAsPossible);
+    (app, tx, rx)
+}
+
+#[cfg(feature = "headless-2d")]
+fn spawn_headless_keyboard_target(app: &mut App) -> Entity {
+    use bevy::camera::{ImageRenderTarget, RenderTarget};
+
+    app.world_mut()
+        .spawn((
+            Camera2d,
+            RenderTarget::Image(ImageRenderTarget {
+                handle: Handle::default(),
+                scale_factor: 1.5,
+            }),
+            crate::session::HeadlessCaptureCamera2d,
+        ))
+        .id()
+}
+
+#[cfg(feature = "headless-3d")]
+fn spawn_headless_3d_keyboard_target(app: &mut App) -> Entity {
+    use bevy::camera::{ImageRenderTarget, PerspectiveProjection, Projection, RenderTarget};
+
+    app.world_mut()
+        .spawn((
+            Camera3d::default(),
+            Camera::default(),
+            Projection::Perspective(PerspectiveProjection::default()),
+            RenderTarget::Image(ImageRenderTarget {
+                handle: Handle::default(),
+                scale_factor: 1.5,
+            }),
+            crate::session::HeadlessCaptureCamera3d,
+        ))
+        .id()
+}
+
+#[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+fn assert_headless_keyboard_edges_and_movement(spawn_target: fn(&mut App) -> Entity) {
+    let (mut app, tx, rx) = headless_keyboard_app(spawn_target);
+    let send = |id, command: Command| tx.send(protocol::encode(id, &command)).unwrap();
+    let response = |id| {
+        let message = rx.try_recv().unwrap().0;
+        assert_eq!(message.id(), Some(id));
+        message
+    };
+
+    send(
+        1,
+        keyboard::Press {
+            key: keyboard::Key::D,
+        }
+        .into(),
+    );
+    app.update();
+    assert!(matches!(response(1), Message::Completed { .. }));
+    assert_eq!(app.world().resource::<HeadlessKeyboardSeen>().ticks, 0);
+    assert!(
+        !app.world()
+            .resource::<ButtonInput<KeyCode>>()
+            .pressed(KeyCode::KeyD)
+    );
+    send(
+        2,
+        keyboard::Press {
+            key: keyboard::Key::D,
+        }
+        .into(),
+    );
+    app.update();
+    assert!(matches!(
+        response(2),
+        Message::Rejected { error, .. } if error.code == "key_already_pressed"
+    ));
+
+    warp(&mut app, &tx, 3);
+    assert!(matches!(response(3), Message::Completed { .. }));
+    send(
+        4,
+        warp::Start {
+            ticks: 3,
+            pace: None,
+        }
+        .into(),
+    );
+    app.update();
+    assert!(matches!(response(4), Message::Completed { .. }));
+    {
+        let seen = app.world().resource::<HeadlessKeyboardSeen>();
+        assert_eq!((seen.ticks, seen.position), (4, 4));
+        assert_eq!(seen.physical[0], (true, true, false));
+        assert_eq!(seen.logical[0], (true, true, false));
+        assert_eq!(seen.physical[3], (true, false, false));
+        assert_eq!(seen.logical[3], (true, false, false));
+        assert_eq!(seen.native_events, 0);
+    }
+
+    send(
+        5,
+        keyboard::Release {
+            key: keyboard::Key::D,
+        }
+        .into(),
+    );
+    app.update();
+    assert!(matches!(response(5), Message::Completed { .. }));
+    assert_eq!(app.world().resource::<HeadlessKeyboardSeen>().position, 4);
+    send(
+        6,
+        keyboard::Release {
+            key: keyboard::Key::D,
+        }
+        .into(),
+    );
+    app.update();
+    assert!(matches!(
+        response(6),
+        Message::Rejected { error, .. } if error.code == "key_not_pressed"
+    ));
+    warp(&mut app, &tx, 7);
+    assert!(matches!(response(7), Message::Completed { .. }));
+    let seen = app.world().resource::<HeadlessKeyboardSeen>();
+    assert_eq!((seen.ticks, seen.position), (5, 4));
+    assert_eq!(seen.physical[4], (false, false, true));
+    assert_eq!(seen.logical[4], (false, false, true));
+    assert_eq!(seen.native_events, 0);
+}
+
+#[cfg(feature = "headless-2d")]
+#[test]
+fn headless_2d_keyboard_edges_and_movement_are_applied_only_by_warps() {
+    assert_headless_keyboard_edges_and_movement(spawn_headless_keyboard_target);
+}
+
+#[cfg(feature = "headless-3d")]
+#[test]
+fn headless_3d_keyboard_edges_and_movement_are_applied_only_by_warps() {
+    assert_headless_keyboard_edges_and_movement(spawn_headless_3d_keyboard_target);
+}
+
+#[cfg(feature = "headless-2d")]
+#[test]
+fn headless_2d_keyboard_requires_exactly_one_explicit_target() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    let (tx, input) = mpsc::channel();
+    let (output, rx) = mpsc::channel();
+    install(&mut app, input, output, warp::Pace::AsFastAsPossible);
+    let press = |id| {
+        tx.send(protocol::encode(
+            id,
+            &keyboard::Press {
+                key: keyboard::Key::D,
+            }
+            .into(),
+        ))
+        .unwrap();
+    };
+    let rejected = |id| {
+        let Message::Rejected {
+            request_id, error, ..
+        } = rx.try_recv().unwrap().0
+        else {
+            panic!("headless keyboard target must be rejected")
+        };
+        assert_eq!(request_id, id);
+        assert_eq!(error.code, "keyboard_window_unavailable");
+    };
+
+    press(1);
+    app.update();
+    rejected(1);
+    let first = spawn_headless_keyboard_target(&mut app);
+    let second = spawn_headless_keyboard_target(&mut app);
+    press(2);
+    app.update();
+    rejected(2);
+    app.world_mut().despawn(second);
+    press(3);
+    app.update();
+    assert!(matches!(
+        rx.try_recv().unwrap().0,
+        Message::Completed { request_id: 3, .. }
+    ));
+    assert!(app.world().get_entity(first).is_ok());
+}
+
+#[cfg(feature = "headless-3d")]
+#[test]
+fn headless_3d_keyboard_requires_one_suitable_explicit_target() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    let (tx, input) = mpsc::channel();
+    let (output, rx) = mpsc::channel();
+    install(&mut app, input, output, warp::Pace::AsFastAsPossible);
+    let press = |id| {
+        tx.send(protocol::encode(
+            id,
+            &keyboard::Press {
+                key: keyboard::Key::D,
+            }
+            .into(),
+        ))
+        .unwrap();
+    };
+    let rejected = |id| {
+        let Message::Rejected {
+            request_id, error, ..
+        } = rx.try_recv().unwrap().0
+        else {
+            panic!("headless 3D keyboard target must be rejected")
+        };
+        assert_eq!(request_id, id);
+        assert_eq!(error.code, "keyboard_window_unavailable");
+    };
+
+    press(1);
+    app.update();
+    rejected(1);
+
+    let target = spawn_headless_3d_keyboard_target(&mut app);
+    app.world_mut()
+        .entity_mut(target)
+        .remove::<crate::session::HeadlessCaptureCamera3d>();
+    press(2);
+    app.update();
+    rejected(2);
+
+    app.world_mut()
+        .entity_mut(target)
+        .insert(crate::session::HeadlessCaptureCamera3d);
+    app.world_mut().get_mut::<Camera>(target).unwrap().is_active = false;
+    press(3);
+    app.update();
+    rejected(3);
+
+    app.world_mut().get_mut::<Camera>(target).unwrap().is_active = true;
+    app.world_mut()
+        .entity_mut(target)
+        .insert(Projection::Orthographic(
+            OrthographicProjection::default_3d(),
+        ));
+    press(4);
+    app.update();
+    rejected(4);
+
+    app.world_mut()
+        .entity_mut(target)
+        .insert(Projection::Perspective(PerspectiveProjection::default()));
+    let duplicate = spawn_headless_3d_keyboard_target(&mut app);
+    press(5);
+    app.update();
+    rejected(5);
+
+    app.world_mut().despawn(duplicate);
+    press(6);
+    app.update();
+    assert!(matches!(
+        rx.try_recv().unwrap().0,
+        Message::Completed { request_id: 6, .. }
+    ));
+}
+
+#[cfg(all(feature = "headless-2d", feature = "headless-3d"))]
+#[test]
+fn mixed_headless_2d_and_3d_keyboard_targets_fail_closed() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    spawn_headless_keyboard_target(&mut app);
+    spawn_headless_3d_keyboard_target(&mut app);
+    let (tx, input) = mpsc::channel();
+    let (output, rx) = mpsc::channel();
+    install(&mut app, input, output, warp::Pace::AsFastAsPossible);
+
+    tx.send(protocol::encode(
+        1,
+        &keyboard::Press {
+            key: keyboard::Key::D,
+        }
+        .into(),
+    ))
+    .unwrap();
+    app.update();
+    assert!(matches!(
+        rx.try_recv().unwrap().0,
+        Message::Rejected { error, .. } if error.code == "keyboard_window_unavailable"
+    ));
+}
+
 #[test]
 fn independent_virtual_devices_ignore_native_input_without_window_focus() {
     let mut sessions = [app(), app()];

@@ -1,5 +1,7 @@
 use super::{Diagnostic, Message, destination};
 use crate::{command::screenshot::Output, session::protocol};
+#[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+use bevy::camera::RenderTarget;
 use bevy::{
     ecs::schedule::ScheduleCleanupPolicy,
     prelude::*,
@@ -21,23 +23,70 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+mod image_target;
+#[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+mod readiness;
+#[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+mod selection;
 mod surface;
+#[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+mod verification;
 
 const READBACK_TIMEOUT: Duration = Duration::from_secs(30);
 const COMMAND: &str = "screenshot.capture";
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Target {
+    Window(Entity),
+    #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+    Image(image_target::Selected),
+}
+
 struct Job {
     id: u64,
     path: String,
-    window: Entity,
+    target: Target,
+}
+
+enum Verification {
+    Window(Arc<OnceLock<bool>>),
+    #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+    Image(Arc<verification::Verification>),
 }
 
 struct Active {
     job: Job,
-    entity: Entity,
+    entity: Option<Entity>,
     since: Instant,
     writing: bool,
-    surface: Arc<OnceLock<bool>>,
+    verification: Verification,
+}
+
+impl Active {
+    fn window_surface(&self) -> Option<(Entity, Arc<OnceLock<bool>>)> {
+        match (&self.job.target, &self.verification) {
+            (Target::Window(window), Verification::Window(surface)) => {
+                Some((*window, surface.clone()))
+            }
+            #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+            _ => None,
+        }
+    }
+
+    #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+    fn image_request(&self) -> Option<image_target::Request> {
+        match (&self.job.target, &self.verification) {
+            (Target::Image(selected), Verification::Image(verification)) => {
+                Some(image_target::Request {
+                    selected: selected.clone(),
+                    entity: self.entity,
+                    verification: verification.clone(),
+                })
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -89,6 +138,8 @@ pub(super) fn install(app: &mut App, root: &Path) {
         receiver: Mutex::new(receiver),
     });
     surface::install(app);
+    #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+    image_target::install(app);
 }
 
 fn window(world: &World) -> Result<Entity, Diagnostic> {
@@ -107,6 +158,25 @@ fn window(world: &World) -> Result<Entity, Diagnostic> {
         })
 }
 
+fn target(world: &World) -> Result<Target, Diagnostic> {
+    #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+    {
+        let window = window(world);
+        match selection::choose(
+            window.as_ref().ok().copied(),
+            image_target::configured(world),
+        ) {
+            selection::Choice::Window(window) => Ok(Target::Window(window)),
+            selection::Choice::Image => image_target::target(world).map(Target::Image),
+            selection::Choice::Unavailable => window.map(Target::Window),
+        }
+    }
+    #[cfg(not(any(feature = "headless-2d", feature = "headless-3d")))]
+    {
+        window(world).map(Target::Window)
+    }
+}
+
 pub(super) fn start(world: &mut World, id: u64, path: String) -> Result<(), Diagnostic> {
     let service = world.get_resource::<Service>().ok_or_else(|| {
         Diagnostic::new(
@@ -114,12 +184,12 @@ pub(super) fn start(world: &mut World, id: u64, path: String) -> Result<(), Diag
             "renderer and screenshot service are not installed",
         )
     })?;
-    let window = window(world)?;
+    let target = target(world)?;
     destination::prepare(&service.root, &path)?;
     world
         .resource_mut::<Service>()
         .queue
-        .push_back(Job { id, path, window });
+        .push_back(Job { id, path, target });
     Ok(())
 }
 
@@ -169,13 +239,17 @@ pub(super) fn poll(world: &mut World) -> Vec<Message> {
         .collect();
     world.resource_scope(|world, mut service: Mut<Service>| {
         let mut responses = Vec::new();
-        if service
-            .active
-            .as_ref()
-            .is_some_and(|active| !active.writing && active.surface.get() == Some(&false))
-        {
+        if service.active.as_ref().is_some_and(|active| {
+            !active.writing
+                && matches!(
+                    &active.verification,
+                    Verification::Window(surface) if surface.get() == Some(&false)
+                )
+        }) {
             let active = service.active.take().unwrap();
-            world.despawn(active.entity);
+            if let Some(entity) = active.entity {
+                world.despawn(entity);
+            }
             responses.push(response(
                 active.job.id,
                 Err(Diagnostic::new(
@@ -184,18 +258,46 @@ pub(super) fn poll(world: &mut World) -> Vec<Message> {
                 )),
             ));
         }
+        #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+        if service.active.as_ref().is_some_and(|active| {
+            let (Some(entity), Verification::Image(verification)) =
+                (active.entity, &active.verification)
+            else {
+                return false;
+            };
+            verification.capture_result(entity) == Some(false)
+        }) {
+            let active = service.active.take().unwrap();
+            if let Some(entity) = active.entity {
+                world.despawn(entity);
+            }
+            responses.push(response(
+                active.job.id,
+                Err(Diagnostic::new(
+                    "screenshot_failed",
+                    "capture frame output was not verified",
+                )),
+            ));
+        }
         for (entity, image) in images {
             if let Some(active) = service
                 .active
                 .as_mut()
-                .filter(|a| a.entity == entity && !a.writing)
+                .filter(|active| active.entity == Some(entity) && !active.writing)
             {
-                if active.surface.get() != Some(&true) {
+                let verified = match &active.verification {
+                    Verification::Window(surface) => surface.get() == Some(&true),
+                    #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+                    Verification::Image(verification) => {
+                        verification.capture_result(entity) == Some(true)
+                    }
+                };
+                if !verified {
                     responses.push(response(
                         active.job.id,
                         Err(Diagnostic::new(
                             "screenshot_failed",
-                            "capture frame render surface was not verified",
+                            "capture frame output was not verified",
                         )),
                     ));
                     world.despawn(entity);
@@ -221,13 +323,36 @@ pub(super) fn poll(world: &mut World) -> Vec<Message> {
             let active = service.active.take().expect("one active writer");
             responses.push(response(active.job.id, result));
         }
+        #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+        if let Some(active) = service.active.as_mut()
+            && !active.writing
+            && active.entity.is_none()
+            && matches!(
+                &active.verification,
+                Verification::Image(verification) if verification.warmup_ready()
+            )
+        {
+            let Target::Image(selected) = &active.job.target else {
+                unreachable!("image verification belongs to an image target")
+            };
+            let entity = world
+                .spawn(Screenshot(RenderTarget::Image(selected.target.clone())))
+                .id();
+            let Verification::Image(verification) = &active.verification else {
+                unreachable!("image target has image verification")
+            };
+            verification.begin_capture(entity);
+            active.entity = Some(entity);
+        }
         if service
             .active
             .as_ref()
-            .is_some_and(|a| !a.writing && a.since.elapsed() >= READBACK_TIMEOUT)
+            .is_some_and(|active| !active.writing && active.since.elapsed() >= READBACK_TIMEOUT)
         {
             let active = service.active.take().unwrap();
-            world.despawn(active.entity);
+            if let Some(entity) = active.entity {
+                world.despawn(entity);
+            }
             responses.push(response(
                 active.job.id,
                 Err(destination::failed("GPU readback timed out")),
@@ -235,24 +360,39 @@ pub(super) fn poll(world: &mut World) -> Vec<Message> {
         }
         if service.active.is_none() {
             while let Some(job) = service.queue.pop_front() {
-                if window(world).ok() != Some(job.window) {
-                    responses.push(response(
-                        job.id,
-                        Err(Diagnostic::new(
+                if target(world).ok().as_ref() != Some(&job.target) {
+                    let (code, message) = match job.target {
+                        Target::Window(_) => (
                             "screenshot_window_unavailable",
                             "primary window changed before capture",
-                        )),
-                    ));
+                        ),
+                        #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+                        Target::Image(_) => (
+                            "screenshot_target_unavailable",
+                            "image target changed before capture",
+                        ),
+                    };
+                    responses.push(response(job.id, Err(Diagnostic::new(code, message))));
                     continue;
                 }
                 // Bevy drops concurrent screenshots for the same render target. Serialize them.
-                let entity = world.spawn(Screenshot::window(job.window)).id();
+                let (entity, verification) = match &job.target {
+                    Target::Window(window) => (
+                        Some(world.spawn(Screenshot::window(*window)).id()),
+                        Verification::Window(Arc::default()),
+                    ),
+                    #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+                    Target::Image(_) => (
+                        None,
+                        Verification::Image(Arc::new(verification::Verification::default())),
+                    ),
+                };
                 service.active = Some(Active {
                     job,
                     entity,
                     since: Instant::now(),
                     writing: false,
-                    surface: Arc::default(),
+                    verification,
                 });
                 break;
             }
@@ -299,17 +439,33 @@ mod tests {
                 job: Job {
                     id: 17,
                     path: "images/a.png".into(),
-                    window,
+                    target: Target::Window(window),
                 },
-                entity,
+                entity: Some(entity),
                 since: Instant::now(),
                 writing: false,
-                surface: Arc::default(),
+                verification: Verification::Window(Arc::default()),
             }),
             sender,
             receiver: Mutex::new(receiver),
         });
         (world, entity, images)
+    }
+
+    fn window(active: &Active) -> Entity {
+        match active.job.target {
+            Target::Window(window) => window,
+            #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+            Target::Image(_) => panic!("window fixture changed target"),
+        }
+    }
+
+    fn surface(active: &Active) -> &OnceLock<bool> {
+        match &active.verification {
+            Verification::Window(surface) => surface,
+            #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+            Verification::Image(_) => panic!("window fixture changed verification"),
+        }
     }
 
     #[test]
@@ -324,8 +480,12 @@ mod tests {
         let active = world.resource::<Service>().active.as_ref().unwrap();
         let mut render = World::new();
         render.insert_resource(super::surface::Frame::new(
-            active.job.window,
-            active.surface.clone(),
+            window(active),
+            match &active.verification {
+                Verification::Window(surface) => surface.clone(),
+                #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+                Verification::Image(_) => unreachable!(),
+            },
         ));
         render.insert_resource(bevy::render::view::window::ExtractedWindows::default());
         render.run_system_cached(super::surface::check).unwrap();
@@ -355,15 +515,19 @@ mod tests {
         let reader = root.try_clone().unwrap();
         let (mut world, entity, images) = fixture(root);
         let active = world.resource::<Service>().active.as_ref().unwrap();
-        active.surface.set(true).unwrap();
+        surface(active).set(true).unwrap();
         let mut render = World::new();
         render.insert_resource(super::surface::Frame::new(
-            active.job.window,
-            active.surface.clone(),
+            window(active),
+            match &active.verification {
+                Verification::Window(surface) => surface.clone(),
+                #[cfg(any(feature = "headless-2d", feature = "headless-3d"))]
+                Verification::Image(_) => unreachable!(),
+            },
         ));
         render.insert_resource(bevy::render::view::window::ExtractedWindows::default());
         render.run_system_cached(super::surface::check).unwrap();
-        assert_eq!(active.surface.get(), Some(&true));
+        assert_eq!(surface(active).get(), Some(&true));
         let mut black = image();
         black.data.as_mut().unwrap().fill(0);
         images.send((entity, black)).unwrap();
@@ -392,9 +556,9 @@ mod tests {
         let reader = root.try_clone().unwrap();
         let (mut world, entity, images) = fixture(root);
         let active = world.resource::<Service>().active.as_ref().unwrap();
-        active.surface.set(false).unwrap();
+        surface(active).set(false).unwrap();
         // A later available frame cannot approve an earlier uncopied buffer.
-        assert!(active.surface.set(true).is_err());
+        assert!(surface(active).set(true).is_err());
         assert!(
             matches!(&poll(&mut world)[..], [Message::Rejected { error, .. }]
             if error.code == "screenshot_window_unavailable")
@@ -428,12 +592,7 @@ mod tests {
         assert!(!reader.exists("images/a.png"));
         assert!(world.resource::<Service>().pending(17));
         let elapsed = world.resource::<Time<Virtual>>().elapsed();
-        world
-            .resource::<Service>()
-            .active
-            .as_ref()
-            .unwrap()
-            .surface
+        surface(world.resource::<Service>().active.as_ref().unwrap())
             .set(true)
             .unwrap();
         images.send((entity, image())).unwrap();
@@ -497,6 +656,373 @@ mod tests {
                 .code,
             "screenshot_failed"
         );
+    }
+
+    #[cfg(feature = "headless-2d")]
+    #[test]
+    fn rendered_window_remains_primary_when_an_image_target_also_exists() {
+        use bevy::camera::{ImageRenderTarget, RenderTarget};
+
+        let mut world = World::new();
+        world.spawn((
+            Camera2d,
+            crate::session::HeadlessCaptureCamera2d,
+            RenderTarget::Image(ImageRenderTarget {
+                handle: Handle::default(),
+                scale_factor: 1.0,
+            }),
+        ));
+        assert!(image_target::configured(&world));
+        // `Some(window)` is the successful result of the unchanged rendered
+        // primary-window seam; image configuration must not be evaluated first.
+        let window = Entity::from_bits(41);
+        assert_eq!(
+            selection::choose(Some(window), image_target::configured(&world)),
+            selection::Choice::Window(window)
+        );
+    }
+
+    #[cfg(feature = "headless-2d")]
+    #[test]
+    fn unmarked_image_camera_is_not_accepted_as_the_fixed_2d_target() {
+        use bevy::camera::{ImageRenderTarget, RenderTarget, RenderTargetInfo};
+
+        let mut world = World::new();
+        let mut images = Assets::<Image>::default();
+        let image = images.add(Image::new_target_texture(
+            321,
+            181,
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            None,
+        ));
+        world.insert_resource(images);
+        world.spawn((
+            Camera {
+                computed: bevy::camera::ComputedCameraValues {
+                    target_info: Some(RenderTargetInfo {
+                        physical_size: UVec2::new(321, 181),
+                        scale_factor: 1.5,
+                    }),
+                    ..default()
+                },
+                ..default()
+            },
+            RenderTarget::Image(ImageRenderTarget {
+                handle: image,
+                scale_factor: 1.5,
+            }),
+        ));
+        assert_eq!(
+            image_target::target(&world).unwrap_err().code,
+            "screenshot_target_unavailable"
+        );
+    }
+
+    #[cfg(feature = "headless-2d")]
+    #[test]
+    fn image_target_requires_one_initialized_full_image_writing_camera() {
+        use bevy::camera::{ImageRenderTarget, RenderTarget, RenderTargetInfo};
+
+        let mut world = World::new();
+        let mut images = Assets::<Image>::default();
+        let image = images.add(Image::new_target_texture(
+            321,
+            181,
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            None,
+        ));
+        world.insert_resource(images);
+        let camera = world
+            .spawn((
+                Camera::default(),
+                Camera2d,
+                crate::session::HeadlessCaptureCamera2d,
+                RenderTarget::Image(ImageRenderTarget {
+                    handle: image.clone(),
+                    scale_factor: 1.5,
+                }),
+            ))
+            .id();
+        assert_eq!(
+            target(&world).unwrap_err().code,
+            "screenshot_target_unavailable"
+        );
+        world
+            .get_mut::<Camera>(camera)
+            .unwrap()
+            .computed
+            .target_info = Some(RenderTargetInfo {
+            physical_size: UVec2::new(321, 181),
+            scale_factor: 1.5,
+        });
+        let Target::Image(selected) = target(&world).unwrap() else {
+            panic!("initialized image camera must select its image target")
+        };
+        assert_eq!(selected.target.handle, image.clone());
+        assert_eq!(selected.target.scale_factor, 1.5);
+        assert_eq!(selected.pipeline, selection::ImagePipeline::TwoD);
+        world.spawn((
+            Camera {
+                computed: bevy::camera::ComputedCameraValues {
+                    target_info: Some(RenderTargetInfo {
+                        physical_size: UVec2::new(321, 181),
+                        scale_factor: 1.5,
+                    }),
+                    ..default()
+                },
+                ..default()
+            },
+            RenderTarget::Image(ImageRenderTarget {
+                handle: image,
+                scale_factor: 1.5,
+            }),
+        ));
+        assert_eq!(
+            target(&world).unwrap_err().code,
+            "screenshot_target_unavailable"
+        );
+    }
+
+    #[cfg(feature = "headless-3d")]
+    fn fixed_3d_world() -> (World, Entity) {
+        use bevy::camera::{
+            ImageRenderTarget, PerspectiveProjection, Projection, RenderTargetInfo,
+        };
+
+        let mut world = World::new();
+        let mut images = Assets::<Image>::default();
+        let image = images.add(Image::new_target_texture(
+            321,
+            181,
+            TextureFormat::Rgba8UnormSrgb,
+            None,
+        ));
+        world.insert_resource(images);
+        let camera = world
+            .spawn((
+                Camera {
+                    computed: bevy::camera::ComputedCameraValues {
+                        target_info: Some(RenderTargetInfo {
+                            physical_size: UVec2::new(321, 181),
+                            scale_factor: 1.5,
+                        }),
+                        ..default()
+                    },
+                    ..default()
+                },
+                Camera3d::default(),
+                Projection::Perspective(PerspectiveProjection {
+                    aspect_ratio: 321.0 / 181.0,
+                    near: 0.1,
+                    far: 100.0,
+                    ..default()
+                }),
+                crate::session::HeadlessCaptureCamera3d,
+                RenderTarget::Image(ImageRenderTarget {
+                    handle: image,
+                    scale_factor: 1.5,
+                }),
+            ))
+            .id();
+        (world, camera)
+    }
+
+    #[cfg(feature = "headless-3d")]
+    #[test]
+    fn fixed_3d_target_is_explicit_perspective_and_preserves_full_identity() {
+        use bevy::camera::{OrthographicProjection, PerspectiveProjection, Projection};
+
+        let (mut world, camera) = fixed_3d_world();
+        let selected = image_target::target(&world).unwrap();
+        assert_eq!(selected.pipeline, selection::ImagePipeline::ThreeD);
+        assert_eq!(selected.target.scale_factor, 1.5);
+
+        world
+            .entity_mut(camera)
+            .remove::<crate::session::HeadlessCaptureCamera3d>();
+        assert_eq!(
+            image_target::target(&world).unwrap_err().code,
+            "screenshot_target_unavailable"
+        );
+        world
+            .entity_mut(camera)
+            .insert(crate::session::HeadlessCaptureCamera3d);
+        world.entity_mut(camera).insert(Projection::Orthographic(
+            OrthographicProjection::default_3d(),
+        ));
+        assert_eq!(
+            image_target::target(&world).unwrap_err().code,
+            "screenshot_target_unavailable"
+        );
+        world.entity_mut(camera).insert((
+            Projection::Perspective(PerspectiveProjection {
+                aspect_ratio: 321.0 / 181.0,
+                ..default()
+            }),
+            Camera2d,
+        ));
+        assert_eq!(
+            image_target::target(&world).unwrap_err().code,
+            "screenshot_target_unavailable"
+        );
+    }
+
+    #[cfg(feature = "headless-3d")]
+    #[test]
+    fn fixed_3d_rejects_ambiguous_image_cameras_and_window_still_wins() {
+        use bevy::camera::{ImageRenderTarget, RenderTarget};
+
+        let (mut world, _) = fixed_3d_world();
+        assert!(image_target::configured(&world));
+        let window = Entity::from_bits(72);
+        assert_eq!(
+            selection::choose(Some(window), image_target::configured(&world)),
+            selection::Choice::Window(window)
+        );
+        world.spawn((
+            Camera::default(),
+            RenderTarget::Image(ImageRenderTarget {
+                handle: Handle::default(),
+                scale_factor: 1.5,
+            }),
+        ));
+        assert_eq!(
+            image_target::target(&world).unwrap_err().code,
+            "screenshot_target_unavailable"
+        );
+    }
+
+    #[cfg(feature = "headless-3d")]
+    #[test]
+    fn queued_3d_capture_rejects_projection_change_before_activation() {
+        use bevy::camera::Projection;
+
+        let sandbox = Sandbox::new();
+        let (mut world, camera) = fixed_3d_world();
+        let (sender, receiver) = mpsc::channel();
+        let (_images, captured) = mpsc::channel();
+        world.insert_resource(CapturedScreenshots(Arc::new(Mutex::new(captured))));
+        world.insert_resource(Service {
+            root: Arc::new(sandbox.root("root")),
+            queue: VecDeque::new(),
+            active: None,
+            sender,
+            receiver: Mutex::new(receiver),
+        });
+        start(&mut world, 31, "fixed-3d.png".into()).unwrap();
+        let mut projection = world.get_mut::<Projection>(camera).unwrap();
+        let Projection::Perspective(projection) = projection.as_mut() else {
+            panic!("fixture uses perspective")
+        };
+        projection.fov *= 0.75;
+
+        let responses = poll(&mut world);
+        assert!(
+            matches!(&responses[..], [Message::Rejected { request_id: 31, error, .. }]
+                if error.code == "screenshot_target_unavailable"),
+            "{responses:?}"
+        );
+    }
+
+    #[cfg(feature = "headless-2d")]
+    fn image_capture_fixture(root: Dir) -> (World, Entity, image_target::Selected) {
+        use bevy::camera::{ImageRenderTarget, RenderTarget, RenderTargetInfo};
+
+        let mut world = World::new();
+        let mut images = Assets::<Image>::default();
+        let image = images.add(Image::new_target_texture(
+            321,
+            181,
+            TextureFormat::Rgba8UnormSrgb,
+            None,
+        ));
+        world.insert_resource(images);
+        let target = ImageRenderTarget {
+            handle: image,
+            scale_factor: 1.5,
+        };
+        let camera = world
+            .spawn((
+                Camera {
+                    computed: bevy::camera::ComputedCameraValues {
+                        target_info: Some(RenderTargetInfo {
+                            physical_size: UVec2::new(321, 181),
+                            scale_factor: 1.5,
+                        }),
+                        ..default()
+                    },
+                    ..default()
+                },
+                Camera2d,
+                crate::session::HeadlessCaptureCamera2d,
+                RenderTarget::Image(target.clone()),
+            ))
+            .id();
+        let (sender, receiver) = mpsc::channel();
+        let (_images, captured) = mpsc::channel();
+        world.insert_resource(CapturedScreenshots(Arc::new(Mutex::new(captured))));
+        world.insert_resource(Service {
+            root: Arc::new(root),
+            queue: VecDeque::new(),
+            active: None,
+            sender,
+            receiver: Mutex::new(receiver),
+        });
+        let selected = image_target::target(&world).unwrap();
+        (world, camera, selected)
+    }
+
+    #[cfg(feature = "headless-2d")]
+    #[test]
+    fn image_capture_spawns_screenshot_with_the_selected_camera_target() {
+        use bevy::camera::RenderTarget;
+
+        let sandbox = Sandbox::new();
+        let (mut world, _, camera_target) = image_capture_fixture(sandbox.root("root"));
+        start(&mut world, 23, "fixed.png".into()).unwrap();
+        assert!(poll(&mut world).is_empty());
+        let active = world.resource::<Service>().active.as_ref().unwrap();
+        assert_eq!(active.job.target, Target::Image(camera_target.clone()));
+        let Verification::Image(verification) = &active.verification else {
+            panic!("image target must use image verification")
+        };
+        verification.record_frame(None, true);
+        assert!(poll(&mut world).is_empty());
+        let entity = world
+            .resource::<Service>()
+            .active
+            .as_ref()
+            .unwrap()
+            .entity
+            .unwrap();
+        let screenshot = world.get::<Screenshot>(entity).unwrap();
+        assert_eq!(
+            screenshot.0.normalize(None),
+            RenderTarget::Image(camera_target.target).normalize(None),
+            "queued capture must preserve the selected camera target identity"
+        );
+    }
+
+    #[cfg(feature = "headless-2d")]
+    #[test]
+    fn queued_image_capture_rejects_a_scale_change_before_activation() {
+        use bevy::camera::{ImageRenderTarget, RenderTarget};
+
+        let sandbox = Sandbox::new();
+        let (mut world, camera, camera_target) = image_capture_fixture(sandbox.root("root"));
+        start(&mut world, 24, "fixed.png".into()).unwrap();
+        *world.get_mut::<RenderTarget>(camera).unwrap() = RenderTarget::Image(ImageRenderTarget {
+            handle: camera_target.target.handle,
+            scale_factor: 1.0,
+        });
+
+        let responses = poll(&mut world);
+        assert!(
+            matches!(&responses[..], [Message::Rejected { request_id: 24, error, .. }]
+                if error.code == "screenshot_target_unavailable"),
+            "{responses:?}"
+        );
+        assert!(world.resource::<Service>().active.is_none());
     }
 
     #[test]

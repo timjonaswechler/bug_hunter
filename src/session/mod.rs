@@ -19,6 +19,10 @@ pub use crate::report::capture::tracing_error_layer;
 pub use error::Error;
 pub use plugin::Plugin;
 pub use protocol::Capabilities;
+#[cfg(feature = "headless-2d")]
+pub use screenshot::HeadlessCaptureCamera2d;
+#[cfg(feature = "headless-3d")]
+pub use screenshot::HeadlessCaptureCamera3d;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, VecDeque},
