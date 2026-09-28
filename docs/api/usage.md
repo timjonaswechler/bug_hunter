@@ -1,6 +1,6 @@
-# Experimenteller Durchstich
+# Bedienung und Tests
 
-Dieser Build ist keine vollständige v3-Implementation. Er implementiert Warp,
+Die vollständige Systemabnahme dieses Builds steht noch aus. Er implementiert Warp,
 Resource-/Entity-Inspect, Pointer-/Keyboard-/Text-Input, Screenshot, Recording, Replay und Shutdown.
 Fehlerbeobachtung, Report-Snapshots, Report-Darstellung sowie Local und GitHub sind vorhanden.
 Der Server verarbeitet Reports automatisch und unabhängig von Clients. Der einzige unterstützte Weg verwendet
@@ -96,9 +96,11 @@ Eine später verfügbare Surface kann den alten Readback nicht nachträglich fre
 Fehlt die Frame-Verifikation selbst, lautet der Fehler `screenshot_failed`.
 
 Diese Absicherung erzeugt keine zusätzlichen Ticks, verändert keinen Fensterfokus
-und wiederholt den Request nicht. Sie macht die Aufnahme eines vollständig
-verdeckten Fensters auf Metal noch nicht möglich. Eine tatsächlich schwarze Szene
-bleibt ein gültiges Bild; Pixelwerte werden nicht zur Verfügbarkeitsprüfung benutzt.
+und wiederholt den Request nicht. Aufnahmen vollständig verdeckter Fenster sind
+nicht zugesichert; die Ablehnung bei fehlender Renderoberfläche ist eine akzeptierte
+Einschränkung. Eine tatsächlich schwarze Szene bleibt ein gültiges Bild; Pixelwerte
+werden nicht zur Verfügbarkeitsprüfung benutzt. Der Command vergleicht das Bild
+nicht mit einem Sollbild und bewertet nicht die visuelle Richtigkeit des Spiels.
 
 `tests/ui.py` prüft vollständige PNGs, sichtbare Menüänderung nach einem ausdrücklichen
 Tick, Überschreiben, parallele Requests und Session-Isolation. Tickzähler,
@@ -187,7 +189,7 @@ Eine vorher angenommene Recording-Dateibarriere hält auch den Loader zurück.
 ohne Tick sowie Verwaltungs-Stopp bei gleichzeitigem Replay und Recording.
 `tests/ui.py` enthält zusätzlich die Wiederholung der vollständigen UI-Aufnahme.
 Der aktuelle Nachweis und offene Render-Befund stehen in
-[next-steps.md](next-steps.md#nachweise-und-bekannte-grenzen).
+[next-steps.md](next-steps.md#letzter-dokumentierter-prüfstand).
 
 ## Fehlerbeobachtung und Snapshots
 
@@ -346,8 +348,9 @@ auch die ältere `Interaction`-Logik den virtuellen Pointer statt der nativen Ma
 Die Pointerposition wird über `PointerLocation` gelesen; `Window` bleibt die
 Beschreibung des nativen Fensters, kein virtueller Eingabestatus.
 Die Prozessverwaltung dieses Durchstichs unterstützt Unix-Prozessgruppen.
-Das Testpackage verwendet für Zähler und Context-Menu das Feature `slice`. Die übrigen Bevy-Anwendungen
-laufen mit nativer Eingabe; ihr altes Feature `automation` wurde entfernt.
+Alle sieben Szenen des Testpackages verwenden für kontrollierte Sessions das Feature
+`slice`. Ohne dieses Feature bleibt die native Bedienung erhalten; das alte Feature
+`automation` wurde entfernt.
 Ohne `screenshot` benötigt die Bibliothek keinen Renderer. Das optionale Feature
 verwendet Bevy Render und PNG-Encoding, installiert aber keinen Renderer.
 Die übrigen Render-/UI-Abhängigkeiten der Testanwendungen gehören zu deren eigenem Manifest.
@@ -614,8 +617,9 @@ fehlerhafte Outputs und Session-Ende. Die Zusammenfassung behält ursprüngliche
 
 ## Noch nicht enthalten
 
-Die vollständige Szenen-/Lastabnahme bleibt offen. Die
-[externe Agent-Abnahme mit pi](pi-acceptance.md) ist durchgeführt.
+Die vollständige Szenen-/Lastabnahme bleibt offen. Aufgaben und Abdeckung stehen
+im [Abschlussplan](implementation-plan.md), der unmittelbare Wiedereinstieg in
+[next-steps.md](next-steps.md).
 Panic-/Tracing-Beobachtung, Snapshot-Metadaten, gemeinsame Report-Darstellung
 und beide Report-Provider einschließlich automatischer Server-Verarbeitung sind implementiert.
 Spiel-stderr bleibt ein laufender menschlicher Diagnosestrom;

@@ -13,7 +13,7 @@ cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin cou
 ```
 
 Start it through the CLI using `tests/fixtures/counter.toml`; see the
-[walkthrough](../docs/api/slice.md#ausführen). The raw game binary expects the
+[walkthrough](../docs/api/usage.md#ausführen). The raw game binary expects the
 session's internal launch environment.
 
 ## Rendered session acceptance
@@ -67,7 +67,7 @@ keyboard press/hold/release, and proves that Inspect and real waiting do not adv
 the scene. Bevy's first Time update has zero delta; subsequent ticks use 20 ms even
 under a wall-clock pace limit. It does not yet test this scene's pointer observer
 or screenshots. Logs and CLI evidence remain in `target/logical-state-*`, including
-on failure. The [coverage matrix](../docs/api/next-steps.md#abdeckungsmatrix-für-block-6)
+on failure. The [coverage matrix](../docs/api/implementation-plan.md#abdeckungsmatrix)
 records the remaining scenarios.
 
 ## Game menu acceptance
@@ -128,7 +128,7 @@ ticks. Local pixel checks distinguish neutral, cyan and yellow material states;
 other objects must not inherit the selected object's material.
 
 Evidence remains under `target/mesh-picking-*`. Use an available desktop.
-The [controlled visibility tests](../docs/api/diagnostics/capture-scene-visibility.md)
+The [controlled visibility tests](../docs/api/diagnostics/screenshot-evidence.md)
 confirmed a skipped screenshot copy under full window occlusion on macOS/Metal.
 Visible, partially covered and restored-window acceptance passed. The adapter
 rejects captures without a window surface instead of writing an unfilled buffer.
@@ -164,8 +164,10 @@ first screenshot. The subsequent diagnosis found a skipped GPU copy when the
 window surface is unavailable. The adapter now rejects that condition with
 `screenshot_window_unavailable` instead of writing the unfilled readback.
 Strict blend, mesh and context-menu image tests still fail if their windows lose
-the render surface. Their assertions remain unchanged. Reliable capture of fully
-occluded windows remains open; this guard prevents false success, not occlusion.
+the render surface. Their assertions remain unchanged. Fully covered windows are
+not guaranteed to be capturable and do not block completion of the current scope.
+Pixel checks validate capture for these known fixtures, not a general product
+feature for comparing screenshots against reference images.
 
 ## Native application fixtures
 
@@ -196,8 +198,8 @@ a native window or renderer. It does not install woodpecker or advance a control
 
 Give entities stable `Name` values and keep semantic state in application-owned,
 registered reflected components. Do not reintroduce marker requirements.
-The [migration plan](../docs/api/implementation-plan.md#migration-und-bereinigung)
-records which v2 controller assertions still need to be ported.
+The [completion plan](../docs/api/implementation-plan.md#abdeckungsmatrix)
+records the remaining control and image acceptance cases.
 
 ## Source and license
 

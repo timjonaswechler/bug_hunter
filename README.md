@@ -11,7 +11,10 @@ Remote operation is not supported.
 
 The experimental v3 slice supports tick warps, pace changes, stop, reflected
 resource and entity inspection, virtual pointer, keyboard and text input, PNG screenshots,
-session management, JSONL recording and shutdown. Replay, reporting, REPL and scripts remain planned work.
+session management, JSONL recording, replay, reporting, REPL, scripts and shutdown.
+Combined lifecycle/load acceptance remains unfinished. Fully covered windows are
+not guaranteed to be capturable; an unavailable render surface produces an explicit error.
+Actual black images are valid. Screenshot comparison is not a product feature.
 The v2 API and its `host`/`driver` features have been removed.
 
 Controlled sessions ignore native mouse, touch, keyboard and IME input. Their pointers
@@ -20,9 +23,9 @@ enable `woodpecker/ui`, which also enables focused text input. The context-menu 
 enables it through `slice`.
 
 - [Target contract](docs/api/target.md)
-- [Implementation and migration status](docs/api/implementation-plan.md#migration-und-bereinigung)
+- [Completion plan and coverage](docs/api/implementation-plan.md)
 - [Handoff and remaining tasks](docs/api/next-steps.md)
-- [Runnable CLI walkthrough and acceptance tests](docs/api/slice.md)
+- [CLI usage and acceptance tests](docs/api/usage.md)
 - [Bevy test applications](bevy_test_apps/README.md)
 
 ## Build and run
@@ -44,7 +47,7 @@ target/debug/woodpecker --address 127.0.0.1:4100 \
 target/debug/woodpecker --address 127.0.0.1:4100 session ls
 ```
 
-The [walkthrough](docs/api/slice.md#ausführen) continues with Warp, Inspect and shutdown.
+The [walkthrough](docs/api/usage.md#ausführen) continues with Warp, Inspect and shutdown.
 The server and CLI currently require Unix process groups.
 
 ## Rust integration and features
@@ -72,7 +75,7 @@ python3 tests/shutdown.py
 ```
 
 The process tests launch real children. macOS Gatekeeper can delay or reject
-locally built executables; see the [environment note](docs/api/slice.md#noch-nicht-enthalten).
+locally built executables; see the [environment note](docs/api/usage.md#noch-nicht-enthalten).
 
 ## Origin
 

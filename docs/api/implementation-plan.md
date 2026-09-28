@@ -1,225 +1,335 @@
-# Umsetzung
+# Abschlussplan
 
-Dieser Plan führt zum [Ziel](target.md), ohne es auf den ersten Durchstich zu reduzieren.
-Die hier genannten Ausgestaltungen sind Implementierungsaufgaben, keine bereits
-vorhandenen Funktionen.
+Die wesentliche Command- und Session-Funktionalität ist implementiert.
+Offen sind einzelne Steuerungsfälle, die kombinierte Systemabnahme und Lastverhalten.
+Vollständig verdeckte Fenster sind beim Screenshot nicht zugesichert und kein
+Abschlussblocker. Vorhandene Tests belegen ihre jeweiligen Fälle, nicht den
+vollständigen Abschluss des Zielvertrags.
 
-## Erster Durchstich
+[target.md](target.md) bleibt die maßgebliche Verhaltensbeschreibung;
+[goal.rs](goal.rs) bleibt als Interface-Skizze erhalten. Dieser Plan besitzt
+Aufgaben, Abdeckung und Abschlusskriterien. [next-steps.md](next-steps.md)
+beschreibt den unmittelbaren Wiedereinstieg, [usage.md](usage.md) die Bedienung.
 
-Ein realer CLI-Client startet einen lokalen Server, erstellt eine Session mit einer kleinen
-Bevy-Testanwendung, bindet sich daran, führt einen Tick-Warp aus, beobachtet den geänderten
-Zustand und beendet Session und Server geordnet.
+## Checkliste für den Abschluss
 
-Als Command dient `tick.warp.start`. Er prüft den entscheidenden Unterschied zwischen
-Annahme und späterem Ergebnis. Eine kleine reflektierte Zähler-Resource und
-`inspect.query` machen die tatsächliche Ausführung sichtbar. Der erste Ablauf braucht
-keinen Renderer und keinen externen Report-Provider.
+Die Checkboxen verfolgen die noch offene Arbeit. Erst abhaken, wenn der jeweilige
+Nachweis mit Testbefehl, Arbeitsbaum und Ergebnis dokumentiert ist. Ein offener
+Punkt bedeutet nicht automatisch fehlende Produktfunktion; oft fehlt nur der
+kombinierte oder ergänzende Test. Details stehen in den verlinkten Abschnitten.
 
-### Baufolge
+### Steuerung
 
-1. **Spielausführung und direkte Session.** Den gemeinsamen Command-Codec, v3-Handshake,
-   `session::Plugin`, begrenzte Warp-Ausführung und Resource-Inspect aufbauen. Die Anwendung
-   konfiguriert ihre Simulation selbst. Start, Pending, Event-Empfang und Shutdown verwenden
-   einen privaten Koordinator; echte Pipes bleiben während ausstehender Arbeit lesbar.
-2. **Serverbetrieb.** Leeren Server, Konfigurationsprüfung, ID-Vergabe, sichere exklusive
-   ID-Verzeichnisanlage, frühe Erstellungsantwort, Liste und Detail implementieren.
-   Start und Shutdown verwenden einen intern abbrechbaren Session-Weg. Die öffentliche
-   synchrone Rust-Session bleibt unverändert.
-   Der Verwaltungs-Stopp einer ausgewählten Session verwendet denselben Abschlussablauf
-   wie Serverende, lässt aber Server und andere Sessions weiterlaufen. Tests prüfen
-   den Aufruf während `Starting` und `Ready`, später auch mit aktivem Replay und Recording.
-3. **Client und Activity.** Den getrennt versionierten äußeren Vertrag
-   einmal implementieren: lokale HTTP-Verwaltung und gebundene WebSocket-Verbindung,
-   Annahme, Ergebnis, Events, Cursor und erkennbare Lücken. Mehrere Clients verwenden
-   denselben Ausführungsweg; ein Client-Verlust beendet keine Spielarbeit.
-4. **CLI und Prozessabschluss.** Explizite Adresse, Config-Dateizugriff, Erstellen,
-   Zustand, Einreichen, Beobachten und ausdrückliche Shutdown-Aufrufe anschließen.
-   Gemeinsame Serverfrist und Signale an die Prozessbereinigung anbinden.
-   Noch nicht vorhandene optionale Funktionen nicht als implementiert ausgeben.
+- [ ] `logical_state`: Pointer-Press erst beim Tick, keine Wiederholung beim Halten,
+  Screenshot ohne Zustandsfortschritt prüfen.
+- [ ] `game_menu`: `s`, `Escape`, `n`, Quit-Button und Screenshots prüfen.
+- [ ] `ui_drag_drop`: Despawn während eines Drags gezielt in der Testszene auslösen
+  und prüfen; Screenshots ergänzen.
+- [ ] `mesh_picking`: vertikalen Drag am Würfel sowie Drag an Kugel und Zylinder prüfen.
+- [ ] Relevante Layout-/Hierarchiewechsel und ungültig gewordene Entity-Handles
+  in den ergänzten Abläufen prüfen.
 
-Die Zwischenschritte dürfen nicht als vollständige v3-Implementation veröffentlicht werden,
-solange feste Commands der Version fehlen. Erst der vollständige Command-Umfang erfüllt
-den gesamten Zielvertrag. Ein Testdurchstich darf gezielt den beschriebenen Teil prüfen.
+[Beispiele und Kriterien](#1-steuerungsabnahme-vervollständigen)
 
-### Notwendige interne Interfaces
+### Technische Screenshot-Abnahme
 
-- `session::launch` trennt reine Config-Prüfung von Umgebungsauflösung und Prozessstart.
-  Direkter Einstieg und Servererstellung verwenden dieselben Regeln.
-- Der Session-Koordinator bietet intern Startfortschritt, Command-/Event-Benachrichtigung,
-  Shutdown-Annahme und erzwungene Bereinigung. Ein Abbruch muss auch während Cargo-Start,
-  Pipe-Drain und Shutdown erreichbar bleiben. Ein unbegrenzt blockierender Worker mit
-  anschließendem `join` erfüllt die Serverfrist nicht.
-- `server` besitzt das Verzeichnis und die Aufbewahrung. Sein Eintrag benötigt während
-  `Starting` noch keinen erfolgreich gestarteten öffentlichen `Session`-Handle.
-- `client` trennt Verwaltungszugriff von einem fest gebundenen Session-Zugang. Es ordnet
-  Transportantworten zu, vergibt aber keine Session-Request-IDs.
-- Die private äußere Codec-Implementation liegt beim Serververtrag, beispielsweise
-  `server::protocol`, und wird vom Client verwendet. Sie nutzt die gemeinsame
-  Command-Kodierung aus `session::protocol` statt deren Hüllen oder Pipes durchzureichen.
+- [ ] Bestehende Blend-, Mesh- und UI-Bildtests mit verfügbarer Renderoberfläche
+  ausführen; UI-Overlay und Mehrkamera-Ausgabe prüfen.
+- [ ] Unveränderte Simulation, gültige schwarze Bilder, Surface-Ablehnung,
+  Timeout, späte Readbacks und sichere Dateipfade erneut prüfen.
+- [ ] Resize-/Skalierungswechsel bei angehaltener Simulation prüfen und eine
+  nachgewiesene Abweichung innerhalb der Tick-Regeln beheben.
 
-### Reale Abnahme
+[Kriterien](#2-screenshot-verhalten-absichern). Vollverdeckung und ein allgemeiner
+Sollbildvergleich sind keine Abschlussaufgaben.
 
-Die konkrete CLI-Syntax wird mit den ausführbaren Einstiegen festgelegt. Der Abnahmelauf
-muss ohne Testadapter folgende Schritte erlauben:
+### Zusammenhängender Ablauf
 
-1. Server mit expliziter Loopback-Adresse und temporärem Basisordner starten.
-   Erst nach Bereitschaft erscheint die Adresse; die Liste ist leer.
-2. Session mit Manifest, Package und benanntem Test-Binary erstellen. Die Antwort enthält
-   sofort die volle ID; ein verzögerter Start bleibt über Detail als `Starting` sichtbar.
-3. Client an diese ID binden, Ready beobachten, den Zähler per Inspect lesen.
-4. Warp über mehrere Ticks einreichen. Pending mit Request-ID zuerst, später korreliertes
-   Ergebnis; danach zeigt Inspect genau die erwartete Zähleränderung.
-5. Einen langsamen Warp starten, den Client trennen und neu verbinden. Fortschritt und
-   Ergebnis bleiben gemäß Activity-Vertrag beobachtbar. Währenddessen kann ein weiterer
-   Client Pace ändern oder Stop senden.
-6. Eine zweite Session erstellen und nachweisen, dass gleicher numerischer Request-ID-Wert
-   nicht zur falschen Session führt.
-7. Nach Abschluss der Commands nur die erste Session herunterfahren. Die zweite und der
-   Server bleiben aktiv; Detail der ersten zeigt `Ended`.
-8. Serverende anfordern. Auch die zweite Session wird bereinigt. Es bleiben weder Spiel-
-   noch Cargo-Prozesse zurück; Artefaktverzeichnisse bleiben erhalten.
+- [ ] Recording, Eingaben, Ticks, Inspect, Capture, Failure und lokalen Report
+  in einem CLI-Ablauf verbinden; Client-Trennung und Wiederverbindung prüfen.
+- [ ] Verwaltungs-Stopp bei aktiver Aufnahme prüfen: JSONL-Footer, unveränderlicher
+  Report, Session-Ende und Prozessbereinigung.
+- [ ] In einer frischen Session den aufgezeichneten Ablauf wiedergeben und den
+  Fixture-Fehler reproduzieren; aktive Wiedergabe und unerwartetes Ende ergänzen.
 
-### Automatisierte Nachweise
+[Kriterien](#3-kombinierten-untersuchungsablauf-abnehmen)
 
-| Seam | Nachweis |
-| --- | --- |
-| Command-/v3-Codec | Ready, Warp, Inspect und Shutdown; strikte Felder, falsche Version, qualifizierte Namen, ungeordnete Responses, bekannte/unbekannte Request-ID |
-| Bevy-Plugin | Keine Ticks im normalen Event-Loop oder bei Inspect; exakte Tickzahl; weiter erreichbarer Stop/SetPace |
-| Direkte Session | Fortschritt ohne Polling, Pending-Drop ohne Abbruch, genau einmalige Entnahme, fremdes Pending, History-Grenze, Event-Ende |
-| Prozessverwaltung | Echte Kindprozesse mit vollen Pipes, Startfehlern, verzögertem Ready, unerwartetem Exit, hängendem Shutdown und Prozessgruppenbereinigung |
-| Server | Frühe Annahme, intrinsische Ablehnung ohne Eintrag, Umgebungsfehler unter ID, Kollisionen und Anlage-Rennen, alle fünf Lebenszykluszustände |
-| Äußerer Zugriff | Zugang ohne Zugangsdaten, Loopback-Bindung, Origin-Prüfung, feste Session-Auswahl, parallele Clients, Trennung, Cursor-Lücke und unbekannter Einreichungsausgang |
-| Serverende | Gemeinsame Frist statt serieller Einzelfristen; Starting-Abbruch; Fehler einer Session blockiert andere nicht; erstes/zweites Ctrl+C und SIGTERM |
-| Paketierung | Direkte Rust-Session und Plugin ohne Server-/CLI-Abhängigkeiten; separate Builds der tatsächlich gewählten Feature-Kombinationen |
+### Last und Fehlerfälle
 
-Test-Doubles dienen gezielter Fehlerauslösung. Der reale CLI-/Bevy-Prozesslauf bleibt ein
-eigenständiger Abnahmenachweis.
+- [ ] Große Inspect-/Report-Ausgaben und langsame Clients gegen die Activity-Grenze
+  prüfen; verlorene und unbestätigte Ergebnisse als unbekannt behandeln.
+- [ ] Wartende Reports bei langsamem Provider und anhaltenden Failures bemessen;
+  bei nötiger Überlastregel die Vertragsentscheidung vorlegen.
+- [ ] Mehrere Sessions mit laufender Arbeit und Reports unter gemeinsamer
+  Shutdown-Frist prüfen; vollständige Prozessbereinigung nachweisen.
+- [ ] Ein separat mit `panic=abort` gebautes Programm abnehmen.
 
-## Migration und Bereinigung
+[Kriterien](#4-last-ergebnislücken-und-shutdown-prüfen)
 
-Entscheidung und Umsetzungsstatus sind getrennt: `überarbeiten` bedeutet nicht
-`bereits vollständig ersetzt`. Maßgeblich bleibt `target.md`.
-Die historische Zuordnung steht in `de32d09:docs/api/migration.md`, Zeilen 43–74.
-Ihre Dateipfade beschrieben teilweise einen anderen Arbeitsbaum. Die folgende
-Tabelle ordnet deshalb die tatsächlichen v2-Dateien ihren heutigen Verantwortlichkeiten zu.
+### Schlussprüfung
 
-Die entfernten Dateien und Tests bleiben unter Commit `5e9552e` verfügbar, beispielsweise
-mit `git show 5e9552e:src/keyboard.rs`. Es gibt keinen parallel gebauten Legacy-Bereich.
-Die Entfernung des v2-Einstiegs schließt die noch fehlenden v3-Funktionen nicht ab.
+- [ ] Öffentliche Requests, Capabilities, Fehlerformen und Features gegen `target.md` prüfen.
+- [ ] Root-Tests, separates Bevy-Paket, Feature-Builds und CLI-Abnahmen ausführen.
+- [ ] Prüfstand, verbleibende Einschränkungen und Dokumentationslinks aktualisieren.
 
-| Bisherige Dateien und Nutzer | Ziel-Owner | Entscheidung | Aktueller Status und Nachweis |
-| --- | --- | --- | --- |
-| `src/entity.rs`, alte Beobachtung und Controller | [handle](../../src/handle.rs) | übernehmen | Handle und Lebensdauertests übernommen; Fehler heißt `handle::Error`. Kein Root-Re-Export der alten Fassade. |
-| `src/client/plugin.rs`, `src/client/transport.rs`, `src/protocol.rs` | [session](../../src/session/mod.rs), [session::protocol](../../src/session/protocol.rs) | ersetzen | v2 entfernt. Codec-, Pending-, Event- und Prozessfixtures prüfen den neuen Transport. Entity-Inspect sowie Pointer-, Keyboard- und Text-Input besitzen Plugin-Tests und die reale [Context-Menu-Abnahme](../../tests/ui.py). |
-| `src/time.rs`, alte Step-Commands | [command::tick](../../src/command/tick.rs), [session::Plugin](../../src/session/plugin.rs) | überarbeiten | Step/Clock entfernt. Warp-, Pace-, Stop- und No-Tick-Nachweise vorhanden; Zeitkonfiguration bleibt bei der Anwendung. |
-| `src/host/session.rs`, `launch.rs`, `controller.rs`, `diagnostics.rs` | `session`, `session::history`, `report` | ersetzen | Alter Session-Owner entfernt. Neue Prozessverwaltung, History, Fehlerbeobachtung und Snapshot-Konstruktion implementiert. [Prozesstests](../../tests/observation.rs) prüfen Panics, Tracing, Startdiagnosen, Pipe-Drain und unveränderlichen Kontext. |
-| `src/host/mod.rs`, `command_line.rs`, `config.rs`, `runner.rs`; alte Controller-Beispiele | `server`, `client`, `cli` | ersetzen | Fassade, `host`/`driver`-Features und alte Beispiele entfernt. Neue CLI mit privaten Config-Typen ist der einzige unterstützte Einstieg. |
-| `src/target.rs`; alte Queries und Bevy-Testapps | kein Ersatz | löschen | Marker, Exports, Inserter und Nutzungen entfernt. Bevy-Anwendungen behalten normale Entity-Namen und ihre fachlichen Systeme. |
-| `src/keyboard.rs`, `pointer.rs`, `text.rs` | `command::input`, private Bevy-Adapter unter `session` | überarbeiten | Virtueller Pointer, Keyboard und Text implementiert. Adapter-Tests prüfen Tokens, Fenster, Zustände, UTF-8-Grenze und Fokus. [Plugin-Tests](../../src/session/plugin/input_tests.rs) prüfen Vormerkung, gehaltene Tasten, Modifier, native Störeingaben und Isolation; reale UI-Abnahme prüft alle Eingaben in zwei Sessions. `ui` ermöglicht fokussierte Texteingabe und virtuelle `Interaction`. |
-| `src/observation.rs` | `command::inspect`, privater Inspect-Adapter | ersetzen | Resource-, Entity-, Component- und Hierarchievarianten implementiert. [Adapter-Tests](../../src/session/inspect/entities/tests.rs) prüfen Filter, Handles, Resource-Isolation, Projektionen, Reihenfolge und Wertstatus; Plugin-Test prüft Lesen ohne Tick/Zeitfortschritt. UI-Abnahme liest Layout und Anwendungszustand. Die [Reflection-Matrix](#reflection-matrix) gegen Bevy 0.19.1 ist geprüft. |
-| `src/screenshot.rs` | `command::screenshot`, privater Capture-Adapter | überarbeiten | Optionales `screenshot`-Feature implementiert. [Capture-Tests](../../src/session/screenshot/capture.rs) prüfen verzögerten Abschluss, PNG, Fenster und Readback-Timeout; [Pfadtests](../../src/session/screenshot/destination.rs) prüfen Root-Isolation, atomischen Ersatz und Symlink-Wechsel. [UI-Abnahme](../../tests/ui.py) prüft echte 640×360-PNGs in zwei Sessions, parallele Requests und unveränderte Ticks/Zeit. |
-| `src/host/recording.rs`, `replay.rs`; `tests/driver_recording.rs` und alte JSONL-Fixture | `command::recording`, `command::replay`, `session` | überarbeiten | Recording und Replay implementiert. [Recording-Tests](../../src/session/recording/tests.rs) prüfen Dateibarrieren und Schreibfehler; [Replay-Tests](../../src/session/replay/tests.rs) prüfen striktes Laden, effektive Warps, Stop und Blockierungen. [Prozessfixtures](../../tests/session.rs) sowie Zähler-/UI-Abnahmen prüfen Roundtrips und Ressourcenabschluss. Die alte Fixture ist kein gültiger v1-Nachweis. |
-| `src/host/report.rs`, `issue_report.rs`, `github.rs`, Fehleranteile von `diagnostics.rs`; alte Report-Tests | `report`, privater Session-Observer | überarbeiten / Zwischenformat löschen | `failure.json` entfernt. Privater Markerparser, Panic-/Tracing-Erfassung und `Report::create` mit Titel, Failure, v1-Signatur und Context implementiert. [Report-Tests](../../src/report/tests.rs) prüfen Golden Vectors und Markdown. `report::submit` unterstützt Local und Github; [Local-Tests](../../src/report/provider/local/tests.rs) und [GitHub-Prozessfixtures](../../src/report/provider/github/tests.rs) prüfen Pfade, Konkurrenz, Pagination, stdin, Fehler und Fallback. Automatische Server-Reports behalten Snapshot und Ergebnis in Activity. [Server-Tests](../../src/server/report_tests.rs) prüfen späte Ergebnisse, Frist, erzwungene Prozessgruppenbereinigung und Shutdown-Failures; [CLI-Abnahme](../../tests/observation.py) prüft echte lokale Dateien nach Client-Trennung. Lastbemessung bleibt offen. |
-| `src/host/repl.rs`, `script.rs` | `cli::repl`, `cli::script` über `client` | überarbeiten | REPL und Script über gemeinsamen Client umgesetzt. `tests/repl.py` prüft reale Bevy-Sessions und Terminalbedienung. Script validiert vollständig vor Ausführung, korreliert Outcomes und wartet an Recording-/Shutdown-Barrieren. Netzwerkfixtures und `tests/script.py` prüfen Fehler, Reihenfolge und Client-Trennung ohne versteckten Stop. Die [externe Abnahme mit pi](pi-acceptance.md) bestätigt CLI-/Script-Bedienung und weiterlaufende Arbeit nach Agent-Ende. |
-| `bevy_test_apps` mit `automation`, `tests/logical_state.rs`, `examples/*_controller.rs` | normale Testanwendungen; neue Client-Abnahmen | ersetzen | v2-Anbindung und Controller entfernt. Native Bevy-Anwendungen und datenbasierte UI-Komposition bleiben erhalten. Alle sieben Szenen sind mit `slice` angebunden. Context-Menu-/UI-Abnahme prüft Menüs und Eingaben erst beim Tick. [tests/logical_state.py](../../tests/logical_state.py) prüft Update, FixedUpdate, Timer und Keyboard über CLI. [tests/game_menu.py](../../tests/game_menu.py) prüft virtuelle Klicks, Einstellungen, Timergrenzen, Hierarchien und tote Handles nach Bildschirmwechseln. [tests/ui_drag_drop.py](../../tests/ui_drag_drop.py) prüft gültigen/ungültigen Drop, Drag-Phasen, Belegung und Layout. [tests/mesh_picking.py](../../tests/mesh_picking.py) prüft Picking, Rotation und Materialwechsel im Bild. [tests/blend_modes.py](../../tests/blend_modes.py) prüft Keyboard, Kamera, Alpha, HDR/Unlit, reproduzierbare Farben und Blend-Bilder. Die [Abdeckungsmatrix](next-steps.md#abdeckungsmatrix-für-block-6) benennt verbleibende Varianten; kombinierte Lebenszyklus-/Lastabnahmen stehen noch aus. |
+[Kriterien](#5-vertrags--und-dokumentationsabgleich-abschließen)
+
+## Umfang und implementierter Stand
+
+Implementiert sind:
+
+- Session-/Prozessverwaltung, explizite Warps, Pace und Stop;
+- virtuelle Pointer-, Keyboard- und Texteingaben ohne nativen Fokus;
+- allgemeines Entity-/Resource-Inspect einschließlich Reflection-Wertstatus;
+- Screenshot-Grundfunktion mit framegebundener Surface-Absicherung;
+- Recording, Replay, Failure-Beobachtung und lokale/GitHub-Reports;
+- Mehrsession-Server, Client, CLI, REPL und Scripts über denselben Command-Weg.
+
+Alle sieben Bevy-Szenen sind über das Feature `slice` angebunden. Native
+Bedienung ohne dieses Feature bleibt erhalten. Die Prozessverwaltung unterstützt
+Unix. Externe Agent-Laufzeiten verwenden die CLI; Modellzugang und
+Werkzeugschleife gehören nicht zu woodpecker und sind kein eigener Abschlussblock.
+
+Die v2-Migration ist abgeschlossen. Es gibt keinen parallel gebauten Legacy-Weg,
+keine `automation`-Marker, alten Controller-Exports oder `failure.json`.
+Die frühere Dateizuordnung steht in `de32d09:docs/api/migration.md`; entfernte
+v2-Quellen sind unter `5e9552e` verfügbar. Diese Historie ist keine offene Bauliste.
+
+## Verbleibende Arbeit
+
+### 1. Steuerungsabnahme vervollständigen
+
+Die bestehenden CLI-Tests erweitern, keine weitere Steuerungsabstraktion bauen.
+Jeder Test liest Positionen, Größen und Zustand über das allgemeine Inspect.
+Inputs bleiben bis zum expliziten Tick vorgemerkt; Inspect und Capture dürfen
+keinen Spielzustand fortschreiben. Ein zusätzlicher virtueller Pointer gehört
+nicht zum Zielvertrag und wird nicht als fehlende Abnahme geführt.
+
+Die folgenden Beispiele beschreiben geplante Prüfungen, keine bereits bestandenen Tests.
+Screenshots für `logical_state`, `game_menu` und `ui_drag_drop` ergänzen die
+Zustandsprüfungen. Relevante Layout-/Hierarchiewechsel und tote Handles mitprüfen.
+
+#### Beispiel 1: Mausklick in logical_state
+
+In [tests/logical_state.py](../../tests/logical_state.py) den Button
+`logical-button` nach einem expliziten Layout-Tick per Inspect finden.
+Den virtuellen Pointer zur gelesenen Mitte bewegen und per Tick positionieren.
+`pointer_presses` aus `SessionObservation` lesen, dann links drücken.
+Vor dem nächsten Warp bleibt der Zähler unverändert. Nach einem expliziten Tick
+muss er genau um eins steigen. Weitere Ticks bei gehaltener Taste dürfen keinen
+zweiten Press erzeugen. Loslassen und einen weiteren Tick ausführen.
+
+Ein Capture danach darf weder diesen Zähler noch Update-/Timer-Zustand verändern.
+So wird geprüft, dass Command-Annahme und Verarbeitung durch das Spiel getrennt sind.
+
+#### Beispiel 2: Tastenkürzel und Quit in game_menu
+
+In [tests/game_menu.py](../../tests/game_menu.py) das Hauptmenü erreichen.
+`s` drücken und die nötigen expliziten Ticks für Eingabeverarbeitung und
+State-Wechsel ausführen: Es müssen die Einstellungen erscheinen. Taste freigeben.
+Mit `Escape` entsprechend ins Hauptmenü zurückkehren; `n` muss dort das Spiel starten.
+Vor den Warps darf sich der jeweilige Bildschirmzustand nicht ändern.
+Alte Bildschirm-Handles müssen nach dem Wechsel `entity_not_found` ergeben.
+
+Den Quit-Fall zuletzt oder in einer separaten Session prüfen: Im Hauptmenü den
+`quit-button` anhand seiner gelesenen Position drücken und einen Tick ausführen.
+Die Szene sendet `AppExit::Success`; der Spielprozess muss enden und die Session
+muss das tatsächliche Prozessende melden. Das ist kein angeforderter
+Session-Shutdown. Auch Exit-Status 0 gilt nach dem bestehenden Vertrag als
+unerwartetes Prozessende, wenn die Session es nicht selbst veranlasst hat.
+Server und andere Sessions müssen bedienbar bleiben.
+
+#### Beispiel 3: Objekt verschwindet während eines Drags
+
+In [tests/ui_drag_drop.py](../../tests/ui_drag_drop.py) die Kachel Amber greifen
+und mit expliziten Ticks einen Drag beginnen. Während die Taste gehalten wird,
+lässt die Testszene Amber bei einem festgelegten weiteren Tick verschwinden.
+Danach den Pointer weiterbewegen, loslassen und die Eingaben per Tick verarbeiten.
+
+Prüfen: kein Panic oder Hänger, der alte Entity-Handle ist ungültig, die virtuelle
+Taste lässt sich freigeben und eine andere vorhandene Kachel kann anschließend
+normal gezogen werden. Ein Drop darf keine entfernte Kachel vertauschen.
+Die genaue Observer-Folge nicht aus dem normalen Drag-Ende ableiten: Die
+ursprüngliche Entity existiert dann nicht mehr.
+
+Dafür fehlt bisher ein gezielter Despawn-Auslöser in der Testszene. Diesen als
+Testvorbereitung ergänzen, nicht als neuen woodpecker-Mutationscommand.
+
+#### Beispiel 4: Vertikaler Drag und weitere Meshes
+
+In [tests/mesh_picking.py](../../tests/mesh_picking.py) den Würfel greifen und
+den virtuellen Pointer beispielsweise zwölf logische Pixel nach unten bewegen.
+Vor dem Warp bleiben Transform und Drag-Zähler unverändert. Nach dem Tick muss
+`drag_events` um eins steigen und die Rotation den vertikalen Drag berücksichtigen.
+Die Szene verwendet `delta.y * 0.02`, hier also 0,24 Radiant um die X-Achse.
+Die zusätzlich pro Tick laufende Y-Rotation muss im erwarteten Transform enthalten sein.
+
+Den Ablauf auch für `left-sphere` und `right-cylinder` prüfen. Nur das gegriffene
+Objekt erhält den Drag-Zuschlag und ein Drag-Event; die übrigen Meshes behalten
+nur ihre normale zeitabhängige Rotation. Anschließend Release und erneutes
+Hover prüfen. In dieser Szene dreht Ziehen das Mesh, es verschiebt es nicht.
+
+### 2. Screenshot-Verhalten absichern
+
+Der [diagnostizierte Fehler](diagnostics/black-screenshots.md) bleibt durch den
+Guard abgesichert. Bei fehlender Renderoberfläche folgt eine explizite Ablehnung,
+kein erfolgreich gespeicherter leerer Buffer. Vollverdeckung muss keine erfolgreiche
+Aufnahme liefern. Ein tatsächlich gerendertes schwarzes Bild bleibt gültig.
+
+Die bestehenden Tests prüfen die technische Aufnahme, nicht die visuelle
+Richtigkeit eines beliebigen Spiels. Ein Sollbildvergleich ist keine Produktfunktion
+und gehört nicht zum aktuellen Abschluss.
+
+Abnahme:
+
+- Sichtbare Fenster ohne Fokus, teilweise verdeckte und wieder sichtbare Fenster
+  mit verfügbarer Renderoberfläche liefern die gerenderten Szenenbilder.
+- UI-Overlays und mehrere Kameras desselben primären Fensters bleiben erfasst.
+  Tatsächlich schwarze Szenen werden nicht anhand ihrer Pixelfarben abgelehnt.
+- Capture verändert weder Simulationsticks noch simulierte Zeit oder vorgemerkte
+  Eingaben. Keine Fokusänderung, versteckten Startticks oder Retries bis zum ersten
+  Erfolg. `Ready` wird nicht auf Verdacht geändert.
+- Timeout, späte Readbacks, Request-Zuordnung, Root-Isolation, Überschreiben und
+  Fehler bei nicht verfügbarer Renderoberfläche bleiben abgesichert.
+- Die getrennte [Resize-/Kameralücke](diagnostics/window-schedules.md) prüfen.
+  Tatsächliche Rendergröße, Skalierung, Kamera und Viewport müssen zusammenpassen.
+- `tests/blend_modes.py`, `tests/mesh_picking.py` und `tests/ui.py` mit verfügbarer
+  Renderoberfläche ausführen, einschließlich Recording/Replay der UI.
+  Bestehende Pixelprüfungen für die bekannten Fixtures bleiben erhalten.
+
+### 3. Kombinierten Untersuchungsablauf abnehmen
+
+Auf `tests/slice.py`, `tests/observation.py`, `tests/session.rs` und den
+Server-Report-Tests aufbauen:
+
+1. Session starten und Recording beginnen.
+2. Inspect, Eingaben, explizite Ticks und Screenshots ausführen.
+3. Einen kontrollierten Failure beobachten und den automatischen lokalen Report
+   einschließlich unveränderlichem Snapshot und Markdown prüfen.
+4. Client trennen und neu verbinden; angenommene Arbeit muss weiterlaufen.
+5. Verwaltungs-Stopp bei aktiver Aufnahme durchführen. Tatsächliche JSONL-Datei,
+   Footer, Session-Ende und Prozessbereinigung prüfen.
+6. Recording in einer frischen Session mit bekanntem Ausgangszustand wiedergeben
+   und den erwarteten Fehler der deterministischen Fixture reproduzieren.
+
+Replay ist ein Command-Verlauf, kein World-Snapshot und kein allgemeiner
+Output-Gleichheitsprüfer. Die Abnahme prüft die Reproduktion ihrer Fixture selbst.
+Ergänzend aktive Wiedergabe, unerwartetes Ende und Recording-Abschluss gemeinsam
+prüfen. Ein Session-Endevent bestätigt keinen vollständigen Report-Abschluss.
+
+### 4. Last, Ergebnislücken und Shutdown prüfen
+
+- Die vorläufige Activity-Grenze von 4 MiB mit echten großen Inspect-Werten,
+  Reports und langsamen Clients bemessen. Übergröße und Eviction bleiben sichtbare
+  Lücken, keine gekürzten Ergebnisse oder behaupteten Erfolge.
+- Bekannte Ergebnisse von unbekannten Ausgängen unterscheiden. Eine nicht
+  bestätigte Einreichung nach Verbindungsverlust wird nicht automatisch wiederholt.
+- Die unbeschränkte wartende Report-Queue je Session bei langsamen Providern und
+  anhaltenden Failures messen. Begrenzte fertige Activity begrenzt diese Queue
+  nicht. Eine Überlastregel mit Auswirkungen auf den Vertrag vor Umsetzung vorlegen.
+- Gleichzeitige Sessions, aktive Warps/Replay/Recording, verspätete Reports und
+  Activity-Lücken unter derselben Server-Shutdown-Frist prüfen. Ein Sessionfehler
+  darf andere Sessions nicht blockieren; alle eigenen Prozessgruppen bereinigen.
+- Ein separat mit `panic=abort` gebautes Programm abnehmen. Ein expliziter
+  Prozessabbruch im bisherigen Fixture ersetzt diesen Build-Nachweis nicht.
+
+Nicht unterbrechbare lokale Datei-I/O bleibt kooperativ abbrechbar. Eine Frist
+begründet keine garantierte rechtzeitige erfolgreiche Speicherung. Unterbrochene
+Remote-Aufrufe können bereits gewirkt haben und müssen als unbekannt gelten können.
+
+### 5. Vertrags- und Dokumentationsabgleich abschließen
+
+Öffentliche Requests, Capabilities, Fehlerformen und Feature-Kombinationen gegen
+`target.md` prüfen. Root- und Test-App-Paket getrennt bauen und testen;
+`bevy_test_apps` ist kein Workspace-Member. Die Root-Untergrenze `0.19.0` und die
+Test-App-Anforderung `0.19.1` werden durch die Lockfiles auf `0.19.1` aufgelöst.
+
+Die vollständige Rust-Suite, Feature-Builds und CLI-Abnahmen aus
+[usage.md](usage.md#nachweise) ausführen. Grafische Tests nacheinander nach
+Freigabe. Ergebnisse müssen Commit/Arbeitsbaum, Plattform und Artefaktpfade
+benennen. Historische grüne Läufe ersetzen diese Abschlussabnahme nicht.
+
+Anschließend Status, Grenzen und Links abgleichen. Die Bedienung bleibt in
+`usage.md`, die Abdeckung hier, die technischen Befunde unter `diagnostics/`.
+
+## Abdeckungsmatrix
+
+CLI-Abnahmen verwenden CLI, HTTP/WebSocket, Session und Bevy. Native Tests
+prüfen zusätzliche Fälle. Die Tabelle beschreibt vorhandene Testabdeckung;
+konkrete historische Ergebnisse stehen in
+[next-steps.md](next-steps.md#letzter-dokumentierter-prüfstand) und den
+[Screenshotnachweisen](diagnostics/screenshot-evidence.md).
+
+| Bereich | Vorhandener Nachweis | Noch offen im Abschluss |
+| --- | --- | --- |
+| `counter` | [slice.py](../../tests/slice.py): Ticks, Stillstand, Pace/Stop, Isolation, Recording/Replay und Verwaltungs-Stopp. | Kombinierter Lifecycle und Last. |
+| `context_menu` | [ui.py](../../tests/ui.py): virtuelle Inputs, Fokus, Unicode-Werte und Grenzen, Layout, Bilder, Recording/Replay, zwei Sessions. | Weitere relevante Layout-/Hierarchiewechsel. |
+| `logical_state` | [logical_state.py](../../tests/logical_state.py): Update, FixedUpdate, Timer, Keyboard-Press/Hold/Release und Stillstand. | Pointer-Observer und Bilder. |
+| `game_menu` | [game_menu.py](../../tests/game_menu.py): Navigation, Einstellungen, Timer, Klicks, Hierarchien und tote Handles. | Keyboard-Kurzwege, Quit und Bilder. |
+| `ui_drag_drop` | [ui_drag_drop.py](../../tests/ui_drag_drop.py): gültiger/ungültiger Drop, Zwischenposition, Drag-Phasen, Belegung und Darstellung. | Bilder und Despawn während Drag. |
+| `mesh_picking` | [mesh_picking.py](../../tests/mesh_picking.py): Hover/Press/Release/Out aller Meshes, horizontaler Würfel-Drag, Rotation und 13 PNGs. | Vertikaler Drag und Kugel-/Zylinder-Drag. |
+| `blend_modes` | [blend_modes.py](../../tests/blend_modes.py): zwei Sessions, gehaltene Tasten, Orbit, Alpha-Grenzen, HDR/Unlit, Materialidentität, reproduzierbare Farben und sechs PNGs. | Keine zusätzliche Steuerungsvariante; vollständige Blend-/HDR-Validierung ist zurückgestellt. |
+| Inspect | [Entity-Tests](../../src/session/inspect/entities/tests.rs), Reflection-Matrix und Game-Menu-CLI. | Zusätzliche Szenen-Lebenszyklen; keine neue Inspect-Architektur. |
+| Recording/Replay/Reports | [session.rs](../../tests/session.rs), [observation.py](../../tests/observation.py), [Report-Tests](../../src/server/report_tests.rs). | Kombinationen aus Aufnahme/Wiedergabe, Failure, Lücke und gemeinsamem Shutdown; `panic=abort`-Build. |
+| CLI/REPL/Script | [repl.py](../../tests/repl.py), [script.py](../../tests/script.py), Netzwerkfixtures. | Große Outputs, anhaltende Activity und langsame Clients. |
 
 ### Reflection-Matrix
 
-Die [gemeinsamen Fixtures](../../src/session/inspect/reflection_tests.rs) prüfen
-die JSON-Ergebnisse über Resource- und Component-Queries. Die Fehlerfälle führen
-zu einem Wertstatus, nicht zum Abbruch der Query. Wiederholtes Lesen lässt die
-World-, Resource- und Component-Change-Ticks unverändert.
+Die [gemeinsamen Reflection-Fixtures](../../src/session/inspect/reflection_tests.rs)
+prüfen Resource- und Component-Werte ohne Mutation oder Tickfortschritt:
 
-| Fall | Nachweis |
-| --- | --- |
-| Exakte registrierte Type Paths | Eigener `#[type_path]`; Kurzname, Rust-Typname und falsche Großschreibung werden abgelehnt. Bestehende Entity-Tests prüfen sämtliche Filter-/Listed-Pfade vor Handle-Auflösung. |
-| Fehlende und nicht zugängliche Werte | Resource `Missing`/`NotReflectable`, Resource-All-Auswahl und Sortierung; bestehende Entity-Tests unterscheiden `Missing`, `NotRegistered`, `NotReflectable` und `NotSerializable`. |
-| Metadaten | Ein Serializer, der bei Aufruf panikt, bleibt bei Resource-Metadata und Component-Namen unberührt. Kein Wertstatus in den Metadaten. |
-| Opaque und Registrierungen | Opaque ohne Serializer, absichtlich fehlschlagender Serializer, fehlende verschachtelte Registrierung; opakes Custom-`null` bleibt lesbar. |
-| Zahlen | `f32` und `f64`, `NaN` und beide Unendlichkeiten, direkt und verschachtelt in Struct/Vec/Option/Tupel/Map. Der umgebende Wert wird unlesbar. |
-| Maps | String-, Zeichen-, boolesche und ganzzahlige Schlüssel einschließlich `u64::MAX`; leere Maps bleiben Objekte. Tupel-/Vec-Schlüssel sind nicht darstellbar. |
-| Sets | Leere Sets, lexikalische statt numerischer Reihenfolge, verschiedene Einfügereihenfolgen, verschachtelte HashSets und fehlerhafte Elemente. |
-| Kanonische Set-Sortierschlüssel | [Serializer-Test](../../src/session/inspect/value.rs) prüft rekursiv geordnete Objektschlüssel bei unveränderter Array-Reihenfolge, auch mit `serde_json/preserve_order`. |
-| Asset-Handles | Typed/Untyped mit UUID, Pfad samt Quelle und Label sowie flüchtiger ID; Klone behalten die Referenz, unterschiedliche IDs bleiben verschieden. Fehlende Handle-/Asset-Registrierungen ergeben `NotSerializable`. Pfadfixtures verwenden eine In-Memory-Quelle. |
+- exakte registrierte Type Paths und Fehler bei unbekannten Eingabepfaden;
+- `Missing`, `NotRegistered`, `NotReflectable` und `NotSerializable`;
+- Metadatenzugriff ohne Wertserialisierung;
+- opake Typen, Custom Serializer und fehlende verschachtelte Registrierungen;
+- endliche Zahlen, Map-Schlüssel und deterministisch sortierte Sets;
+- Typed/Untyped Asset-Handles mit Pfad, UUID und flüchtiger Sessionidentität.
 
-Bevy 0.19.1 implementiert `BTreeSet` als opaken Reflect-Typ ohne Serializer.
-Die Matrix hält deshalb `NotSerializable` fest und prüft die strukturelle
-Set-Regel mit `HashSet`. Es wurde keine zusätzliche Collection-Sonderbehandlung
-eingeführt. Die [aktuellen Läufe](next-steps.md#nachweise-und-bekannte-grenzen)
-umfassen alle Features, die Bibliothek ohne Features und JSON mit `preserve_order`.
+[Werttests](../../src/session/inspect/value.rs) prüfen außerdem kanonische
+Set-Sortierschlüssel bei `serde_json/preserve_order`. Bevy 0.19.1 reflektiert
+`BTreeSet` opak ohne Serializer, deshalb bleibt es `NotSerializable`;
+`HashSet` prüft die strukturelle Set-Regel. Keine zusätzliche Collection-
+Sonderbehandlung ist vorgesehen. Die Fixtures sichern künftige Bevy-Upgrades ab.
 
-### Fachliche Testfälle für die offenen Durchstiche
+## Entscheidungen mit Freigabe
 
-Folgende Nachweise sind nicht durch die Entfernung alter Tests erledigt. Die
-Quellpfade beziehen sich auf `5e9552e`, nicht auf Dateien im aktuellen Arbeitsbaum.
+- Eine Begrenzung der wartenden Report-Queue benötigt eine ausdrückliche Regel
+  für Überlast, ohne Event-Empfang oder Spiel-Pipes durch langsame Provider zu blockieren.
+- Änderungen an Render-/Simulationszuständigkeiten wegen Resize müssen die
+  expliziten Tick-Regeln erhalten; andernfalls den Konflikt vorlegen.
 
-| Offener Durchstich | Zu übernehmende Prüfungen und Referenzen |
-| --- | --- |
-| Input | `src/keyboard.rs`: Key-Token-Roundtrip und Press/Release-Zustände. `src/pointer.rs`: endliche Koordinaten, relative/absolute Bewegung, Grenzen und Button-Zustände. `src/text.rs`: UTF-8-Byte-Grenze, eindeutiger lebender editierbarer Fokus. `src/client/plugin.rs`: Input vormerken, gehaltene Tasten und Verarbeitung erst beim Tick, Session-Isolation. Neue Outputs und Ablehnungscodes verwenden. |
-| Entity-Inspect | `src/observation.rs`: Reflection-/Opaque-Status und Hierarchietiefe. Das heutige [handle](../../src/handle.rs) bewahrt die Generationstests. Markerfilter, Clock-Spezialabfragen, Pagination und alte Größenkürzungen werden nicht übernommen. Die neuen vollständigen Type Paths und Value-Statusregeln gelten. |
-| Screenshot | `src/screenshot.rs`: normalisierte PNG-Pfade, Symlink-Ausbruch, Root-Isolation, lesbares PNG nach Abschluss. Zusätzlich nach neuem Vertrag: Überschreiben, eindeutiges primäres Fenster, kein Tick und keine simulierte Zeitänderung. |
-| Recording/Replay | `tests/driver_recording.rs`, `src/host/recording.rs`, `replay.rs`: Reihenfolge, Dateibarrieren, Ausschlüsse, Abschluss und Fehlerfälle fachlich übertragen. Alte redigierte/gekürzte Outputs, eigene Controller-Aktionen und Outcome-Gleichheit nicht als Ziel übernehmen. |
-| Reports | `tests/issue_report.rs`, `github_report.rs`: Fehlerdarstellung und Prozessfixtures für Provider prüfen. Kein `failure.json`-Lader, kein vorheriger Session-Abschluss als Voraussetzung; Snapshot und Signatur-Golden-Vectors aus dem aktuellen Zielvertrag ergänzen. |
-| UI-Abnahmen | `tests/logical_state.rs`, `examples/*_controller.rs`: Fokus/Text, gehaltene Tasten, Pointer-/Drag-Lebenszyklus, Timer, Layout, tote Handles und Bilder auf neue Commands übertragen. Die vorhandenen nativen Bevy-Anwendungen liefern weiterhin die fachlichen Szenen. |
+Private Thread-/Kanalstruktur, begrenzte Arbeitsbudgets, Testhilfen und andere
+reversible Details innerhalb des Vertrags brauchen keine neue Produktentscheidung.
 
-Die erhaltenen fachlichen Bevy-Tests bleiben ausführbar. Die neuen Session- und
-Prozessfixtures decken laufenden Warp, Korrelation, Pending-Drop, Event-Überlauf und
-Bereinigung ab. Nach jeder weiteren Portierung wird die zugehörige Zeile erst nach
-dem tatsächlichen Nachweis abgeschlossen.
+## Zurückgestellte Arbeit und bekannte Grenzen
 
-`bevy_test_apps` ist ein eigenes Package mit Pfadabhängigkeit auf `woodpecker`; das
-Root-Manifest enthält keine Workspace-Memberliste. Der Durchstich verwendet daher explizit
-`bevy_test_apps/Cargo.toml` als Launch-Manifest statt Package-Auswahl vom Repository-Root.
-Das Testpackage verlangt Bevy 0.19.1; die Root-Abhängigkeit nennt 0.19.0 als kompatible
-Untergrenze. Die Lockfiles halten die geprüfte Auflösung auf 0.19.1 fest.
+- Font-/Fallback-Korrekturen für `ü`, `ß`, Emoji und Japanisch bleiben auf
+  Nutzerwunsch zurückgestellt. Gespeicherte Unicode-Werte sind geprüft.
+- Vollständige Blend-Gleichungen bei Zwischenalphas und HDR-Werte oberhalb des
+  LDR-Bereichs sind keine Abschlussvoraussetzung für die allgemeine Steuerung.
+- Windows-Prozessverwaltung, Remote-Betrieb, Auth-Schicht, Multi-Pointer und eine
+  eigene Agent-Werkzeugschleife gehören nicht zu diesem Abschluss.
+- REPL-Ausgabe ist synchron; ein nicht lesender Empfänger kann sie blockieren.
+  Direkte Report-Übermittlung außerhalb des Servers hat keine Serverfrist.
+- Ein fehlgeschlagener GitHub-Publish kann trotzdem ein Issue angelegt haben;
+  kein automatischer POST-Retry. Local benötigt Hardlinks für atomisches
+  Veröffentlichen ohne Überschreiben.
+- macOS-Prozessfixtures wurden sporadisch vor Ready verzögert oder mit SIGKILL
+  beendet, teils mit Gatekeeper-Logs. Ein langsames `gh`-Fixture erreichte mehrfach
+  seine Warteposition nicht; Ursache ungeklärt. Spätere grüne Läufe beweisen keine
+  Behebung. Eindeutige Testlogs verwenden, Sicherheitsregeln nicht ändern.
 
-## Während der Implementation entscheiden
+## Abschlusskriterien
 
-Diese Punkte brauchen keine vorgelagerte Bestätigungsschleife:
+Der Draft ist erst abgeschlossen, wenn die oben genannten Kernfälle mit frischen
+Nachweisen bestehen oder eine ausdrücklich genehmigte Einschränkung im Zielvertrag
+steht. Insbesondere:
 
-- Private Thread-/Kanalstruktur, Warp-Budget, Testadapter und plattformspezifische
-  Prozess-/Signalanbindung innerhalb der festgelegten Fortschritts- und Abschlussregeln.
-- Lokale Clients ohne Zugangsdaten zulassen. Loopback- und Origin-Prüfungen testen;
-  keine optionale Auth-Schicht oder automatische Schlüsselverwaltung ergänzen.
-- HTTP-Routen, WebSocket-Framing, Versionsprüfung und stabile Fehlerabbildung aus den
-  vorhandenen fachlichen Fehlergruppen. Vor Implementierung als gemeinsame Codec-Fixtures
-  festhalten. Ein Verbindungsfehler darf keinen Command-Erfolg behaupten.
-- Den Standardwert der Activity-Byte-Grenze mit repräsentativen Inspect-Outputs und Reports
-  bemessen. Tests prüfen Verdrängung und einzelne zu große Einträge samt sichtbarer Lücke.
-- Konkrete CLI-Flags, private TOML-Felder, Ausgabehüllen, Zeitformat und deterministische
-  Sortierung bei gleichen Zeitpunkten. Config-Parser gehört zur CLI, fachliche Prüfung
-  zu Server beziehungsweise Session. Die Servererstellung besitzt keinen Artefakt-Override.
-- Capability-Prüfung aus tatsächlich verwendeten Commands und `session::Capabilities`
-  ableiten. Der interaktive Einstieg setzt keine Screenshot-Unterstützung voraus.
-- Zunächst bestehende Crate-Struktur nutzen und Abhängigkeiten über gezielte Features
-  trennen; nur benötigte Einstiege exportieren. Weitere Crates erst bei nachgewiesenem
-  Abhängigkeitsproblem. Feature-/Binary-Namen im ersten Implementierungsdiff festhalten.
-- Fristen müssen intern Start, Datei-/Provider-Arbeit und Ressourcenabschluss erreichen.
-  Bei nicht unterbrechbarer Betriebssystemarbeit keinen garantierten erfolgreichen
-  Abschluss zur Frist behaupten.
-
-Verändern diese Arbeiten einen beschlossenen Vertrag, ist das keine freie
-Implementierungsentscheidung. Der konkrete Konflikt wird mit Auswirkungen und Empfehlung
-zur Entscheidung vorgelegt.
-
-## Weitere Durchstiche innerhalb des Gesamtziels
-
-1. Vollständige Input- und Inspect-Varianten, Reflection-Fixtures sowie gerenderter
-   Screenshot ohne Simulationstick. Die vorhandenen UI-Testanwendungen liefern reale
-   Input-, Fokus- und Bildprüfungen.
-2. Recording mit Dateibarrieren und Replay mit vollständiger Vorabvalidierung,
-   Warp-Verkürzung, Stop während Laden/Ausführung und technischen Blockierungen.
-   Roundtrip-Tests prüfen Reihenfolge und Formate, nicht beliebige Outcome-Gleichheit.
-3. Panic-/Tracing-Beobachtung, Report-Snapshot, Signatur-Golden-Vectors und lokaler Provider,
-   dann GitHub mit Prozess-Fixtures und lokalem Rückfall. Bei konfiguriertem GitHub-Provider
-   veröffentlicht die Anwendung ohne zusätzliche Rückfrage; Entwicklungstests legen
-   keine echten Issues an. Langsamer Provider, voller Eventstrom und Serverfrist werden
-   gemeinsam getestet.
-4. Vollständige REPL und Script einschließlich der festgelegten Abschlussbarrieren; danach
-   den Agent-Zugang durch maschinenlesbare CLI-Aufrufe mit einer externen Agent-Laufzeit
-   erproben. Wiederverbindung und erkennbare Ergebnislücken bleiben
-   Teil derselben Client-Tests.
-
-Technische Quellen bleiben unter [research/](research/). Sie werden gezielt für
-Bevy-/Reflection-, Screenshot-, Panic-, Backtrace- und Provider-Fragen gelesen,
-nicht als parallel gepflegte Zielbeschreibung.
+- Steuerung, Inspect und Capture halten die expliziten Tick-/Input-Regeln ein.
+- Capture speichert das gerenderte Bild oder meldet einen technischen Fehler.
+  Die bekannte Einschränkung bei Vollverdeckung ist zulässig; der Guard bleibt aktiv.
+- Recording, Failure, Report, Client-Trennung, Replay und Stopp funktionieren gemeinsam.
+- Ergebnislücken und ungewisse Ausgänge bleiben sichtbar; Shutdown bereinigt eigene
+  Prozesse auch bei Fehlern und Last.
+- Öffentliche Interfaces, Feature-Builds und Dokumentation stimmen mit dem geprüften
+  Umfang überein. Keine offene Kernaufgabe wird durch eine bestandene Teilprüfung ersetzt.

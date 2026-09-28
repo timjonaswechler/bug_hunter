@@ -515,6 +515,14 @@ auf Renderdurchlauf, asynchronen GPU-Readback und erfolgreiches PNG-Schreiben.
 Simulationsticks und simulierte Zeit bleiben unverändert.
 Ohne vollständige Unterstützung oder eindeutiges Fenster wird der Command abgelehnt.
 
+Aufnahmen vollständig verdeckter Fenster sind im aktuellen Umfang nicht zugesichert.
+Fehlt die Renderoberfläche im Capture-Frame, folgt `screenshot_window_unavailable`
+ohne Schreiben oder Ersetzen einer Datei. Diese Einschränkung blockiert den
+Abschluss der allgemeinen Spielsteuerung nicht.
+Ein tatsächlich gerendertes schwarzes Bild ist gültig. Der Command bewertet weder
+Pixelfarben noch die visuelle Richtigkeit des Spiels; ein Vergleich mit einem
+Sollbild gehört nicht zum aktuellen Produktumfang.
+
 Der konkrete Pfad ist normalisiert, nicht leer, UTF-8, relativ zum Artefakt-Root und endet auf
 `.png`. Er verwendet `/`, keine leeren Komponenten, `.`/`..` oder Backslashes und darf
 auch über Symlinks nicht aus dem Root ausbrechen. Der Aufrufer liefert den fertigen Dateinamen.
