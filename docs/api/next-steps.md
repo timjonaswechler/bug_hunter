@@ -24,20 +24,21 @@ und Build-Befehle verwenden. Vorhandene Szenen nicht erneut anbinden.
 
 ## Nächste Aktion
 
-Die vorhandenen Steuerungsabnahmen vervollständigen, beginnend mit dem
-Pointer-Observer und der Screenshot-Prüfung von `logical_state`:
+Die Steuerungsabnahme von `game_menu` vervollständigen:
+[Beispiel 2 im Abschlussplan](implementation-plan.md#beispiel-2-tastenkürzel-und-quit-in-game_menu).
 
-1. `tests/logical_state.py` und die bestehende Szene lesen. Inputs müssen bis
-   zum expliziten Tick vorgemerkt bleiben; Inspect und Capture dürfen nicht ticken.
-2. Den Test um die fehlenden Fälle erweitern. Bekannte Szenenpixel dürfen die
-   technische Aufnahme prüfen; daraus entsteht kein allgemeiner Sollbildvergleich.
-3. Ohne Grafik bauen, `BUILD_READY` melden und auf `GUI_FREIGABE` warten.
-   Den Test mit verfügbarer Renderoberfläche ausführen und Commands, Ergebnisse
-   sowie Artefaktpfade protokollieren.
+1. `tests/game_menu.py` und die bestehende Szene lesen; Kurzwege `s`, `Escape`,
+   `n`, Quit-Button und technische Screenshots ergänzen.
+2. Vor expliziten Warps unveränderten Zustand prüfen, nach Bildschirmwechseln
+   tote Handles. Quit muss als unerwartetes Prozessende gemeldet werden;
+   Server und andere Sessions müssen bedienbar bleiben.
+3. Ohne Grafik bauen, `BUILD_READY` melden und vor grafischer Abnahme auf
+   `GUI_FREIGABE` warten. Commands, Ergebnisse und Artefaktpfade protokollieren.
 
-Der Schritt ist abgeschlossen, wenn die neuen Fälle über CLI, Session und Bevy
-bestehen und der Zustand ohne Warp unverändert bleibt. Weitere offene Szenenfälle
-stehen in der [Abdeckungsmatrix](implementation-plan.md#abdeckungsmatrix).
+Der frische `logical_state`-Nachweis steht bei
+[Beispiel 1 im Abschlussplan](implementation-plan.md#beispiel-1-mausklick-in-logical_state).
+Weitere offene Szenenfälle stehen in der
+[Abdeckungsmatrix](implementation-plan.md#abdeckungsmatrix).
 Lokale `target/`-Builds und Evidenz sind nicht im Git-Transfer enthalten.
 
 ## Weitere Validierungsfolge

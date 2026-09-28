@@ -13,6 +13,7 @@ import tempfile
 import time
 
 from slice import CLI, ROOT
+from mesh_picking import rgb_pixels
 
 
 def run():
@@ -151,13 +152,73 @@ def run():
                               key_a_presses=1, key_a_releases=1)
             time.sleep(0.1)
             assert state() == released, "idle control loop advanced fixed steps or timers"
+            # The preceding explicit ticks have resolved the button layout.
+            buttons = [item["entity"] for item in entities
+                       if item["result"]["name"] == "logical-button"]
+            assert len(buttons) == 1, entities
+            layout = command("inspect.query", {
+                "source": "entities", "entity": buttons[0], "with": [], "without": [],
+                "projection": {"kind": "components", "selection": {
+                    "kind": "listed", "type_paths": [
+                        "bevy_ui::ui_transform::UiGlobalTransform",
+                    ],
+                }},
+            })["items"][0]["result"]["components"][0]["value"]
+            assert layout["status"] == "readable", layout
+            position = layout["value"][-2:]
+            assert 0 < position[0] < 640 and 0 < position[1] < 360, position
+            assert state() == released, "layout Inspect advanced the scene"
+            assert command("input.pointer.move_to", {"position": position}) is None
+            assert state() == released, "accepted pointer move ran without a tick"
+            warp(1)
+            positioned = expect(updates=9, fixed_updates=16, timer_finishes=4,
+                                key_a_presses=1, key_a_releases=1)
+            artifact_root = Path(cli("session", "inspect", session)["artifact_dir"])
+            screenshots = []
+
+            def capture(name, expected):
+                assert state() == expected
+                path = f"screenshots/{name}.png"
+                result = command("screenshot.capture", {"path": path})
+                assert result == {"path": path, "width": 640, "height": 360,
+                                  "overwritten": False}, result
+                width, height, pixels = rgb_pixels(artifact_root / path)
+                assert (width, height) == (640, 360)
+                x, y = map(round, position)
+                # Known scene samples, not a general reference-image comparison.
+                assert tuple(pixels[y][x * 3:x * 3 + 3]) == (0, 255, 0)
+                assert tuple(pixels[10][30:33]) == (0, 0, 0)
+                assert state() == expected, "capture advanced updates, timers or input"
+                screenshots.append(str(artifact_root / path))
+                return pixels
+
+            baseline = capture("positioned", positioned)
+            assert command("input.pointer.press", {"button": "left"}) is None
+            assert state() == positioned, "accepted pointer press ran without a tick"
+            assert capture("press-pending", positioned) == baseline
+            warp(1)
+            expect(updates=10, fixed_updates=18, timer_finishes=4,
+                   pointer_presses=1, key_a_presses=1, key_a_releases=1)
+            warp(3)
+            pointer_held = expect(updates=13, fixed_updates=24, timer_finishes=6,
+                                  pointer_presses=1, key_a_presses=1, key_a_releases=1)
+            assert capture("held", pointer_held) == baseline
+            assert command("input.pointer.release", {"button": "left"}) is None
+            assert state() == pointer_held, "accepted pointer release ran without a tick"
+            assert capture("release-pending", pointer_held) == baseline
+            warp(1)
+            final = expect(updates=14, fixed_updates=26, timer_finishes=6,
+                           pointer_presses=1, key_a_presses=1, key_a_releases=1)
+            assert capture("released", final) == baseline
             cli("session", "stop", session)
             until(lambda: cli("session", "inspect", session)["state"] == "Ended", "session did not end")
             cli("server", "stop")
             assert server.wait(timeout=15) == 0
             print(json.dumps({"acceptance": "passed", "scene": "logical_state",
-                              "updates": released["updates"], "fixed_updates": released["fixed_updates"],
-                              "timer_finishes": released["timer_finishes"], "evidence": str(directory)}))
+                              "updates": final["updates"], "fixed_updates": final["fixed_updates"],
+                              "timer_finishes": final["timer_finishes"],
+                              "pointer_presses": final["pointer_presses"],
+                              "screenshots": screenshots, "evidence": str(directory)}))
         finally:
             if server.poll() is None:
                 server.send_signal(signal.SIGINT)

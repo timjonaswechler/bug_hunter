@@ -20,7 +20,7 @@ kombinierte oder ergänzende Test. Details stehen in den verlinkten Abschnitten.
 
 ### Steuerung
 
-- [ ] `logical_state`: Pointer-Press erst beim Tick, keine Wiederholung beim Halten,
+- [x] `logical_state`: Pointer-Press erst beim Tick, keine Wiederholung beim Halten,
   Screenshot ohne Zustandsfortschritt prüfen.
 - [ ] `game_menu`: `s`, `Escape`, `n`, Quit-Button und Screenshots prüfen.
 - [ ] `ui_drag_drop`: Despawn während eines Drags gezielt in der Testszene auslösen
@@ -121,6 +121,40 @@ zweiten Press erzeugen. Loslassen und einen weiteren Tick ausführen.
 
 Ein Capture danach darf weder diesen Zähler noch Update-/Timer-Zustand verändern.
 So wird geprüft, dass Command-Annahme und Verarbeitung durch das Spiel getrennt sind.
+
+Vorbereitung am 2026-09-28 (Darwin arm64, Branch `reference/window`, Basis
+`f493dfd5b29ead0f82faf36f7a76fbba7270c08d` plus Arbeitsbaumänderungen):
+`tests/logical_state.py` ergänzt Pointer-Press/Hold/Release und fünf Captures,
+auch bei vorgemerktem Press/Release. Die Szene besitzt dafür einen grünen Button
+auf schwarzem Hintergrund als technische Pixelfixture. Die vollständige
+`SessionObservation` muss bei Inspect und Capture unverändert bleiben.
+
+Ohne Grafik bestanden:
+
+```sh
+cargo build --features cli --bin woodpecker
+cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin logical_state
+cargo test --manifest-path bevy_test_apps/Cargo.toml --features slice --bin logical_state
+cargo clippy --manifest-path bevy_test_apps/Cargo.toml --features slice --bin logical_state -- -D warnings
+cargo fmt --manifest-path bevy_test_apps/Cargo.toml --check
+python3 -m py_compile tests/logical_state.py
+git diff --check
+```
+
+Der gezielte Rust-Test bestand (1 Test); lokale Build-/Test-/Clippy-/Formatlogs
+liegen unter `target/logical-state-build/`. Die unabhängige Subagent-Prüfung
+fand keine Probleme.
+
+Nach GUI-Freigabe bestand `python3 tests/logical_state.py` am selben Tag auf
+Darwin arm64 mit obigem Basiscommit plus den Arbeitsbaumänderungen in
+`tests/logical_state.py` und `bevy_test_apps/src/bin/logical_state.rs`.
+Ergebnis: 14 Updates, 26 FixedUpdates, 6 Timer-Abschlüsse und genau 1 Pointer-Press.
+Alle fünf PNGs bestanden die technischen Pixelprüfungen; Inspect und Capture
+ließen die vollständige Beobachtung unverändert, auch bei vorgemerktem Press/Release.
+Session und Server wurden regulär beendet (Server-Exit 0).
+Commands und Serverlog: `target/logical-state-avcbevh1/`;
+PNGs: `target/logical-state-avcbevh1/artifacts/82daf032538ac861f82b04b2ad633c36/screenshots/`.
+Die lokalen Artefakte sind nicht im Git-Transfer enthalten.
 
 #### Beispiel 2: Tastenkürzel und Quit in game_menu
 
@@ -264,7 +298,7 @@ konkrete historische Ergebnisse stehen in
 | --- | --- | --- |
 | `counter` | [slice.py](../../tests/slice.py): Ticks, Stillstand, Pace/Stop, Isolation, Recording/Replay und Verwaltungs-Stopp. | Kombinierter Lifecycle und Last. |
 | `context_menu` | [ui.py](../../tests/ui.py): virtuelle Inputs, Fokus, Unicode-Werte und Grenzen, Layout, Bilder, Recording/Replay, zwei Sessions. | Weitere relevante Layout-/Hierarchiewechsel. |
-| `logical_state` | [logical_state.py](../../tests/logical_state.py): Update, FixedUpdate, Timer, Keyboard-Press/Hold/Release und Stillstand. | Pointer-Observer und Bilder. |
+| `logical_state` | [logical_state.py](../../tests/logical_state.py): Update, FixedUpdate, Timer, Keyboard- und Pointer-Press/Hold/Release, Stillstand und fünf PNGs einschließlich vorgemerkter Inputs. | Keine zusätzliche Steuerungsvariante. |
 | `game_menu` | [game_menu.py](../../tests/game_menu.py): Navigation, Einstellungen, Timer, Klicks, Hierarchien und tote Handles. | Keyboard-Kurzwege, Quit und Bilder. |
 | `ui_drag_drop` | [ui_drag_drop.py](../../tests/ui_drag_drop.py): gültiger/ungültiger Drop, Zwischenposition, Drag-Phasen, Belegung und Darstellung. | Bilder und Despawn während Drag. |
 | `mesh_picking` | [mesh_picking.py](../../tests/mesh_picking.py): Hover/Press/Release/Out aller Meshes, horizontaler Würfel-Drag, Rotation und 13 PNGs. | Vertikaler Drag und Kugel-/Zylinder-Drag. |

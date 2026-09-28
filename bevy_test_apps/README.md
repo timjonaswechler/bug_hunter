@@ -65,9 +65,13 @@ This opens a real window. The test inspects the existing `SessionObservation`
 component through the CLI, checks Update/FixedUpdate/timer counts and queued
 keyboard press/hold/release, and proves that Inspect and real waiting do not advance
 the scene. Bevy's first Time update has zero delta; subsequent ticks use 20 ms even
-under a wall-clock pace limit. It does not yet test this scene's pointer observer
-or screenshots. Logs and CLI evidence remain in `target/logical-state-*`, including
-on failure. The [coverage matrix](../docs/api/implementation-plan.md#abdeckungsmatrix)
+under a wall-clock pace limit. The extended test also queues a pointer press at
+the inspected button center, checks a single press across held ticks, and captures
+five PNGs, including pending press/release states. A green button on black is a
+technical pixel fixture; capture must leave the entire observation unchanged.
+The extended graphical acceptance passed; commands, results and artifact paths
+are recorded in the completion plan.
+Logs, PNGs and CLI evidence remain in `target/logical-state-*`, including on failure. The [coverage matrix](../docs/api/implementation-plan.md#abdeckungsmatrix)
 records the remaining scenarios.
 
 ## Game menu acceptance

@@ -42,7 +42,8 @@ fn build_app() -> App {
     app.world_mut()
         .resource_mut::<Time<Fixed>>()
         .set_timestep(FIXED_STEP);
-    app.register_type::<SessionObservation>()
+    app.insert_resource(ClearColor(Color::BLACK))
+        .register_type::<SessionObservation>()
         .insert_resource(UpdateTimer(Timer::new(TIMER_PERIOD, TimerMode::Repeating)))
         .add_systems(Startup, setup)
         .add_systems(Update, record_update)
@@ -62,6 +63,9 @@ fn setup(mut commands: Commands) {
         .spawn((
             Name::new("logical-button"),
             Button,
+            // A known fixture color makes technical captures distinguishable
+            // from an empty readback without changing the observed state.
+            BackgroundColor(Color::srgb(0.0, 1.0, 0.0)),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(220),
