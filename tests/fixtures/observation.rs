@@ -2,7 +2,14 @@
 use bevy::{app::ScheduleRunnerPlugin, log::LogPlugin, prelude::*};
 use std::{io::Write, time::Duration};
 
-fn main() {
+pub(crate) fn main() {
+    if let Some(root) = std::env::var_os("WOODPECKER_ARTIFACT_DIR") {
+        std::fs::write(
+            std::path::Path::new(&root).join("fixture-pid"),
+            std::process::id().to_string(),
+        )
+        .expect("save fixture process evidence");
+    }
     let mode = std::env::args().nth(1).unwrap_or_else(|| "handled".into());
     let abort = mode == "abort";
     let previous = std::panic::take_hook();
@@ -15,7 +22,7 @@ fn main() {
         {
             let _ = writeln!(file, "called");
         }
-        if abort {
+        if abort || cfg!(panic = "abort") {
             #[cfg(unix)]
             unsafe {
                 let limit = libc::rlimit {
@@ -24,7 +31,9 @@ fn main() {
                 };
                 libc::setrlimit(libc::RLIMIT_CORE, &limit);
             }
-            std::process::abort();
+            if abort {
+                std::process::abort();
+            }
         }
         previous(info);
     }));

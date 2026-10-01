@@ -1,6 +1,10 @@
 use super::protocol::Message;
 use super::*;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+// EOF can precede a natural process exit. Stop work while resolving it, but
+// bound the wait for a child that closed a required pipe and remains alive.
+const EOF_EXIT_TIMEOUT: Duration = Duration::from_secs(1);
 
 fn launch(
     config: &Config,
@@ -112,6 +116,7 @@ pub(super) fn run(
     let mut reason = None;
     let mut closed = 0;
     let mut exit_status = None;
+    let mut eof: Option<(&'static str, Instant)> = None;
     let mut intentional_cleanup = false;
     let replay_root = match root.try_clone() {
         Ok(root) => Arc::new(root),
@@ -150,11 +155,9 @@ pub(super) fn run(
                         let _ = ready.send(Err(error));
                         return;
                     }
-                    if !stopping && process.child.try_wait().ok().flatten().is_none() {
-                        reason.get_or_insert(EndReason::TransportClosed {
-                            channel: channel.into(),
-                        });
-                    }
+                    // Keep the first channel/deadline; a second EOF must not
+                    // extend the window. Responses and diagnostics still drain.
+                    eof.get_or_insert_with(|| (channel, Instant::now() + EOF_EXIT_TIMEOUT));
                 }
                 process::Event::Failed(channel, message) => {
                     reason.get_or_insert(EndReason::TransportFailed {
@@ -248,6 +251,18 @@ pub(super) fn run(
         if stopping && shutdown.as_ref().is_some_and(Result::is_err) {
             break;
         }
+        if let Some((channel, deadline)) = eof
+            && Instant::now() >= deadline
+            && exit_status.is_none()
+            && process.child.try_wait().ok().flatten().is_none()
+        {
+            reason.get_or_insert(EndReason::TransportClosed {
+                channel: channel.into(),
+            });
+            // Commit to transport cleanup here. A natural exit between this
+            // decision and terminate() must not add a ProcessExit failure.
+            intentional_cleanup = true;
+        }
         if reason.is_some() && exit_status.is_none() {
             intentional_cleanup |= process.child.try_wait().ok().flatten().is_none();
             process.terminate();
@@ -288,7 +303,17 @@ pub(super) fn run(
         if reason.is_some() {
             break;
         }
-        if observation.initialized() {
+        if eof.is_some() {
+            // Refuse without allocating IDs/history. Do not send deferred or
+            // replay commands into a closing transport. Cancellation and pipe
+            // draining remain serviced by the ordinary coordinator loop.
+            for _ in 0..64 {
+                let Ok(Operation::Send(_, response)) = input.try_recv() else {
+                    break;
+                };
+                let _ = response.send(Err(Error::ended()));
+            }
+        } else if observation.initialized() {
             // File transitions hold execution, not acceptance or pipe/event progress.
             if !recorder.transitioning() {
                 for _ in 0..64 {

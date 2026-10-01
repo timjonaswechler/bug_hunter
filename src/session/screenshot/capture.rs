@@ -184,6 +184,20 @@ pub(super) fn poll(world: &mut World) -> Vec<Message> {
                 )),
             ));
         }
+        // The deadline gates readback consumption, not just an empty poll.
+        // A queued image must not start encoding after the request expired.
+        if service
+            .active
+            .as_ref()
+            .is_some_and(|a| !a.writing && a.since.elapsed() >= READBACK_TIMEOUT)
+        {
+            let active = service.active.take().unwrap();
+            world.despawn(active.entity);
+            responses.push(response(
+                active.job.id,
+                Err(destination::failed("GPU readback timed out")),
+            ));
+        }
         for (entity, image) in images {
             if let Some(active) = service
                 .active
@@ -220,18 +234,6 @@ pub(super) fn poll(world: &mut World) -> Vec<Message> {
         if let Some(result) = completion {
             let active = service.active.take().expect("one active writer");
             responses.push(response(active.job.id, result));
-        }
-        if service
-            .active
-            .as_ref()
-            .is_some_and(|a| !a.writing && a.since.elapsed() >= READBACK_TIMEOUT)
-        {
-            let active = service.active.take().unwrap();
-            world.despawn(active.entity);
-            responses.push(response(
-                active.job.id,
-                Err(destination::failed("GPU readback timed out")),
-            ));
         }
         if service.active.is_none() {
             while let Some(job) = service.queue.pop_front() {
@@ -478,6 +480,153 @@ mod tests {
     }
 
     #[test]
+    fn late_and_duplicate_readbacks_cannot_complete_a_different_request() {
+        let sandbox = Sandbox::new();
+        let root = sandbox.root("root");
+        root.create_dir("images").unwrap();
+        root.write("images/a.png", b"keep previous image").unwrap();
+        let reader = root.try_clone().unwrap();
+        let (mut world, old_entity, images) = fixture(root);
+        let window = {
+            let mut service = world.resource_mut::<Service>();
+            let active = service.active.as_mut().unwrap();
+            active.since = Instant::now() - READBACK_TIMEOUT;
+            active.job.window
+        };
+        // Retain ownership of this slot rather than depending on Bevy's
+        // batched allocator reuse. The next request will use its next generation.
+        let replacement = world.despawn_no_free(old_entity).unwrap();
+        assert!(matches!(&poll(&mut world)[..],
+            [Message::Rejected { request_id: 17, error, .. }]
+            if error.code == "screenshot_failed"));
+        assert_eq!(reader.read("images/a.png").unwrap(), b"keep previous image");
+
+        // Install the next active request without creating a native window/GPU.
+        // Force the same entity index with a distinct generation.
+        let entity = world.spawn_empty_at(replacement).unwrap().id();
+        assert_eq!(
+            entity.index(),
+            old_entity.index(),
+            "must exercise index reuse"
+        );
+        assert_ne!(entity.generation(), old_entity.generation());
+        let surface = Arc::new(OnceLock::new());
+        surface.set(true).unwrap();
+        world.resource_mut::<Service>().active = Some(Active {
+            job: Job {
+                id: 18,
+                path: "images/b.png".into(),
+                window,
+            },
+            entity,
+            since: Instant::now(),
+            writing: false,
+            surface,
+        });
+        let elapsed = world.resource::<Time<Virtual>>().elapsed();
+        images.send((old_entity, image())).unwrap();
+        assert!(poll(&mut world).is_empty());
+        assert!(world.resource::<Service>().pending(18));
+        assert!(!reader.exists("images/b.png"));
+
+        let mut black = image();
+        black.data.as_mut().unwrap().fill(0);
+        images.send((entity, black)).unwrap();
+        // A duplicate with different pixels must neither launch another writer
+        // nor overwrite the accepted image, including in the same poll batch.
+        images.send((entity, image())).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let response = loop {
+            let responses = poll(&mut world);
+            if !responses.is_empty() {
+                assert_eq!(responses.len(), 1, "{responses:?}");
+                break responses.into_iter().next().unwrap();
+            }
+            assert!(Instant::now() < deadline, "writer did not finish");
+            std::thread::yield_now();
+        };
+        assert!(matches!(response,
+            Message::Completed { request_id: 18, ref output, .. }
+            if output == &serde_json::json!({"path":"images/b.png","width":2,"height":1,"overwritten":false})));
+        assert_eq!(
+            image::load_from_memory(&reader.read("images/b.png").unwrap())
+                .unwrap()
+                .to_rgb8()
+                .into_raw(),
+            vec![0; 6]
+        );
+        assert_eq!(reader.read("images/a.png").unwrap(), b"keep previous image");
+        images.send((old_entity, image())).unwrap();
+        images.send((entity, image())).unwrap();
+        assert!(poll(&mut world).is_empty());
+        assert!(!world.resource::<Service>().pending(18));
+        assert_eq!(world.resource::<Time<Virtual>>().elapsed(), elapsed);
+    }
+
+    #[test]
+    fn expired_readback_is_rejected_even_when_an_image_is_already_queued() {
+        let sandbox = Sandbox::new();
+        let root = sandbox.root("root");
+        let reader = root.try_clone().unwrap();
+        let (mut world, entity, images) = fixture(root);
+        {
+            let mut service = world.resource_mut::<Service>();
+            let active = service.active.as_mut().unwrap();
+            active.since = Instant::now() - READBACK_TIMEOUT;
+            active.surface.set(true).unwrap();
+        }
+        // Simulate GPU delivery after the deadline, but before the coordinator's
+        // next poll. An unprocessed image must not bypass the timeout check.
+        images.send((entity, image())).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let response = loop {
+            let responses = poll(&mut world);
+            if !responses.is_empty() {
+                assert_eq!(responses.len(), 1);
+                break responses.into_iter().next().unwrap();
+            }
+            assert!(Instant::now() < deadline, "no capture outcome");
+            std::thread::yield_now();
+        };
+        assert!(
+            matches!(response, Message::Rejected { request_id: 17, ref error, .. }
+            if error.code == "screenshot_failed" && error.message == "GPU readback timed out"),
+            "{response:?}"
+        );
+        assert!(!reader.exists("images/a.png"));
+        assert!(world.get_entity(entity).is_err());
+        assert!(!world.resource::<Service>().pending(17));
+    }
+
+    #[test]
+    fn readback_deadline_does_not_expire_an_active_writer() {
+        let sandbox = Sandbox::new();
+        let (mut world, entity, _) = fixture(sandbox.root("root"));
+        {
+            let mut service = world.resource_mut::<Service>();
+            let active = service.active.as_mut().unwrap();
+            active.writing = true;
+            active.since = Instant::now() - READBACK_TIMEOUT;
+            active.surface.set(true).unwrap();
+        }
+        world.despawn(entity); // Readback consumption removes the request entity.
+        assert!(poll(&mut world).is_empty());
+        assert!(world.resource::<Service>().pending(17));
+        // Deliver a controlled writer failure, without sleeping 30s or relying
+        // on disk speed. Writer outcomes must still retain their request ID.
+        world
+            .resource::<Service>()
+            .sender
+            .send(Err(destination::failed("fixture write error")))
+            .unwrap();
+        assert!(matches!(&poll(&mut world)[..],
+            [Message::Rejected { request_id: 17, error, .. }]
+            if error.code == "screenshot_failed" && error.message == "fixture write error"));
+        assert!(!world.resource::<Service>().pending(17));
+        assert!(poll(&mut world).is_empty());
+    }
+
+    #[test]
     fn png_and_destination_errors_do_not_claim_success() {
         let sandbox = Sandbox::new();
         let root = sandbox.root("root");
@@ -490,6 +639,16 @@ mod tests {
             "screenshot_failed"
         );
         assert!(!root.exists("unsupported.png"));
+        root.write("existing.png", b"previous image").unwrap();
+        let mut unsupported = image();
+        unsupported.texture_descriptor.format = TextureFormat::Rg32Uint;
+        assert_eq!(
+            encode(&root, "existing.png".into(), unsupported)
+                .unwrap_err()
+                .code,
+            "screenshot_failed"
+        );
+        assert_eq!(root.read("existing.png").unwrap(), b"previous image");
         root.create_dir("directory.png").unwrap();
         assert_eq!(
             encode(&root, "directory.png".into(), image())

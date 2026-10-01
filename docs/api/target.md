@@ -330,6 +330,18 @@ Endgründe sind `ProcessExit { status }`, `TransportClosed { channel }`,
 `TransportFailed { channel, message }` und `EventQueueOverflow { capacity, dropped_events }`.
 Kanäle sind stdin, stdout und stderr. Auch ein unerwarteter Exit-Status 0 ist ein Prozessende.
 EOF nach bereits beobachtetem Prozessende gehört zum abschließenden Drain.
+Kommt stdout-/stderr-EOF vor dem beobachtbaren Prozessstatus, beginnt ab dem ersten
+EOF eine begrenzte, abbrechbare Klärungsfrist (derzeit eine reale Sekunde). Weitere
+EOFs verlängern sie nicht. Neue Commands werden ohne Annahme mit `Ended` abgewiesen;
+vorgemerkte Commands und Replay werden nicht weiter zum Spiel gesendet. Bereits
+unterwegs befindliche Responses und Diagnosebytes werden weiterhin verarbeitet.
+Ein innerhalb der Frist beobachtetes natürliches Prozessende verwendet seinen
+Exitstatus und die normalen Failure-/Drain-Regeln. Bleibt der Prozess am Ende der
+Frist am Leben, wird `TransportClosed` für den ersten EOF-Kanal verbindlich und die
+Prozessgruppe bereinigt, ohne zusätzlichen ProcessExit-Failure. Konkrete I/O-Fehler,
+Überlauf und eigener Abbruch warten nicht auf diese Frist. Die Frist erzeugt keine
+Ticks und ist keine Zusicherung, dass beliebig lange App-Aufräumarbeiten natürlich
+beendet werden können.
 
 Bei einem unerwarteten Ende verarbeitet die Session letzte Responses und Marker aus den Pipes,
 schließt Recording nach Möglichkeit ab und reiht `Ended` nach den übrigen Events genau einmal
@@ -514,6 +526,25 @@ Fixtures gegen Bevy 0.19.1 sichern den Vertrag bei Upgrades.
 auf Renderdurchlauf, asynchronen GPU-Readback und erfolgreiches PNG-Schreiben.
 Simulationsticks und simulierte Zeit bleiben unverändert.
 Ohne vollständige Unterstützung oder eindeutiges Fenster wird der Command abgelehnt.
+
+Der aktuelle Umfang setzt während der kontrollierten Session unveränderte
+Fenstergröße, Skalierung und Bildschirmzuordnung voraus. Dynamische Resize-,
+DPI- und Bildschirmwechsel sind zurückgestellt und kein Abschlussblocker.
+Korrekte Darstellung nach solchen Änderungen ohne Tick ist nicht zugesichert;
+es gibt dafür keine zusätzliche Darstellungsaufbereitung und keine versteckten
+Reparatur-Ticks. Die frühere Freigabe eines Resize-Umbaus ist durch diese
+Umfangsentscheidung ersetzt.
+
+Ab Aktivierung einer Aufnahme gilt derzeit eine Readback-Frist von 30 realen
+Sekunden; die Wartezeit in der seriellen Capture-Queue zählt nicht dazu. Beim Poll
+wird die Frist vor der Übernahme eines Readbacks zum Encoding geprüft. Ist sie
+abgelaufen, wird die noch auf Readback wartende Aufnahme mit `screenshot_failed`
+abgeschlossen, auch wenn bereits ein Bild im Kanal liegt. Späte Antworten dürfen
+weder Dateien schreiben noch einen anderen Request abschließen. Bereits gestartetes
+Encoding und Schreiben fallen nicht unter diese Readback-Frist. Die Prüfung erfolgt
+kooperativ im Poll, nicht durch einen Echtzeit-Timer; daraus folgt keine harte
+30-Sekunden-Garantie für die Zustellung einer Response. Capture erzeugt auch beim
+Warten oder bei einem Timeout keine Simulationsticks.
 
 Aufnahmen vollständig verdeckter Fenster sind im aktuellen Umfang nicht zugesichert.
 Fehlt die Renderoberfläche im Capture-Frame, folgt `screenshot_window_unavailable`

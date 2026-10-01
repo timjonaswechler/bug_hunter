@@ -1,101 +1,117 @@
 # Fenstergröße und Kameraaktualisierung bei angehaltener Simulation
 
-## Befund und Status
+## Status: auf Nutzerwunsch zurückgestellt
 
-Winit aktualisiert `WindowResolution` bei Resize und Skalierungswechsel auch
-zwischen expliziten Warps. Die Render-App übernimmt die neue Größe. Bevys
-`camera_system` läuft im kontrollierten Leerlauf dagegen nicht; berechnete
-Kameradaten, Projektion und expliziter Viewport können bis zum nächsten Warp
-auf dem alten Stand bleiben.
+Der Nutzer benötigt während einer kontrollierten Session weder Resize noch
+DPI-/Bildschirmwechsel. Auf seine ausdrückliche Anweisung wurde der experimentelle
+Resize-Umbau zurückgenommen. Das ersetzt die vorherige Freigabe der zusätzlichen
+Darstellungsaufbereitung. Maßgeblich ist der [aktuelle Screenshot-Umfang](../target.md#screenshot).
 
-Diese Aktualitätslücke ist aus den gelockten Quellen von Bevy 0.19.1 belegt.
-Eine gezielte Bildregression für Resize und Skalierungswechsel steht aus.
-Die Lücke ist kein Beweis für die Ursache historischer schwarzer PNGs.
-Im [kontrollierten Occlusion-Versuch](screenshot-evidence.md#framegenaue-befunde)
-blieben alle Größen und Kameraangaben gleich; dort entfiel bereits die Bildkopie.
+**Voraussetzung sind stabile Fenstergröße, Skalierung und Bildschirmzuordnung.**
+Korrekte Darstellung nach dynamischen Änderungen ohne Tick ist nicht zugesichert.
+Der Punkt ist zurückgestellt, nicht bestanden, und blockiert den aktuellen Abschluss
+nicht. Das Plugin führt keine zusätzlichen Kamera-/UI-Schedules dafür aus.
 
-## Beteiligte Schedules
+Entfernt wurden der `presentation`-Adapter samt Layout-Proxy, dessen Tests und
+Feature-Erweiterungen, der native Resize-Harness samt Fixture/Observer und die im
+Versuch geänderte Beschriftungsreihenfolge der Blend-Szene. Die vorherigen stabilen
+Bildtests sowie Surface-, Timeout- und Dateisicherheitsabsicherungen bleiben erhalten.
 
-Das [Session-Plugin](../../../src/session/plugin.rs) ersetzt
-`MainScheduleOrder.labels` durch `Control` und bewahrt die ursprüngliche
-Reihenfolge auf. Nur ein aktiver Warp führt diese Simulations-Schedules aus.
-Zwischen Warps laufen daher unter anderem nicht:
+Eine lokale Kopie der entfernten Quellen und des ausführlichen Diagnoseverlaufs
+liegt unter `target/resize-rollback-snapshot/`. Sie und die nachfolgenden nativen
+Artefakte werden nicht durch Git übertragen. Keine der unten beschriebenen
+Versuchsvarianten ist die aktuelle Implementierung.
 
-- `First` mit normaler Nachrichtenalterung,
-- `PostUpdate::camera_system`,
-- Transform- und Sichtbarkeitsaktualisierungen in `PostUpdate`,
-- main-world Asset-Vorbereitung, soweit sie diesen Schedules zugeordnet ist.
+Nach der Rücknahme bestanden 110 Library-Tests mit Screenshot/UI, 92 ohne Features,
+drei ursprüngliche Blend-Tests, Clippy, statische Probe und CLI-/Slice-Builds.
+Logs: `target/resize-rollback-validation/`. Es wurde kein neuer Grafiklauf ausgeführt.
 
-Die Render-App führt weiterhin Extraction und ihre eigenen Schedules aus.
-Das Leeren von `TimeReceiver` im Kontrolllauf verhindert einen vollen
-Render-Zeitkanal, ohne die Simulationszeit fortzuschreiben. Es ersetzt keine
-Kameraaktualisierung.
+## Ausgangsbefund aus Bevy 0.19.1
 
-## Fenster- und Kameradaten
+Winit aktualisiert `WindowResolution` bei Resize/Skalierungswechsel zwischen Warps.
+Die Render-App übernimmt die neue Größe. Das Session-Plugin führt die ursprünglichen
+Simulations-Schedules hingegen ausschließlich bei expliziten Warps aus. Damit können
+Kamerazielinfo, Projektion, Viewport und UI-Layout bis zum nächsten Tick veraltet bleiben.
 
-| Quelle in Bevy 0.19.1 | Verhalten |
+Beteiligte Quellen der gelockten Version:
+
+- `bevy_winit/src/state.rs`: direkte Fenstergrößen-/Faktoränderungen und Nachrichten.
+- `bevy_render/src/view/window/mod.rs`: Fenster-Extraction und Surface-Konfiguration.
+- `bevy_render/src/camera.rs`: `camera_system` in PostStartup/PostUpdate.
+- `src/session/plugin.rs`: geparkte Simulations-Schedules, weiterhin laufendes Rendering.
+- `src/session/input.rs`: native Eingaben verwerfen, Fensterereignisse bis zum Tick erhalten.
+
+Die verbliebene statische Probe `python3 tests/diagnostics/window_schedules.py`
+prüft diesen Quellpfad, nicht korrektes Rendering nach Resize. Der Befund erklärt
+historische schwarze PNGs nicht rückwirkend. Bei belegter fehlender Surface gilt
+weiterhin die [Screenshot-Guard](black-screenshots.md), nicht ein Farbheuristik-Fix.
+
+## Headless-Reproduktion und vorbereiteter nativer Versuch
+
+Historisch wurde die Lücke mit echtem Control-Loop und Bevy-Kamerasystem headless
+reproduziert: 800×600 → 1200×600 ließ das Kameraziel und Aspect ohne Tick veraltet;
+ein modellierter Faktorwechsel 1 → 2 ließ zusätzlich den Kamera-Viewport unverändert.
+Zeit und Tickzähler standen dabei still. Ein expliziter Vergleichs-Warp aktualisierte
+die Daten. Die zugehörigen Tests und der interaktive Harness sind inzwischen entfernt.
+
+Die native Probe nutzte die vorhandene Blend-Szene mit einem opt-in resizable-Fenster,
+Read-only-Beobachter und manueller Bestätigung. Je Lauf ein Warm-up-Tick, ein Frozen-
+Capture nach Nutzer-Resize und ein expliziter Vergleichs-Tick, keine Capture-Retries.
+
+| Lokale Evidenz | Ergebnis |
 | --- | --- |
-| `bevy_app/src/sub_app.rs:571-590` | Main-World-Update läuft vor Extraction und Update der Sub-Apps. |
-| `bevy_winit/src/state.rs:247-259,915-928` | Resize schreibt physische Abmessungen direkt in `Window.resolution`. |
-| `bevy_winit/src/state.rs:931-963` | Skalierungswechsel aktualisiert den Faktor und erzeugt die zugehörigen Nachrichten. |
-| `bevy_render/src/view/window/mod.rs:125-180,340-464` | Extraction liest die Fenstergröße; die Surface wird bei Änderungen neu konfiguriert. |
-| `bevy_render/src/camera.rs:63-80,351-445` | `camera_system` läuft in `PostStartup` und `PostUpdate`, verarbeitet Fensterereignisse und aktualisiert Zielinfo, Viewport und Projektion. |
+| `target/window-resize-b9ygon8k/` | 1280×720 → 766×435: Kameradaten ohne Tick alt; nach Tick aktualisiert, aber Beschriftungen versetzt. |
+| `target/window-resize-5badl99o/` | 1280×720 → 686×720 nach Szenen-Reihenfolgekorrektur: Frozen-Bild gestaucht; nach Tick Proportionen und sichtbare Beschriftungsanker passend. |
+| `target/window-resize-l7hg2jk5/` | Erster Lauf mit experimenteller Produktaufbereitung: Baseline ohne Surface abgelehnt, kein PNG/Resize. Ursache nicht isoliert. |
+| `target/window-resize-xf0cixf6/` | Nach ausdrücklich genehmigtem weiteren Lauf mit Sichtbarkeitsbestätigung: 1280×720 → 782×720 ohne Tick bereits ungestaucht; nach Vergleichs-Tick verschwanden Hinweistext und gelbe Beschriftungen. |
 
-Das [Input-Gate](../../../src/session/input.rs) verwirft native Eingaben,
-erhält aber Resize-, Scale-, Close- und andere Fensterereignisse im
-`WindowEvent`-Puffer bis zum nächsten Tick. Es verhindert weder direkte
-`Window`-Änderungen durch Winit noch die separaten typisierten Resize-/Scale-
-Nachrichten.
+Ein echter nativer DPI-Wechsel wurde nicht abgenommen. Unterschiedliche
+Bildschirmauflösungen allein belegen keinen Faktorwechsel. Der erfolgreiche
+Sichtbarkeits-Wartepunkt beweist nicht die Ursache der vorherigen Surface-Ablehnung.
 
-Damit kann nach einem nativen Resize folgende Situation entstehen:
+## Freigegebene Produktaufbereitung: headless umgesetzt
 
-| Daten | Zwischen Resize und nächstem Warp |
-| --- | --- |
-| `WindowResolution`, extrahiertes Fenster, Surface | neue Größe |
-| `Camera::computed`, Projektion, expliziter Viewport | möglicherweise alte Größe |
+**Historischer Versuch, vollständig zurückgenommen.** Die zeitweise freigegebene
+Implementierung reagierte auf Fensteränderungen mit privaten, ausdrücklich
+zusammengestellten Kamera-/Frustum-/CPU-Sichtbarkeits- und UI-/Glyphen-Schedules.
+Zeit, Input und Gameplay blieben in den getesteten Fällen unverändert. CPU-Culling
+musste eigens aktualisiert werden, damit neu sichtbare Objekte beim Verbreitern
+nicht weiterhin ausgeblendet blieben. Eingebettete `ViewportNode`-Rendertexturen
+und spezielle Renderpfade waren nicht vollständig abgedeckt.
 
-Für einen unveränderten Szenenzustand ist angehaltene Main-World-Verarbeitung
-beabsichtigt. Externe Fensteränderungen müssen jedoch gesondert geprüft werden.
+Die native Aufnahme belegte die Behebung der Stauchung für den getesteten Resize,
+aber auch einen neuen Textfolgefehler. Metadaten allein erkannten diesen nicht.
+Die nachträgliche fixturespezifische Pixelprüfung verwarf das gespeicherte
+Vergleichsbild: links keine weißen Hinweisglyphen und keine gelben Materiallabels,
+während der rechte Statusblock und die unteren Bildzeilen erhalten blieben.
 
-## Vorhandene Nachweise
+## Textfolgefehler und Kompatibilitätsblocker
 
-Diese headless Prüfungen bestanden im ursprünglichen Diagnosebericht:
+Die Folge normaler Tick → privates Resize-Layout → normaler Tick ließ die Breite
+eines unveränderten Textes headless von 216 auf 0 Pixel fallen. Bevy übernimmt
+`ContentSize.measure` mit `take()` ohne neue Change-Markierung. Zwei getrennte
+`ui_layout_system`-Instanzen besitzen unterschiedliche Änderungscursor; die zweite
+konnte die bereits konsumierten Daten als ausdrückliches Löschen interpretieren.
 
-```sh
-cargo test --lib idle_control_drains_render_clock_without_advancing_time
-cargo test --lib independent_virtual_devices_ignore_native_input_without_window_focus
-python3 tests/diagnostics/window_schedules.py
-```
+Eine gemeinsame Layout-Instanz behob diesen Test. Ihr Proxy erhielt jedoch nur
+`UiSystems::Layout`, nicht direkte Anwendungsvorgaben `.before/.after(ui_layout_system)`.
+Die unabhängige Prüfung bewertete das als **P1-Kompatibilitätsblocker**. Der Versuch
+wurde nicht als fertige Lösung übernommen und nicht erneut grafisch abgenommen.
+Mit seiner Rücknahme besteht dieser eingeführte Proxy-Blocker im aktuellen Code
+nicht mehr; die ursprüngliche Resize-Lücke wird dagegen bewusst nicht behoben.
 
-Die Rust-Tests belegen unveränderte Simulationszeit und die Aufbewahrung nativer
-Fensterereignisse bei verworfener nativer Eingabe. Die Python-Probe prüft statisch
-Schedule- und Dependency-Quellen. Keiner dieser Tests beweist korrektes Rendering
-nach einem realen Resize.
+Historische Logs: `target/window-resize-validation/`, `target/resize-label-diagnosis/`,
+`target/presentation-preparation/`, `target/ui-return-diagnosis/`. Grüne Headless-
+Ergebnisse dieser Versuche beweisen weder eine vollständige Bildabnahme noch den
+Prüfstand des zurückgesetzten Arbeitsbaums.
 
-Historische Bilder zeigen lediglich, dass eine andere PNG-Größe allein RGB0
-nicht erklärt: Mesh lieferte korrekte 320×180-Bilder; Blend hatte sowohl korrekte
-als auch schwarze Bilder mit 1280×720. Gleiche PNG-Abmessungen schließen einen
-Kameraversatz nicht aus.
+## Bei einer späteren Wiederaufnahme
 
-## Noch erforderliche Regression
+Nur mit erneuter Produktfreigabe: Der Nutzen muss den Eingriff in Kamera-/UI-
+Scheduling rechtfertigen. Zunächst kompatible gemeinsame Systemzustände und
+bestehende Reihenfolgevorgaben prüfen; anschließend native Bilder einschließlich
+des ersten normalen Ticks nach Resize abnehmen. Keine versteckten Ticks, keine
+Fokusmanipulation und keine Wiederholung bis zum ersten Erfolg.
 
-Mit einer bekannten Szene und sichtbarem Fenster gezielt Resize und
-Skalierungswechsel zwischen zwei Captures auslösen. Dabei erfassen:
-
-1. Native Fenstergröße und Scale-Faktor sowie Resize-/Scale-Nachrichten.
-2. `WindowResolution`, extrahierte Fenstergröße und Surface-Konfiguration.
-3. Main-World- und extrahierte Kamera-Zielgröße, Viewport und Projektion.
-4. Capture-Texturgröße, Copy-Extent und vollständige Acquire-/Copy-/Map-Kette.
-5. Bildinhalt sowie unveränderte Simulationszeit und unveränderten Spielzustand.
-
-Zuerst ohne weiteren Warp aufnehmen. Ein anschließend ausdrücklich angeforderter
-Diagnose-Warp darf zeigen, ob die Kameradaten aufholen. Er ist kein zulässiger
-versteckter Produktfix. Ein Größenversatz allein belegt noch keinen schwarzen
-Screenshot; dafür wären erfolgreiche Copy-/Map-Ketten und ein kausal zugeordneter
-Bildwechsel nötig.
-
-Die Produktabnahme muss korrekte Dimensionen und Szenenpixel ohne zusätzliche
-Simulationsticks nachweisen. Falls dafür eine andere Zuordnung von Render-
-Vorbereitung und Simulation nötig wird, den Vertragskonflikt vor der Umsetzung
-vorlegen. Arbeitsreihenfolge und Abschlusskriterien stehen im
-[Abschlussplan](../implementation-plan.md).
+Der nächste aktuelle Abschlussblock ist dagegen der
+[kombinierte Untersuchungsablauf](../implementation-plan.md#3-kombinierten-untersuchungsablauf-abnehmen).

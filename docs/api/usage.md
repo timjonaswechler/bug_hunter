@@ -60,6 +60,14 @@ selbst. Das Session-Plugin meldet die Capability erst, wenn RenderApp, RenderDev
 Bevys Screenshot-Kanal und das Artefaktverzeichnis verfügbar sind. Server und CLI
 benötigen dieses Feature nicht.
 
+Während der kontrollierten Session Fenstergröße und Skalierung unverändert lassen
+und das Fenster nicht auf einen anderen Bildschirm verschieben. Dynamische
+Resize-/DPI-/Bildschirmwechsel sind aus dem aktuellen Umfang zurückgestellt;
+korrekte Darstellung danach ohne Tick ist nicht zugesichert. Das Plugin führt
+keine zusätzlichen Kamera-/UI-Schedules oder Reparatur-Ticks dafür aus.
+Die [Resize-Diagnose](diagnostics/window-schedules.md) bewahrt die Erkenntnisse
+des zurückgenommenen Versuchs.
+
 ```sh
 target/debug/woodpecker --address 127.0.0.1:4100 session submit "$ID" \
   --command '{"command":"screenshot.capture","arguments":{"path":"screenshots/current.png"}}'
@@ -81,10 +89,14 @@ Der Adapter prüft das Ziel vor Annahme und erneut beim Schreiben.
 
 Aufnahmen derselben Session laufen nacheinander, da Bevy konkurrierende Aufnahmen
 des gleichen Renderziels verwirft. Der Kontrolllauf nimmt weiter Commands an.
-PNG-Encoding und Datei-I/O laufen auf einem Worker-Thread. Ein fehlender
-GPU-Readback wird nach 30 realen Sekunden mit `screenshot_failed` abgeschlossen;
-die Anwendung wird dafür nicht getickt. Verspätete Readbacks werden verworfen.
-Die Frist gilt nicht für bereits laufendes Schreiben.
+PNG-Encoding und Datei-I/O laufen auf einem Worker-Thread. Ab Aktivierung einer
+Aufnahme gilt eine Readback-Frist von 30 realen Sekunden (ohne Queue-Wartezeit).
+Ein fehlender GPU-Readback wird beim Poll nach Fristablauf mit `screenshot_failed`
+abgeschlossen; das ist keine harte Frist für die Zustellung der Response.
+Die Anwendung wird dafür nicht getickt. Die Frist wird vor der Übernahme eines
+Readbacks zum Encoding geprüft: Auch ein bereits im Kanal liegendes Bild darf
+nach Ablauf nicht mehr mit dem Schreiben beginnen. Verspätete Readbacks werden
+verworfen. Die Frist gilt nicht für bereits laufendes Encoding oder Schreiben.
 
 Für jeden Request prüft der Adapter im tatsächlichen Capture-Frame nach der
 Render-Vorbereitung, ob der Fenster-View und sein Format verfügbar sind.
@@ -573,6 +585,30 @@ sortiert. Die einzelnen Verwaltungs-, Submit- und Poll-Aufrufe geben JSON-Ergebn
 auf stdout aus. Die REPL verwendet dagegen einen Prompt, Statuszeilen und JSON-Payloads.
 
 ## Nachweise
+
+Separater echter `panic=abort`-Build (eigenes Cargo-Profil, keine simulierte
+Abort-Strategie):
+
+```sh
+cargo build --manifest-path tests/fixtures/panic_abort/Cargo.toml --locked
+cargo test --test panic_abort -- --nocapture
+```
+
+Die Fixture verweigert Builds ohne Abort-Strategie. Der Test prüft Panic-Marker vor
+Session-Ende, fehlende Tick-Completion, lokalen Report und Prozessbereinigung.
+Artefakte: `target/panic-abort-acceptance-<pid>/`.
+
+Headless-Lastnachweis mit echten großen Reflect-/Report-Ausgaben und langsamen
+Clients an der 4-MiB-Activity-Grenze:
+
+```sh
+cargo build --example activity_fixture
+cargo test --features client --test activity -- --nocapture
+```
+
+Artefakte bleiben unter `target/activity-load-<pid>/`. Eine Activity-Lücke bedeutet
+unbekannte fehlende Outcomes, keinen Erfolg. Der Test deckt weder die wartende
+Report-Queue unter Dauerlast noch alle Mehrsession-Shutdown-Fälle ab.
 
 ```sh
 cargo test --features cli --lib --test session

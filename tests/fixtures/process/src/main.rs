@@ -48,6 +48,38 @@ fn main() {
             );
             emit(json!({"status":"ready","version":3,"capabilities":{"screenshot":true}}));
         }
+        if mode == "eof_then_exit" || mode == "stdout_eof_then_exit" {
+            use std::os::unix::process::CommandExt;
+            completed(id, command, json!({"was_running":false}));
+            // The test releases natural exit only after the coordinator has
+            // observed EOF and stopped accepting commands. Polling is fixture
+            // synchronization, not a delay used to fix production ordering.
+            let script = if mode == "eof_then_exit" {
+                "exec 2>&-; while [ ! -f \"$1\" ]; do sleep 0.01; done"
+            } else {
+                "exec 1>&-; while [ ! -f \"$1\" ]; do sleep 0.01; done"
+            };
+            let error = std::process::Command::new("/bin/sh")
+                .args(["-c", script, "fixture"])
+                .arg(root.join("allow-exit"))
+                .exec();
+            panic!("could not exec gated exit fixture: {error}");
+        }
+        if mode == "close_stderr" || mode == "close_stdout" {
+            use std::os::unix::process::CommandExt;
+            completed(id, command, json!({"was_running":false}));
+            // Keep the direct child alive on stdin after EOF. No timing race:
+            // only the supervisor's cleanup can end this fixture normally.
+            let script = if mode == "close_stderr" {
+                "exec 2>&-; read ignored"
+            } else {
+                "exec 1>&-; read ignored"
+            };
+            let error = std::process::Command::new("/bin/sh")
+                .args(["-c", script])
+                .exec();
+            panic!("could not exec pipe-closure fixture: {error}");
+        }
         if mode == "exit" {
             let child = std::process::Command::new("sleep")
                 .arg("60")
@@ -72,8 +104,10 @@ fn main() {
             continue;
         }
         if mode == "reject" && command != "shutdown" {
-            emit(json!({"status":"rejected","request_id":id,"command":command,
-                "error":{"code":"business","message":"fixture"}}));
+            emit(
+                json!({"status":"rejected","request_id":id,"command":command,
+                "error":{"code":"business","message":"fixture"}}),
+            );
             continue;
         }
         if mode == "replay_exit" {

@@ -13,6 +13,7 @@ import tempfile
 import time
 
 from slice import CLI, ROOT
+from mesh_picking import rgb_pixels
 
 
 def run():
@@ -50,28 +51,27 @@ def run():
 
             session = cli("session", "create", "--config", str(ROOT / "tests/fixtures/game_menu.toml"))["id"]
 
-            def ready():
-                detail = cli("session", "inspect", session)
+            def ready(target=None):
+                detail = cli("session", "inspect", target or session)
                 assert detail["state"] not in ("Failed", "Ended"), detail
                 return detail["state"] == "Ready"
 
             until(ready, "game_menu did not become Ready; build the slice binary first")
-            cursor = None
+            cursors = {}
 
-            def command(name, arguments, rejection=None):
-                nonlocal cursor
-                pending = cli("session", "submit", session, "--command",
+            def command(name, arguments, rejection=None, target=None):
+                target = target or session
+                pending = cli("session", "submit", target, "--command",
                               json.dumps({"command": name, "arguments": arguments}))
                 assert pending["kind"] == "pending" and pending["command"] == name, pending
 
                 def completed():
-                    nonlocal cursor
-                    args = ["session", "poll", session, "--wait-ms", "100"]
-                    if cursor is not None:
-                        args += ["--cursor", json.dumps(cursor)]
+                    args = ["session", "poll", target, "--wait-ms", "100"]
+                    if target in cursors:
+                        args += ["--cursor", json.dumps(cursors[target])]
                     activity = cli(*args)
                     assert activity["kind"] == "activity", activity
-                    cursor = activity["cursor"]
+                    cursors[target] = activity["cursor"]
                     for entry in activity["entries"]:
                         event = entry["event"]
                         if event.get("request_id") == pending["request_id"] and event["kind"] != "pending":
@@ -134,11 +134,30 @@ def run():
                                if isinstance(value, float) else actual[key] == value)
                     assert matches, {"expected": expected, "actual": actual}
 
+            artifact_root = Path(cli("session", "inspect", session)["artifact_dir"])
+            screenshots = []
+
+            def capture(name, background):
+                before = state()
+                path = f"screenshots/{name}.png"
+                result = command("screenshot.capture", {"path": path})
+                assert result == {"path": path, "width": 800, "height": 600,
+                                  "overwritten": False}, result
+                width, height, pixels = rgb_pixels(artifact_root / path)
+                assert (width, height) == (800, 600)
+                # Known full-screen fixture background, away from text/buttons.
+                sample = tuple(pixels[10][30:33])
+                assert all(abs(a - b) <= 2 for a, b in zip(sample, background)), sample
+                assert state() == before, "capture advanced scene state or timers"
+                screenshots.append(str(artifact_root / path))
+                return pixels
+
             # First Time update initializes delta to zero. Timer completion in
             # Update requests a transition; it does not apply it in that tick.
             warp(1)
             expect()
             splash = named("splash-screen")
+            capture("splash", (0, 0, 128))
             warp(9)
             expect(splash_elapsed_seconds=0.9)
             warp(1)
@@ -183,6 +202,7 @@ def run():
                 assert components(button, ["bevy_ui::focus::Interaction"])[0] == "Pressed"
                 assert command("input.pointer.release", {"button": "left"}) is None
 
+            capture("main", (220, 20, 60))
             old_button = press("settings-button")
             warp(1)
             release(old_button)
@@ -256,6 +276,7 @@ def run():
             dead(new_main)
             dead(button)
             game = hierarchy("game-screen", ["game-title", "game-settings-summary"])
+            capture("pointer-game", (139, 0, 0))
             expect(game_state="Game", game_elapsed_seconds=0.1,
                    splash_elapsed_seconds=1.0, display_quality="High", volume=3)
             frozen = state()
@@ -284,11 +305,139 @@ def run():
             time.sleep(0.1)
             assert state() == frozen
 
-            cli("session", "stop", session)
-            until(lambda: cli("session", "inspect", session)["state"] == "Ended", "session did not end")
+            # Keyboard edges queue a transition in Update; the next explicit
+            # tick applies it. Capture while pending must not consume the edge.
+            def shortcut(key, name, background):
+                before = state()
+                assert command("input.keyboard.press", {"key": key}) is None
+                assert state() == before, "queued shortcut advanced the scene"
+                capture(f"{name}-pending", background)
+                warp(1)
+                assert state() == before, "shortcut applied a transition too early"
+                assert command("input.keyboard.release", {"key": key}) is None
+                assert state() == before, "queued key release advanced the scene"
+                warp(1)
+
+            old_settings_button = named("settings-button")
+            shortcut("s", "settings", (220, 20, 60))
+            expect(game_state="Menu", menu_state="Settings", game_elapsed_seconds=5.0,
+                   splash_elapsed_seconds=1.0, display_quality="High", volume=3)
+            dead(returned)
+            dead(old_settings_button)
+            settings = hierarchy("settings-menu-screen", [
+                "settings-title", "display-settings-button", "sound-settings-button", "settings-back-button",
+            ])
+            back_button = named("settings-back-button")
+            settings_pixels = capture("keyboard-settings", (220, 20, 60))
+            shortcut("escape", "main", (220, 20, 60))
+            expect(game_state="Menu", menu_state="Main", game_elapsed_seconds=5.0,
+                   splash_elapsed_seconds=1.0, display_quality="High", volume=3)
+            dead(settings)
+            dead(back_button)
+            keyboard_main = hierarchy("main-menu-screen", [
+                "main-menu-title", "new-game-button", "settings-button", "quit-button",
+            ])
+            assert capture("keyboard-main", (220, 20, 60)) != settings_pixels
+            play_button = named("new-game-button")
+            shortcut("n", "game", (220, 20, 60))
+            expect(game_state="Game", game_elapsed_seconds=0.1,
+                   splash_elapsed_seconds=1.0, display_quality="High", volume=3)
+            dead(keyboard_main)
+            dead(play_button)
+            keyboard_game = hierarchy("game-screen", ["game-title", "game-settings-summary"])
+            capture("keyboard-game", (139, 0, 0))
+            warp(51)
+            expect(game_state="Menu", menu_state="Main", game_elapsed_seconds=5.0,
+                   splash_elapsed_seconds=1.0, display_quality="High", volume=3)
+            dead(keyboard_game)
+
+            # Start the isolation witness only after the first session's
+            # captures; a second window may obscure its render surface.
+            second = cli("session", "create", "--config",
+                         str(ROOT / "tests/fixtures/game_menu.toml"))["id"]
+            until(lambda: ready(second), "second game_menu did not become Ready")
+
+            def second_state():
+                items = command("inspect.query", {
+                    "source": "entities", "entity": None,
+                    "with": ["game_menu::SessionObservation"], "without": [],
+                    "projection": {"kind": "components", "selection": {
+                        "kind": "listed", "type_paths": ["game_menu::SessionObservation"],
+                    }},
+                }, target=second)["items"]
+                assert len(items) == 1, items
+                value = items[0]["result"]["components"][0]["value"]
+                assert value["status"] == "readable", value
+                return value["value"]
+
+            assert second_state() == initial
+            # Quit is a natural application exit, not session management stop.
+            press("quit-button")
+            quit_pending = cli("session", "submit", session, "--command", json.dumps({
+                "command": "tick.warp.start", "arguments": {"ticks": 1},
+            }))
+            assert quit_pending["kind"] == "pending", quit_pending
+            until(lambda: cli("session", "inspect", session)["state"] == "Failed",
+                  "Quit did not end the session as an unexpected process exit")
+            assert cli("session", "inspect", session)["error"]["code"] == "ended"
+            quit_events = []
+
+            def quit_observed():
+                activity = cli("session", "poll", session, "--wait-ms", "100",
+                               "--cursor", json.dumps(cursors[session]))
+                assert activity["kind"] == "activity", activity
+                cursors[session] = activity["cursor"]
+                quit_events.extend(entry["event"] for entry in activity["entries"])
+                return (any(event["kind"] == "report" for event in quit_events)
+                        and any(event["kind"] == "event"
+                                and event["event"]["kind"] == "ended" for event in quit_events)
+                        and any(event.get("request_id") == quit_pending["request_id"]
+                                and event["kind"] != "pending" for event in quit_events))
+
+            until(quit_observed, "missing Quit outcome, process-end event or local report")
+            outcomes = [event for event in quit_events
+                        if event.get("request_id") == quit_pending["request_id"]
+                        and event["kind"] != "pending"]
+            # This single-tick warp finishes before the runner handles AppExit.
+            assert len(outcomes) == 1, outcomes
+            assert outcomes[0]["kind"] == "completed", outcomes
+            assert outcomes[0]["command"] == "tick.warp.start", outcomes
+            assert outcomes[0]["output"] == {
+                "requested_ticks": 1, "executed_ticks": 1, "outcome": "completed",
+            }, outcomes
+            failures = [event["event"]["failure"] for event in quit_events
+                        if event["kind"] == "event" and event["event"]["kind"] == "failure"]
+            assert len(failures) == 1, failures
+            assert failures[0]["origin"] == {"kind": "process_exit", "status": "exit status: 0"}, failures
+            ended = [event["event"]["reason"] for event in quit_events
+                     if event["kind"] == "event" and event["event"]["kind"] == "ended"]
+            assert ended == [failures[0]["origin"]], ended
+            reports = [event for event in quit_events if event["kind"] == "report"]
+            assert len(reports) == 1, reports
+            report = reports[0]
+            assert report["report"]["failure"] == failures[0], report
+            assert report["result"]["status"] == "submitted", report
+            outcome = report["result"]["outcome"]
+            assert outcome["kind"] == "created" and outcome["reference"]["kind"] == "file", outcome
+            report_path = artifact_root / outcome["reference"]["reference"]["path"]
+            assert "process exited unexpectedly" in report_path.read_text(), report_path
+            assert cli("session", "inspect", second)["state"] == "Ready"
+            assert second_state() == initial, "Quit in another session advanced the witness"
+            assert command("tick.warp.start", {"ticks": 2}, target=second) == {
+                "requested_ticks": 2, "executed_ticks": 2, "outcome": "completed",
+            }
+            witness = second_state()
+            assert math.isclose(witness["splash_elapsed_seconds"], 0.1, abs_tol=1e-6), witness
+            assert {**witness, "splash_elapsed_seconds": 0.0} == initial, witness
+            cli("session", "stop", second)
+            until(lambda: cli("session", "inspect", second)["state"] == "Ended",
+                  "second session did not end")
             cli("server", "stop")
-            assert server.wait(timeout=15) == 0
+            # The server remains usable, but reports its failed session on exit.
+            assert server.wait(timeout=15) == 1
+            assert "shutdown_incomplete" in (directory / "server.log").read_text()
             print(json.dumps({"acceptance": "passed", "scene": "game_menu",
+                              "screenshots": screenshots, "quit_report": str(report_path),
                               "evidence": str(directory)}))
         finally:
             if server.poll() is None:

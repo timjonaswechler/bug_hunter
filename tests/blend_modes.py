@@ -76,6 +76,8 @@ def run():
                     cursor = activity["cursor"]
                     for entry in activity["entries"]:
                         event = entry["event"]
+                        if event["kind"] == "event":
+                            assert event["event"]["kind"] not in ("failure", "protocol_error", "ended"), event
                         if event.get("request_id") == pending["request_id"] and event["kind"] != "pending":
                             assert event["command"] == name and event["kind"] == "completed", event
                             return event
@@ -221,8 +223,49 @@ def run():
             positions = {mode: pixel_position(entity) for mode, entity in spheres.items()}
             assert pixel_width > 0 and pixel_height > 0 and scale > 0, view
 
+            ui_camera = named("ui-camera")
+            overlays = {name: named(name) for name in ["controls", "scene-display"]}
+
+            def composition():
+                cameras = {}
+                for name, entity in [("scene", camera), ("ui", ui_camera)]:
+                    cameras[name] = component(entity, "bevy_camera::camera::Camera")
+                    assert cameras[name]["is_active"], cameras[name]
+                    assert cameras[name]["viewport"] is None, cameras[name]
+                    assert cameras[name]["computed"]["target_info"] == view, cameras[name]
+                    assert component(entity, "bevy_camera::camera::RenderTarget") == {"Window": "Primary"}
+                assert cameras["scene"]["order"] == 0 and cameras["ui"]["order"] == 1, cameras
+                assert cameras["ui"]["clear_color"] == "None", cameras["ui"]
+                regions = {}
+                for name, entity in overlays.items():
+                    center = component(entity, "bevy_ui::ui_transform::UiGlobalTransform")[-2:]
+                    size = component(entity, "bevy_ui::ui_node::ComputedNode")["size"]
+                    assert all(value > 0 for value in size), (name, size)
+                    left, top = [c - s / 2 for c, s in zip(center, size)]
+                    # UiGlobalTransform and ComputedNode use physical pixels.
+                    bounds = [math.floor(left), math.floor(top),
+                              math.ceil(left + size[0]), math.ceil(top + size[1])]
+                    assert 0 <= bounds[0] < bounds[2] <= pixel_width, (name, bounds)
+                    assert 0 <= bounds[1] < bounds[3] <= pixel_height, (name, bounds)
+                    regions[name] = bounds
+                return cameras, regions
+
+            def glyph_mask(image, bounds):
+                left, top, right, bottom = bounds
+                # White fixture text on the dark upper scene background. This
+                # checks UI output, not arbitrary image correctness or OCR.
+                return bytes(int(min(rgb) > 210 and max(rgb) - min(rgb) < 15)
+                             for row in image[top:bottom]
+                             for col in range(left, right)
+                             for rgb in [row[3 * col:3 * col + 3]])
+
+            screenshots = []
+            overlay_masks = {}
+
             def capture(name):
                 before = snapshot()
+                views, regions = composition()
+                assert snapshot() == before, "camera/UI Inspect advanced simulation"
                 path = f"screenshots/{name}.png"
                 result = command("screenshot.capture", {"path": path})
                 assert result == {"path": path, "width": pixel_width, "height": pixel_height,
@@ -231,6 +274,14 @@ def run():
                 w, h, pixels = rgb_pixels(artifact_dir / path)
                 assert (w, h) == (pixel_width, pixel_height)
                 assert any(any(row) for row in pixels), "all-black screenshot"
+                assert composition() == (views, regions), "capture changed camera or UI layout"
+                assert snapshot() == before, "capture/Inspect advanced simulation"
+                masks = {label: glyph_mask(pixels, bounds) for label, bounds in regions.items()}
+                assert all(sum(mask) > 100 for mask in masks.values()), {
+                    "capture": name, "white_glyph_pixels": {label: sum(mask) for label, mask in masks.items()},
+                }
+                overlay_masks[name] = masks
+                screenshots.append(str(artifact_dir / path))
                 return pixels
 
             def patch(image, mode):
@@ -253,6 +304,8 @@ def run():
             key("release", "arrow_down")
             warp(1)
             zero = capture("unlit-alpha-zero")
+            assert overlay_masks["unlit-alpha-zero"]["controls"] == overlay_masks["unlit-alpha-one"]["controls"]
+            assert overlay_masks["unlit-alpha-zero"]["scene-display"] != overlay_masks["unlit-alpha-one"]["scene-display"], "status text did not render its changed alpha"
             # Opaque ignores alpha. Blend/Add/Multiply at alpha zero expose the
             # achromatic checkerboard; Premultiplied keeps this fixture's RGB,
             # since it deliberately supplies the same non-premultiplied color.
@@ -269,6 +322,7 @@ def run():
             key("release", "arrow_up")
             warp(1)
             restored = capture("unlit-restored")
+            assert overlay_masks["unlit-restored"] == overlay_masks["unlit-alpha-one"], "restored alpha did not restore UI glyphs"
             for mode in spheres:
                 assert patch(full, mode) == patch(restored, mode), mode
 
@@ -353,6 +407,7 @@ def run():
             cli("server", "stop")
             assert server.wait(timeout=15) == 0
             print(json.dumps({"acceptance": "passed", "scene": "blend_modes",
+                              "screenshots": screenshots, "camera_orders": [0, 1],
                               "evidence": str(directory)}))
         finally:
             if server.poll() is None:

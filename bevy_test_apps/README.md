@@ -37,6 +37,12 @@ requests, symlink escape rejection and separate session artifact roots.
 The first session is also recorded. The test validates its JSONL header, footer,
 command count, input and screenshot entries, and exclusions for recording controls
 and commands from the second session.
+The extended test also replaces an open menu, selects an item and reopens/closes
+it, checking ordered child layout and every despawned subtree handle. Button and
+text-field layout remain stable. The complete graphical acceptance passed,
+including recording/replay and two sessions; see the completion plan for evidence.
+Logs, full CLI responses, recordings and PNGs remain under `target/ui-*`, including
+on failure.
 
 ```sh
 cargo build --features cli --bin woodpecker
@@ -91,7 +97,15 @@ positions through Inspect and sends virtual pointer input without native focus.
 It verifies explicit tick boundaries, persistent settings, screen hierarchies and
 `entity_not_found` for despawned screen/button handles. Input helpers do not tick.
 Logs and full CLI responses remain under `target/game-menu-*`, even on failure.
-Screenshots, keyboard shortcuts and the Quit button are not covered here.
+The extended test adds `s`, `Escape` and `n` shortcuts with explicit input and
+state-transition ticks, dead screen/button handles, and technical PNG checks for
+splash, menu, settings and game screens, including pending keyboard input.
+Quit is tested as an unexpected successful process exit while a second session
+remains controllable. The full extended acceptance passed after the coordinator's
+bounded EOF clarification fix: all nine PNGs, natural exit 0, process-exit failure,
+local report and post-Quit session isolation were verified. The server's final
+`shutdown_incomplete` is expected because the Quit session failed. The completion
+plan retains evidence for both the initial failing run and the successful run.
 
 ## UI drag-and-drop acceptance
 
@@ -109,8 +123,13 @@ pointer commands drag Amber onto Blue, then over empty background. Explicit tick
 drive each input step. Assertions cover the intermediate position, active tile,
 ordered drag phases, swapped or unchanged occupancy, all final tile positions and
 restored transform, outline and z-index. Idle ticks must not repeat drag events.
-No native focus or physical input is needed. Evidence remains under
-`target/ui-drag-drop-*`, including on failure. This does not test screenshots.
+No native focus or physical input is needed. The extended test also removes Amber
+during an active drag using the slice-only, tick-bound `D` scene trigger. It checks
+dead tile/child handles, hierarchy, release without an invalid swap, and a subsequent
+Blue-to-Green drag. Eight technical PNG checks cover known scene colors and frozen
+state/geometry, including a pending despawn key. The complete extended graphical
+acceptance passed; commands, results and artifact paths are recorded in the
+completion plan. Evidence remains under `target/ui-drag-drop-*`, including on failure.
 
 ## Mesh-picking acceptance
 
@@ -127,9 +146,15 @@ python3 tests/mesh_picking.py
 The test derives pointer positions from inspected camera and mesh geometry.
 It reads actual render dimensions and scale rather than assuming the requested
 window size. It checks hover, press, release and out on all three meshes, a
-horizontal cube drag, exact timed rotation and 13 screenshots over 24 explicit
-ticks. Local pixel checks distinguish neutral, cyan and yellow material states;
-other objects must not inherit the selected object's material.
+horizontal cube drag and exact timed rotation. The extended test also covers a
+vertical cube drag, diagonal sphere/cylinder drags, held-pointer stillness, release
+and renewed hover. Full quaternion checks include the normal timed rotation of
+all meshes and forbid drag increments on unselected objects. It now contains
+19 screenshots over 48 explicit ticks; the complete extended graphical acceptance
+passed. Commands, results and artifact paths are recorded in the completion plan.
+Local pixel checks distinguish neutral, cyan and yellow material states; other
+objects must not inherit the selected object's material. Three headless oracle
+tests run with `python3 -m unittest discover -s tests -p 'test_mesh_rotation.py'`.
 
 Evidence remains under `target/mesh-picking-*`. Use an available desktop.
 The [controlled visibility tests](../docs/api/diagnostics/screenshot-evidence.md)
@@ -138,6 +163,32 @@ Visible, partially covered and restored-window acceptance passed. The adapter
 rejects captures without a window surface instead of writing an unfilled buffer.
 This does not establish the cause of every historical black PNG or a lid-related
 cause.
+
+## Combined investigation fixture
+
+`logical_state --investigation` (only with `slice`) adds an opt-in reflected
+`Investigation` resource and emits one tracing error on the first explicit tick
+after a B press. Holding B does not repeat the failure. Normal `logical_state`
+behavior is unchanged. `tests/fixtures/investigation.toml` enables automatic local
+reports; `python3 tests/investigation.py` exercises recording, queued input,
+Inspect/Capture, reconnects, reports, management stop and replay in a fresh session.
+The experimental monitor selection and delayed window creation were removed on
+user request. Windows use their original automatic placement; the 640×360 size
+and fixture pixel assertions remain unchanged.
+
+Build `woodpecker` with `cli` and `logical_state` with `slice` first. This is a
+**graphical** acceptance requiring fresh approval, two sequential visible windows
+and stable window geometry. Set up the desired working display before starting.
+Confirm visibility using the printed `visible-1.json` / `visible-2.json` path;
+leave windows on their initial display. No native focus or placement manipulation.
+Before the
+first recorded tick the window may still be black; green pixels are checked only
+after the explicit layout warm-up. Results remain under `target/investigation-*/`;
+headless fixture tests are not pixel acceptance. The complete graphical run passed
+in `target/investigation-ijz15dy0/`: two sessions, five ticks each, six matching
+640×360 captures, reproduced failure/signature, closed recordings and unchanged
+reports after management stop. All test processes exited. See the
+[combined acceptance plan](../docs/api/implementation-plan.md#3-kombinierten-untersuchungsablauf-abnehmen).
 
 ## Blend-mode acceptance
 
@@ -150,11 +201,23 @@ cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin ble
 python3 tests/blend_modes.py
 ```
 
+Keep window dimensions, scale and display assignment stable during acceptance.
+Dynamic resize/DPI/display changes are deferred from the current scope. The
+experimental resize mode and presentation adapter were removed; findings remain
+in [the diagnostic record](../docs/api/diagnostics/window-schedules.md).
+
 Two real sessions verify held arrow keys, camera orbit, alpha limits, separate
 HDR/unlit/color key presses, stable material identities and two reproducible color
 sequences. The first session executes 189 ticks, the second 16.
 Six screenshots check all five blend modes at alpha endpoints, restoration,
 lit/unlit rendering, rendering with HDR enabled and a color change.
+The screenshot extension also checks both active cameras targeting the
+primary window (3D order 0, UI order 1 without clearing), inspected UI bounds and
+white glyphs in controls/status overlays. Alpha changes must update the status
+mask while controls remain stable; restoration must restore both masks. Existing
+3D color checks use the same PNGs. The full extended acceptance passed with a
+visible, stationary window; evidence and two prior failed runs are recorded in
+the completion plan. This does not establish resize/scale-change correctness.
 The test reads actual render dimensions and reuses the mesh test's PNG and
 quaternion helpers. Evidence remains under `target/blend-modes-*`.
 

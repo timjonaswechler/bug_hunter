@@ -4,6 +4,7 @@ Requires a desktop session and the CLI and context_menu binaries built with `sli
 Run from the repository root: python3 tests/ui.py
 """
 import json
+import math
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -13,6 +14,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from threading import Lock
 import zlib
 
 from slice import CLI, ROOT, until
@@ -47,8 +49,10 @@ def read_png(path):
 
 
 def run(capture_dir=None):
-    with tempfile.TemporaryDirectory(prefix="ui-", dir=ROOT / "target") as directory:
-        directory = Path(directory)
+    with (Path(tempfile.mkdtemp(prefix="ui-", dir=ROOT / "target")) / "commands.jsonl").open("w") as evidence:
+        directory = Path(evidence.name).parent
+        evidence_lock = Lock()
+        print(f"Evidence: {directory}", flush=True)
         with (directory / "server.log").open("w+") as log:
             server = subprocess.Popen(
                 [str(CLI), "--address", "127.0.0.1:0", "server", "start",
@@ -64,6 +68,10 @@ def run(capture_dir=None):
                         [str(CLI), "--address", address, *args],
                         cwd=ROOT, capture_output=True, text=True, timeout=40,
                     )
+                    with evidence_lock:
+                        evidence.write(json.dumps({"arguments": args, "exit": result.returncode,
+                                                   "stdout": result.stdout, "stderr": result.stderr}) + "\n")
+                        evidence.flush()
                     assert result.returncode == 0, (args, result.stdout, result.stderr)
                     return json.loads(result.stdout) if result.stdout.strip() else None
 
@@ -248,16 +256,119 @@ def run(capture_dir=None):
                 warp(2, second)
                 assert not state(second)["key_a_held"] and state(second)["key_a_releases"] == 1
 
+                # General Inspect must track menu replacement and recursive
+                # despawn, not only the root's menu_open flag.
+                def menu_tree(handle):
+                    before = state()
+                    tree = inspect(handle, {"kind": "hierarchy", "depth": 2})[0]["result"]["root"]
+                    assert tree["entity"] == handle and tree["name"] == "context-menu", tree
+                    assert [child["name"] for child in tree["children"]] == [
+                        "item-fuchsia", "item-gray", "item-maroon", "item-purple", "item-teal",
+                    ], tree
+                    assert all(len(child["children"]) == 1 for child in tree["children"]), tree
+                    assert state() == before, "hierarchy Inspect advanced simulation"
+                    return tree
+
+                def dead_tree(tree):
+                    handles = [tree["entity"]]
+                    for child in tree["children"]:
+                        handles.append(child["entity"])
+                        handles.extend(text["entity"] for text in child["children"])
+                    for handle in handles:
+                        command("inspect.query", {
+                            "source": "entities", "entity": handle, "with": [], "without": [],
+                            "projection": {"kind": "summary"},
+                        }, rejection="entity_not_found")
+
+                def layout(handle):
+                    transform, node = components(handle, [
+                        "bevy_ui::ui_transform::UiGlobalTransform", "bevy_ui::ui_node::ComputedNode",
+                    ])
+                    return transform[-2:], node["size"]
+
+                def menu_layout(tree, anchor):
+                    before = state()
+                    center, size = layout(tree["entity"])
+                    assert all(value > 0 for value in size), size
+                    top_left = [c - s / 2 for c, s in zip(center, size)]
+                    # This fixture fixes scale_factor=1. Bevy/Taffy rounds
+                    # root layout locations to physical pixels (half away
+                    # from zero); pointer positions may remain half-pixels.
+                    rounded_anchor = [math.floor(value + 0.5) for value in anchor]
+                    assert all(abs(a - b) < 0.01 for a, b in zip(top_left, rounded_anchor)), (top_left, anchor)
+                    last_y = top_left[1]
+                    for child in tree["children"]:
+                        point, extent = layout(child["entity"])
+                        assert all(value > 0 for value in extent), extent
+                        assert point[1] > last_y, tree
+                        for axis in range(2):
+                            assert point[axis] - extent[axis] / 2 >= top_left[axis] - 0.01
+                            assert point[axis] + extent[axis] / 2 <= top_left[axis] + size[axis] + 0.01
+                        last_y = point[1]
+                    assert state() == before, "layout Inspect advanced simulation"
+
+                old_tree = menu_tree(menu)
+                button_center, button_size = layout(button)
+                field = named("text-input")
+                field_layout = layout(field)
+                menu_layout(old_tree, button_center)
+                # The menu starts at the original pointer position. An inspected
+                # point in the button's left half remains outside that overlay.
+                replacement_position = [button_center[0] - button_size[0] / 4, button_center[1]]
+                before = state()
+                command("input.pointer.move_to", {"position": replacement_position})
+                command("input.pointer.press", {"button": "left"})
+                assert state() == before and menu_tree(menu) == old_tree
+                warp(1)
+                replacement = named("context-menu")
+                assert replacement != menu
+                assert state()["menu_open"] and state()["selected_item"] == "none"
+                dead_tree(old_tree)
+                replacement_tree = menu_tree(replacement)
+                menu_layout(replacement_tree, replacement_position)
+                capture("screenshots/menu-replaced.png")
+                command("input.pointer.release", {"button": "left"})
+                warp(1)
+
+                item = replacement_tree["children"][0]["entity"]
+                item_position, _ = layout(item)
+                assert 0 < item_position[0] < 640 and 0 < item_position[1] < 360, item_position
+                before = state()
+                command("input.pointer.move_to", {"position": item_position})
+                command("input.pointer.press", {"button": "left"})
+                assert state() == before and menu_tree(replacement) == replacement_tree
+                warp(1)
+                assert not state()["menu_open"] and state()["selected_item"] == "fuchsia", state()
+                dead_tree(replacement_tree)
+                capture("screenshots/menu-selected.png")
+                command("input.pointer.release", {"button": "left"})
+                warp(1)
+
+                # Reopen, then close through the real background observer.
+                # Persistent button and text-field layout must survive the menus.
+                assert layout(button) == (button_center, button_size)
+                assert layout(field) == field_layout
+                before = state()
+                command("input.pointer.move_to", {"position": button_center})
+                command("input.pointer.press", {"button": "left"})
+                assert state() == before
+                warp(1)
+                menu = named("context-menu")
+                assert menu not in (old_tree["entity"], replacement)
+                reopened_tree = menu_tree(menu)
+                menu_layout(reopened_tree, button_center)
+                assert state()["menu_open"] and state()["selected_item"] == "fuchsia"
+                command("input.pointer.release", {"button": "left"})
+                warp(1)
+
                 # Close through the real background observer, then verify the old handle is dead.
                 command("input.pointer.move_to", {"position": [1.0, 1.0]})
                 command("input.pointer.press", {"button": "left"})
                 assert state()["menu_open"]
                 warp(1)
                 assert not state()["menu_open"]
-                command("inspect.query", {
-                    "source": "entities", "entity": menu, "with": [], "without": [],
-                    "projection": {"kind": "summary"},
-                }, rejection="entity_not_found")
+                dead_tree(reopened_tree)
+                assert state()["selected_item"] == "fuchsia"
                 command("input.pointer.release", {"button": "left"})
                 warp(1)
 
@@ -342,7 +453,7 @@ def run(capture_dir=None):
                 cli("server", "stop")
                 assert server.wait(timeout=15) == 0
                 print(json.dumps({"acceptance": "passed", "scene": "context_menu", "sessions": 2,
-                                  "bevy": "0.19.1"}))
+                                  "bevy": "0.19.1", "evidence": str(directory)}))
             finally:
                 if server.poll() is None:
                     server.send_signal(signal.SIGINT)
@@ -354,6 +465,7 @@ def run(capture_dir=None):
                 if sys.exc_info()[0] is not None:
                     log.seek(0)
                     print(log.read(), file=sys.stderr)
+                server.stdout.close()
 
 
 if __name__ == "__main__":

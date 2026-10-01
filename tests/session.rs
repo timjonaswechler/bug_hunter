@@ -259,6 +259,54 @@ fn replay_technical_failures_are_completions_not_old_outcome_comparisons() {
 }
 
 #[test]
+fn unexpected_exit_during_replay_closes_recording_without_dispatching_the_tail() {
+    use serde_json::json;
+    let settings = config("replay_exit");
+    let root = settings.artifact_dir.clone();
+    let mut session = Session::start(settings).unwrap();
+    replay_file(&root, "input.jsonl", &[recorded_warp(1), recorded_warp(7)]);
+    let recording = session
+        .send(recording::Start {
+            path: "interrupted.jsonl".into(),
+        })
+        .unwrap();
+    session.receive(recording).unwrap();
+    let replay = session
+        .send(replay::Start {
+            path: "input.jsonl".into(),
+        })
+        .unwrap();
+    assert!(matches!(session.receive(replay).unwrap().outcome,
+        replay::Outcome::Blocked { code, .. } if code == "session_ended"));
+    assert!(matches!(session.receive_event().unwrap(),
+        session::Event::Failure { failure } if matches!(failure.origin(), report::Origin::ProcessExit { .. })));
+    assert!(matches!(
+        session.receive_event().unwrap(),
+        session::Event::Ended { .. }
+    ));
+    let lines = recording_lines(&root, "interrupted.jsonl");
+    assert_eq!(
+        lines,
+        vec![
+            json!({"type":"recording_started","format_version":1}),
+            recorded_warp(1),
+            json!({"type":"recording_ended","outcome":"session_ended","recorded_commands":1}),
+        ]
+    );
+    assert!(!session.history().iter().any(|entry|
+        matches!(&entry.command, woodpecker::command::Command::Start(start) if start.ticks == 7)));
+    let pid: i32 = std::fs::read_to_string(root.join("pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
+}
+
+#[test]
 fn recording_orders_outcomes_and_excludes_controls_and_shutdown() {
     let config = config("normal");
     let root = config.artifact_dir.clone();
@@ -556,6 +604,103 @@ fn protocol_errors_are_correlated_without_poisoning_other_work() {
     );
     assert!(!session.capabilities().screenshot);
     session.shutdown().unwrap();
+}
+
+#[test]
+fn eof_before_natural_exit_preserves_status_and_failure() {
+    for mode in ["eof_then_exit", "stdout_eof_then_exit"] {
+        assert_natural_exit_after_eof(mode);
+    }
+}
+
+fn assert_natural_exit_after_eof(mode: &str) {
+    let config = config(mode);
+    let root = config.artifact_dir.clone();
+    let mut session = Session::start(config).unwrap();
+    let response = session.send(warp::Stop {}).unwrap();
+    assert!(!session.receive(response).unwrap().was_running);
+    let mut pending = Vec::new();
+    // Refusal is the synchronization point: the coordinator has seen EOF.
+    // The child cannot exit naturally until we release it below.
+    wait(|| match session.send(warp::Stop {}) {
+        Ok(request) => {
+            pending.push(request);
+            false
+        }
+        Err(session::Error::Ended) => true,
+        Err(error) => panic!("unexpected refusal: {error}"),
+    });
+    std::fs::write(root.join("allow-exit"), b"exit now").unwrap();
+    let mut events = Vec::new();
+    wait(|| match session.try_receive_event() {
+        Ok(Some(event)) => {
+            let ended = matches!(event, session::Event::Ended { .. });
+            events.push(event);
+            ended
+        }
+        Ok(None) => false,
+        Err(error) => panic!("missing Ended event: {error}"),
+    });
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert!(
+        matches!(&events[0], session::Event::Failure { failure }
+        if matches!(failure.origin(), report::Origin::ProcessExit { status }
+            if status == "exit status: 0")),
+        "{events:?}"
+    );
+    assert!(
+        matches!(&events[1], session::Event::Ended {
+        reason: session::EndReason::ProcessExit { status },
+    } if status == "exit status: 0"),
+        "{events:?}"
+    );
+    for request in pending {
+        assert!(matches!(
+            session.receive(request),
+            Err(session::Error::Ended)
+        ));
+    }
+    assert!(matches!(
+        session.try_receive_event(),
+        Err(session::Error::Ended)
+    ));
+}
+
+#[test]
+fn pipe_eof_with_live_child_remains_transport_end_without_process_failure() {
+    for (mode, expected_channel) in [("close_stderr", "stderr"), ("close_stdout", "stdout")] {
+        let config = config(mode);
+        let root = config.artifact_dir.clone();
+        let mut session = Session::start(config).unwrap();
+        let pending = session.send(warp::Stop {}).unwrap();
+        let mut ended = None;
+        wait(|| match session.try_receive_event() {
+            Ok(Some(event)) => {
+                ended = Some(event);
+                true
+            }
+            Ok(None) => false,
+            Err(error) => panic!("event channel ended without terminal event: {error}"),
+        });
+        assert!(matches!(
+            ended,
+            Some(session::Event::Ended {
+                reason: session::EndReason::TransportClosed { channel },
+            }) if channel == expected_channel
+        ));
+        // The pre-EOF response survives cleanup; no fabricated ProcessExit
+        // failure precedes the Ended event or follows the host's own kill.
+        assert!(!session.receive(pending).unwrap().was_running);
+        assert!(matches!(
+            session.try_receive_event(),
+            Err(session::Error::Ended)
+        ));
+        let pid: i32 = std::fs::read_to_string(root.join("pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "fixture survived cleanup");
+    }
 }
 
 #[test]

@@ -40,5 +40,9 @@ path = "src/cli/main.rs"
 required-features = ["cli"]
 
 [[example]]
+name = "activity_fixture"
+path = "tests/fixtures/activity.rs"
+
+[[example]]
 name = "observation_fixture"
 path = "tests/fixtures/observation.rs"

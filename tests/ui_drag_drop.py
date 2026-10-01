@@ -12,6 +12,7 @@ import tempfile
 import time
 
 from slice import CLI, ROOT
+from mesh_picking import rgb_pixels
 
 
 def run():
@@ -57,7 +58,7 @@ def run():
             until(ready, "ui_drag_drop did not become Ready; build the slice binary first")
             cursor = None
 
-            def command(name, arguments):
+            def command(name, arguments, rejection=None):
                 nonlocal cursor
                 pending = cli("session", "submit", session, "--command",
                               json.dumps({"command": name, "arguments": arguments}))
@@ -73,12 +74,19 @@ def run():
                     cursor = activity["cursor"]
                     for entry in activity["entries"]:
                         event = entry["event"]
+                        if event["kind"] == "event":
+                            assert event["event"]["kind"] not in ("failure", "protocol_error", "ended"), event
                         if event.get("request_id") == pending["request_id"] and event["kind"] != "pending":
-                            assert event["command"] == name and event["kind"] == "completed", event
+                            assert event["command"] == name, event
                             return event
                     return None
 
-                return until(completed, f"no outcome for {name} #{pending['request_id']}")["output"]
+                event = until(completed, f"no outcome for {name} #{pending['request_id']}")
+                if rejection:
+                    assert event["kind"] == "rejected" and event["error"]["code"] == rejection, event
+                    return None
+                assert event["kind"] == "completed", event
+                return event["output"]
 
             def inspect(handle=None, projection=None):
                 return command("inspect.query", {
@@ -155,6 +163,42 @@ def run():
                     ]
                 }
 
+            artifact_root = Path(cli("session", "inspect", session)["artifact_dir"])
+            screenshots = []
+
+            def capture(name, samples):
+                before = state()
+                geometry = {tile: position(tiles[tile]) for tile in tiles}
+                looks = {tile: appearance(tiles[tile]) for tile in tiles}
+                path = f"screenshots/{name}.png"
+                result = command("screenshot.capture", {"path": path})
+                assert result == {"path": path, "width": 640, "height": 480,
+                                  "overwritten": False}, result
+                width, height, pixels = rgb_pixels(artifact_root / path)
+                assert (width, height) == (640, 480)
+                corner = tuple(pixels[10][30:33])
+                assert all(abs(a - b) <= 2 for a, b in zip(corner, (15, 18, 26))), corner
+                for tile in samples:
+                    x, y = geometry[tile]
+                    size = component(tiles[tile], "bevy_ui::ui_node::ComputedNode")["size"]
+                    # Inside the known tile, away from borders and centered text.
+                    x, y = round(x), round(y - size[1] / 4)
+                    assert 0 <= x < width and 0 <= y < height, (tile, x, y)
+                    r, g, b = pixels[y][3 * x:3 * x + 3]
+                    matches = {
+                        "Amber": r > g > b,
+                        "Blue": b > g > r,
+                        "Green": g > b > r,
+                        "Rose": r > b > g,
+                    }
+                    assert matches[tile] and max(r, g, b) - min(r, g, b) > 40, (tile, r, g, b)
+                assert state() == before, "capture advanced scene state or input"
+                assert {tile: position(tiles[tile]) for tile in tiles} == geometry
+                assert {tile: appearance(tiles[tile]) for tile in tiles} == looks
+                screenshots.append(str(artifact_root / path))
+                return pixels
+
+            capture("initial", tiles)
             resting = appearance(amber)
             ax, ay = original["Amber"]
             bx, by = original["Blue"]
@@ -171,6 +215,7 @@ def run():
             expect(active_tile="Amber", drag_start_events=1, drag_events=1,
                    drag_sequence=["DragStart", "Drag"])
             assert position(amber) == midpoint
+            capture("drag-midpoint", ["Amber"])
             dragging = appearance(amber)
             assert dragging["bevy_ui::ui_node::GlobalZIndex"] == 1, dragging
             assert all(dragging[path] != resting[path] for path in resting), dragging
@@ -192,6 +237,7 @@ def run():
             assert appearance(amber) == resting
             swapped = {**original, "Amber": original["Blue"], "Blue": original["Amber"]}
             assert {name: position(tile) for name, tile in tiles.items()} == swapped
+            capture("swapped", tiles)
 
             # A second drag leaves the grid and releases over empty background.
             # Read the actual size to prove that the destination is outside all
@@ -227,12 +273,89 @@ def run():
             assert state() == ended, "idle ticks repeated drag/drop events"
             assert {name: position(tile) for name, tile in tiles.items()} == swapped
 
+            capture("invalid-drop-restored", tiles)
+
+            # Begin a third drag, then use the scene's tick-bound D trigger.
+            move(position(amber))
+            warp(1)
+            button("press")
+            warp(1)
+            start = position(amber)
+            move([start[0], start[1] - 24])
+            warp(1)
+            active = state()
+            assert active["active_tile"] == "Amber", active
+            assert active["drag_start_events"] == ended["drag_start_events"] + 1, active
+            assert active["drag_events"] == ended["drag_events"] + 1, active
+            amber_children = inspect(amber, {"kind": "hierarchy", "depth": 1})[0]["result"]["root"]["children"]
+            survivors = {name: position(tile) for name, tile in tiles.items() if name != "Amber"}
+            before_despawn = capture("despawn-before", ["Amber"])
+            assert command("input.keyboard.press", {"key": "d"}) is None
+            assert state() == active, "despawn key ran without a tick"
+            assert capture("despawn-pending", ["Amber"]) == before_despawn
+            warp(1)
+
+            def dead(handle):
+                command("inspect.query", {
+                    "source": "entities", "entity": handle, "with": [], "without": [],
+                    "projection": {"kind": "summary"},
+                }, rejection="entity_not_found")
+
+            dead(amber)
+            for child in amber_children:
+                dead(child["entity"])
+            del tiles["Amber"]
+            removed = state()
+            assert removed["active_tile"] is None, removed
+            assert removed["occupancy"] == ["Blue", "Green", "Rose"], removed
+            root = inspect(grid, {"kind": "hierarchy", "depth": 1})[0]["result"]["root"]
+            assert [child["entity"] for child in root["children"]] == list(tiles.values()), root
+            assert {name: position(tile) for name, tile in tiles.items()} == survivors
+            capture("despawned", tiles)
+            assert command("input.keyboard.release", {"key": "d"}) is None
+            move(position(blue))
+            warp(1)
+            button("release")
+            warp(1)
+            released = state()
+            assert released["active_tile"] is None, released
+            assert released["occupancy"] == removed["occupancy"], released
+            assert released["drag_drop_events"] == removed["drag_drop_events"], released
+            assert {name: position(tile) for name, tile in tiles.items()} == survivors
+            dead(amber)
+            # Do not assume a normal DragEnd observer sequence for a dead entity.
+            # A new successful drag proves the virtual left button was released.
+            blue_resting = appearance(blue)
+            move(position(blue))
+            warp(1)
+            button("press")
+            warp(1)
+            source = position(blue)
+            move([source[0] + 24, source[1]])
+            warp(1)
+            resumed = state()
+            assert resumed["active_tile"] == "Blue", resumed
+            assert resumed["drag_start_events"] == released["drag_start_events"] + 1, resumed
+            move(position(tiles["Green"]))
+            warp(1)
+            button("release")
+            warp(1)
+            final = state()
+            assert final["active_tile"] is None, final
+            assert final["occupancy"] == ["Green", "Blue", "Rose"], final
+            assert final["drag_drop_events"] == released["drag_drop_events"] + 1, final
+            assert final["drag_end_events"] == released["drag_end_events"] + 1, final
+            assert appearance(blue) == blue_resting
+            assert position(blue) == survivors["Green"]
+            assert position(tiles["Green"]) == survivors["Blue"]
+            assert position(tiles["Rose"]) == survivors["Rose"]
+            capture("recovered-drop", tiles)
             cli("session", "stop", session)
             until(lambda: cli("session", "inspect", session)["state"] == "Ended", "session did not end")
             cli("server", "stop")
             assert server.wait(timeout=15) == 0
             print(json.dumps({"acceptance": "passed", "scene": "ui_drag_drop",
-                              "evidence": str(directory)}))
+                              "screenshots": screenshots, "evidence": str(directory)}))
         finally:
             if server.poll() is None:
                 server.send_signal(signal.SIGINT)

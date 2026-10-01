@@ -26,6 +26,23 @@ def rotate(q, v):
             vz + w * tz + x * ty - y * tx]
 
 
+def tick_rotation(q, delta=(0.0, 0.0)):
+    """Fixture oracle: world Y/X drag in PreUpdate, then 20 ms of Y spin."""
+    def product(a, b):
+        x, y, z, w = a
+        vx, vy, vz, vw = b
+        return [w * vx + x * vw + y * vz - z * vy,
+                w * vy - x * vz + y * vw + z * vx,
+                w * vz + x * vy - y * vx + z * vw,
+                w * vw - x * vx - y * vy - z * vz]
+
+    dx, dy = delta
+    yaw = [0.0, math.sin(dx * 0.01), 0.0, math.cos(dx * 0.01)]
+    pitch = [math.sin(dy * 0.01), 0.0, 0.0, math.cos(dy * 0.01)]
+    spin = [0.0, math.sin(0.005), 0.0, math.cos(0.005)]
+    return product(spin, product(pitch, product(yaw, q)))
+
+
 def rgb_pixels(path):
     width, height, scanlines = read_png(path)
     stride = width * 3
@@ -117,6 +134,8 @@ def run():
                     cursor = activity["cursor"]
                     for entry in activity["entries"]:
                         event = entry["event"]
+                        if event["kind"] == "event":
+                            assert event["event"]["kind"] not in ("failure", "protocol_error", "ended"), event
                         if event.get("request_id") == pending["request_id"] and event["kind"] != "pending":
                             assert event["command"] == name and event["kind"] == "completed", event
                             return event
@@ -159,10 +178,14 @@ def run():
             camera = named("scene-camera")
             assert component(camera, "bevy_camera::camera::Camera")["is_active"] is False
 
+            total_ticks = 0
+
             def warp(ticks):
+                nonlocal total_ticks
                 result = command("tick.warp.start", {"ticks": ticks})
                 assert result == {"requested_ticks": ticks, "executed_ticks": ticks,
                                   "outcome": "completed"}, result
+                total_ticks += ticks
 
             def expect_yaw(mesh, angle):
                 actual = transform(mesh)
@@ -212,6 +235,8 @@ def run():
                 assert command(name, arguments) is None
                 assert snapshot() == frozen, "input ran before an explicit tick"
 
+            screenshots = []
+
             def capture(name):
                 frozen = snapshot()
                 path = f"screenshots/{name}.png"
@@ -221,6 +246,7 @@ def run():
                 assert snapshot() == frozen, "screenshot advanced simulation"
                 width, height, pixels = rgb_pixels(artifact_dir / path)
                 assert (width, height) == (pixel_width, pixel_height)
+                screenshots.append(str(artifact_dir / path))
                 return pixels
 
             def patch_color(image, point):
@@ -300,11 +326,79 @@ def run():
             time.sleep(0.1)
             assert snapshot() == frozen
 
+            # Extend the existing horizontal cube case with noncommuting X/Y
+            # rotations. Picking observers run in PreUpdate, before timed spin
+            # in Update; Transform.rotate_* premultiplies world-axis rotations.
+            def checked_tick(dragged=None, delta=(0.0, 0.0)):
+                before = snapshot()
+                warp(1)
+                after = snapshot()
+                for name in meshes:
+                    prior_state, prior_transform = before[name]
+                    actual_state, actual_transform = after[name]
+                    expected = tick_rotation(prior_transform["rotation"],
+                                             delta if name == dragged else (0.0, 0.0))
+                    assert all(math.isclose(a, b, rel_tol=0, abs_tol=1e-6)
+                               for a, b in zip(actual_transform["rotation"], expected)), {
+                                   "mesh": name, "expected": expected, "actual": actual_transform,
+                               }
+                    assert actual_transform["translation"] == initial[name]["translation"]
+                    assert actual_transform["scale"] == initial[name]["scale"]
+                    assert actual_state["drag_events"] == prior_state["drag_events"] + int(name == dragged), after
+                if dragged:
+                    assert after[dragged][0]["last_interaction"] == "Drag", after
+
+            for name, delta in [
+                ("center-cube", [0.0, 12.0]),
+                ("left-sphere", [12.0, 12.0]),
+                ("right-cylinder", [-12.0, 12.0]),
+            ]:
+                mesh = meshes[name]
+                point = screen_position(mesh)
+                count = state(mesh)["drag_events"]
+                input_command("input.pointer.move_to", {"position": point})
+                checked_tick()
+                assert state(mesh) == {"last_interaction": "Hover", "drag_events": count}
+                input_command("input.pointer.press", {"button": "left"})
+                checked_tick()
+                assert state(mesh) == {"last_interaction": "Press", "drag_events": count}
+                input_command("input.pointer.move_by", {"delta": delta})
+                # Capture may neither consume the pending delta nor spin meshes.
+                pending_image = capture(f"{name}-drag-pending")
+                color = patch_color(pending_image, point)
+                assert color[0] > color[2] + 15 and color[1] > color[2] + 15, (name, color)
+                checked_tick(name, delta)
+                image = capture(f"{name}-dragged")
+                color = patch_color(image, point)
+                assert color[0] > color[2] + 15 and color[1] > color[2] + 15, (name, color)
+                for other, other_point in positions.items():
+                    if other != name:
+                        neutral = patch_color(image, other_point)
+                        assert min(neutral) > 40 and max(neutral) - min(neutral) < 35, (other, neutral)
+                checked_tick()  # Holding still must not repeat the drag delta.
+                assert state(mesh)["drag_events"] == count + 1
+                input_command("input.pointer.release", {"button": "left"})
+                checked_tick()
+                assert state(mesh) == {"last_interaction": "Release", "drag_events": count + 1}
+                input_command("input.pointer.move_to", {"position": [width - 10, height - 10]})
+                checked_tick()
+                assert state(mesh) == {"last_interaction": "Out", "drag_events": count + 1}
+                input_command("input.pointer.move_to", {"position": screen_position(mesh)})
+                checked_tick()
+                assert state(mesh) == {"last_interaction": "Hover", "drag_events": count + 1}
+                input_command("input.pointer.move_to", {"position": [width - 10, height - 10]})
+                checked_tick()
+                assert state(mesh) == {"last_interaction": "Out", "drag_events": count + 1}
+
+            assert {name: state(mesh)["drag_events"] for name, mesh in meshes.items()} == {
+                "center-cube": 2, "left-sphere": 1, "right-cylinder": 1,
+            }
             cli("session", "stop", session)
             until(lambda: cli("session", "inspect", session)["state"] == "Ended", "session did not end")
             cli("server", "stop")
             assert server.wait(timeout=15) == 0
             print(json.dumps({"acceptance": "passed", "scene": "mesh_picking",
+                              "ticks": total_ticks, "screenshots": screenshots,
                               "evidence": str(directory)}))
         finally:
             if server.poll() is None:
