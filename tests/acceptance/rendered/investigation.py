@@ -13,8 +13,9 @@ import signal
 import subprocess
 import tempfile
 
-from slice import CLI, ROOT, until
-from mesh_picking import rgb_pixels
+from tests.support.runtime import ROOT, until, cli_call, spawn_server
+from tests.support.images import rgb_pixels
+from tests.support.lifecycle import managed_end
 
 
 MESSAGE = "recorded B press reproduced the fixture failure"
@@ -41,16 +42,6 @@ def pixels(path):
     return rows
 
 
-def managed_end(events):
-    # target.md: successful shutdown has a command outcome and a server lifecycle
-    # transition, not session::Event::Ended (which denotes unexpected termination).
-    shutdown = [e for e in events if e["kind"] == "completed" and e["command"] == "shutdown"]
-    ended = [e for e in events if e["kind"] == "lifecycle" and e["state"] == "Ended"]
-    assert len(shutdown) == 1 and shutdown[0]["output"] is None, shutdown
-    assert len(ended) == 1 and ended[0]["error"] is None, ended
-    assert not any(e["kind"] == "event" and e["event"]["kind"] == "ended" for e in events), events
-
-
 def gone(pid):
     try:
         os.kill(pid, 0)
@@ -64,23 +55,14 @@ def run():
     config = ROOT / "tests/fixtures/investigation.toml"
     print(json.dumps({"evidence": str(directory)}), flush=True)
     with (directory / "server.log").open("w") as log, (directory / "cli.jsonl").open("w") as journal:
-        server = subprocess.Popen(
-            [str(CLI), "--address", "127.0.0.1:0", "server", "start",
-             "--artifact-dir", str(directory / "artifacts"), "--shutdown-seconds", "10"],
-            cwd=ROOT, stdout=subprocess.PIPE, stderr=log, text=True,
-        )
+        server = spawn_server(directory, log)
         try:
             assert select.select([server.stdout], [], [], 10)[0], "no server Ready"
             address = json.loads(server.stdout.readline())["address"]
 
             def cli(*args):
-                result = subprocess.run([str(CLI), "--address", address, *args], cwd=ROOT,
-                                        capture_output=True, text=True, timeout=40)
-                journal.write(json.dumps({"args": args, "status": result.returncode,
-                                          "stdout": result.stdout, "stderr": result.stderr}) + "\n")
-                journal.flush()
-                assert result.returncode == 0, (args, result.stdout, result.stderr)
-                return json.loads(result.stdout) if result.stdout.strip() else None
+                return cli_call(address, *args, journal=journal,
+                                journal_keys=("args", "status"), allow_empty=True)
 
             class Session:
                 def __init__(self, index):

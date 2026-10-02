@@ -1,7 +1,7 @@
 """Real CLI -> HTTP/WebSocket -> session -> Bevy acceptance, without transport adapters.
 
 Run after building both binaries, from the repository root:
-    python3 tests/slice.py
+    python3 -m tests.acceptance.headless.session_lifecycle
 """
 import json
 import os
@@ -14,45 +14,22 @@ import time
 import urllib.error
 import urllib.request
 
-ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "target/debug/woodpecker"
-
-
-def until(callback, timeout=90):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        result = callback()
-        if result:
-            return result
-        time.sleep(0.025)
-    raise AssertionError("condition did not become true")
+from tests.support.runtime import ROOT, until, cli_call, spawn_server
+from tests.acceptance.headless.automatic_reports import check_automatic_reports
 
 
 def run():
     with tempfile.TemporaryDirectory(prefix="slice-", dir=ROOT / "target") as directory:
         directory = Path(directory)
         log = (directory / "server.log").open("w+")
-        server = subprocess.Popen(
-            [str(CLI), "--address", "127.0.0.1:0",
-             "server", "start", "--artifact-dir", str(directory / "artifacts"),
-             "--shutdown-seconds", "10"],
-            cwd=ROOT, stdout=subprocess.PIPE, stderr=log, text=True,
-        )
+        server = spawn_server(directory, log)
         try:
             assert select.select([server.stdout], [], [], 10)[0], "no server Ready"
             ready = json.loads(server.stdout.readline())
             address = ready["address"]
 
             def cli(*args, success=True):
-                result = subprocess.run(
-                    [str(CLI), "--address", address, *args],
-                    cwd=ROOT, capture_output=True, text=True, timeout=40,
-                )
-                if success:
-                    assert result.returncode == 0, (args, result.stdout, result.stderr)
-                else:
-                    assert result.returncode != 0, args
-                return json.loads(result.stdout) if result.stdout.strip() else None
+                return cli_call(address, *args, success=success, allow_empty=True)
 
             def state(session, expected):
                 detail = cli("session", "inspect", session)
@@ -207,6 +184,10 @@ def run():
             cli("session", "stop", starting)
             until(lambda: state(starting, "Ended"))
 
+            # Share the server rather than running the same launch/client/stop
+            # boilerplate in a separate automatic-report acceptance program.
+            check_automatic_reports(cli, directory)
+
             missing = directory / "missing.toml"
             missing.write_text(config.read_text().replace("bevy_test_apps/Cargo.toml", "missing/Cargo.toml"))
             failed = cli("session", "create", "--config", str(missing))["id"]
@@ -222,7 +203,8 @@ def run():
                 pass
             assert (directory / "artifacts" / first).is_dir()
             assert (directory / "artifacts" / second).is_dir()
-            print(json.dumps({"acceptance": "passed", "sessions": 4, "bevy": "0.19.1"}))
+            print(json.dumps({"acceptance": "passed", "sessions": 6, "bevy": "0.19.1",
+                              "scenarios": ["lifecycle", "recording_replay", "automatic_reports"]}))
         finally:
             if server.poll() is None:
                 server.send_signal(signal.SIGINT)

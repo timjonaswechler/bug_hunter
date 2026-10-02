@@ -10,7 +10,7 @@ Entity-Inspect unterstützt Handle-Abfragen, Componentfilter, Summary, Component
 Component-Werte und Hierarchien. Adapter-, Codec- und Plugin-Tests prüfen diese Varianten
 einschließlich unverändertem Anwendungszustand und unveränderter Zeit zwischen Warps.
 Der reale Context-Menu-Ablauf über Server, Pointer-Eingabe und Warp ist in
-`tests/ui.py` geprüft. Er findet den Button per allgemeinem Inspect und liest seine
+`tests/acceptance/rendered/context_menu.py` geprüft. Er findet den Button per allgemeinem Inspect und liest seine
 Layoutposition, statt Koordinaten für den Klick festzuschreiben.
 Pointer-Erfolg bestätigt nur die Vormerkung. Bevy erhält die Input-Messages erst
 beim nächsten Tick. Der Kontrolllauf entleert zwischen Ticks den Render-Zeitkanal,
@@ -19,7 +19,7 @@ ohne die Simulationszeit fortzuschreiben.
 Der Pointer ist virtuell und sessionlokal. Commands bewegen den Betriebssystem-Cursor
 nicht und funktionieren ohne nativen Fensterfokus. Native Maus-, Touch-, Keyboard-
 und IME-Eingaben werden verworfen, Resize-/Close-Ereignisse bleiben erhalten.
-`tests/ui.py` steuert zwei gleichzeitig laufende Anwendungen mit getrennten Buttonzuständen.
+`tests/acceptance/rendered/context_menu.py` steuert zwei gleichzeitig laufende Anwendungen mit getrennten Buttonzuständen.
 Keyboard-Commands halten Tasten pro Session bis zum ausdrücklichen Release.
 Die Abnahme prüft `a` in beiden Sessions vor und nach Ticks sowie über mehrere Ticks.
 Text-Commands verwenden den beim Annehmen geprüften Bevy-Fokus. Die Abnahme fokussiert
@@ -50,7 +50,7 @@ Die gerenderte Abnahme benötigt eine Desktop-Sitzung:
 ```sh
 cargo build --features cli --bin woodpecker
 cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin context_menu
-python3 tests/ui.py
+python3 -m tests.acceptance.rendered.context_menu
 ```
 
 ## Screenshot
@@ -114,7 +114,7 @@ Einschränkung. Eine tatsächlich schwarze Szene bleibt ein gültiges Bild; Pixe
 werden nicht zur Verfügbarkeitsprüfung benutzt. Der Command vergleicht das Bild
 nicht mit einem Sollbild und bewertet nicht die visuelle Richtigkeit des Spiels.
 
-`tests/ui.py` prüft vollständige PNGs, sichtbare Menüänderung nach einem ausdrücklichen
+`tests/acceptance/rendered/context_menu.py` prüft vollständige PNGs, sichtbare Menüänderung nach einem ausdrücklichen
 Tick, Überschreiben, parallele Requests und Session-Isolation. Tickzähler,
 simulierte Zeit und Anwendungszustand bleiben während Capture unverändert.
 Mit `--capture-dir target/ui-captures` bleiben die Bilder nach der Abnahme erhalten.
@@ -197,9 +197,9 @@ zulässig. Weitere Starts ergeben `replay_already_running`, andere Commands
 Stop während des Ladens wartet auf die Bestätigung der Ladeaufgabe.
 Eine vorher angenommene Recording-Dateibarriere hält auch den Loader zurück.
 
-`tests/slice.py` prüft eine echte Zähleraufnahme, vollständige Vorabvalidierung
+`tests/acceptance/headless/session_lifecycle.py` prüft eine echte Zähleraufnahme, vollständige Vorabvalidierung
 ohne Tick sowie Verwaltungs-Stopp bei gleichzeitigem Replay und Recording.
-`tests/ui.py` enthält zusätzlich die Wiederholung der vollständigen UI-Aufnahme.
+`tests/acceptance/rendered/context_menu.py` enthält zusätzlich die Wiederholung der vollständigen UI-Aufnahme.
 Der aktuelle Nachweis und offene Render-Befund stehen in
 [next-steps.md](next-steps.md#letzter-dokumentierter-prüfstand).
 
@@ -346,9 +346,9 @@ Nachweise:
 
 ```sh
 cargo test --no-default-features --lib report::provider -- --test-threads=1
-cargo test --all-features --test observation -- --test-threads=1
+cargo test --all-features --test failure_reports -- --test-threads=1
 cargo build --features cli --bin woodpecker
-python3 tests/observation.py
+python3 -m tests.acceptance.headless.session_lifecycle
 ```
 
 ## Paketierung
@@ -586,6 +586,12 @@ auf stdout aus. Die REPL verwendet dagegen einen Prompt, Statuszeilen und JSON-P
 
 ## Nachweise
 
+Die [Testübersicht](../../tests/README.md) beschreibt Gruppen, Voraussetzungen und
+Abdeckungsentscheidungen. Python-Abnahmen vom Repository-Root mit `python3 -m`
+starten; keine Imports zwischen ausführbaren Tests. Rust-Integrationstests liegen
+unter `tests/integration/` und sind explizite Cargo-Test-Targets. Diagnoseexperimente
+gehören nicht zum normalen Abnahmelauf.
+
 Separater echter `panic=abort`-Build (eigenes Cargo-Profil, keine simulierte
 Abort-Strategie):
 
@@ -603,7 +609,7 @@ Clients an der 4-MiB-Activity-Grenze:
 
 ```sh
 cargo build --example activity_fixture
-cargo test --features client --test activity -- --nocapture
+cargo test --features client --test activity_retention -- --nocapture
 ```
 
 Artefakte bleiben unter `target/activity-load-<pid>/`. Eine Activity-Lücke bedeutet
@@ -612,10 +618,10 @@ Report-Queue unter Dauerlast noch alle Mehrsession-Shutdown-Fälle ab.
 
 ```sh
 cargo test --features cli --lib --test session
-python3 tests/slice.py
-python3 tests/shutdown.py
-python3 tests/repl.py
-python3 tests/script.py
+python3 -m tests.acceptance.headless.session_lifecycle
+python3 -m tests.acceptance.headless.server_shutdown
+python3 -m tests.acceptance.headless.repl
+python3 -m tests.acceptance.headless.script
 cargo check --no-default-features --lib
 cargo check --no-default-features --features server --lib
 cargo check --no-default-features --features client --lib

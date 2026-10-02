@@ -66,12 +66,15 @@ The default library has no HTTP/CLI dependencies and does not require a renderer
 
 ## Tests
 
+See [tests/README.md](tests/README.md) for groups, build prerequisites and coverage
+retention decisions. Rendered acceptance requires separate GUI approval.
+
 ```sh
 cargo test --all-features --all-targets
 cargo test --manifest-path bevy_test_apps/Cargo.toml --all-features --all-targets
-python3 tests/slice.py
-python3 tests/ui.py
-python3 tests/shutdown.py
+python3 -m tests.acceptance.headless.session_lifecycle
+python3 -m tests.acceptance.rendered.context_menu
+python3 -m tests.acceptance.headless.server_shutdown
 ```
 
 The process tests launch real children. macOS Gatekeeper can delay or reject

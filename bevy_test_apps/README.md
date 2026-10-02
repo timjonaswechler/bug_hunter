@@ -47,9 +47,9 @@ on failure.
 ```sh
 cargo build --features cli --bin woodpecker
 cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin context_menu
-python3 tests/ui.py
+python3 -m tests.acceptance.rendered.context_menu
 # Retain the screenshots for visual inspection:
-python3 tests/ui.py --capture-dir target/ui-captures
+python3 -m tests.acceptance.rendered.context_menu --capture-dir target/ui-captures
 ```
 
 This test opens a real window and requires a desktop session.
@@ -64,7 +64,7 @@ The CLI launch configuration is `tests/fixtures/context_menu.toml`.
 ```sh
 cargo build --features cli --bin woodpecker
 cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin logical_state
-python3 tests/logical_state.py
+python3 -m tests.acceptance.rendered.logical_state
 ```
 
 This opens a real window. The test inspects the existing `SessionObservation`
@@ -88,7 +88,7 @@ ticks. Native time and input remain unchanged without the feature.
 ```sh
 cargo build --features cli --bin woodpecker
 cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin game_menu
-python3 tests/game_menu.py
+python3 -m tests.acceptance.rendered.game_menu
 ```
 
 This desktop test uses the CLI to navigate from splash through display and sound
@@ -115,7 +115,7 @@ ticks. Without it, native input and automatic time remain unchanged.
 ```sh
 cargo build --features cli --bin woodpecker
 cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin ui_drag_drop
-python3 tests/ui_drag_drop.py
+python3 -m tests.acceptance.rendered.ui_drag_drop
 ```
 
 This desktop test reads actual tile positions and sizes through Inspect. Virtual
@@ -140,7 +140,7 @@ The native application still starts with an active camera and automatic time.
 ```sh
 cargo build --features cli --bin woodpecker
 cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin mesh_picking
-python3 tests/mesh_picking.py
+python3 -m tests.acceptance.rendered.mesh_picking
 ```
 
 The test derives pointer positions from inspected camera and mesh geometry.
@@ -170,7 +170,7 @@ cause.
 `Investigation` resource and emits one tracing error on the first explicit tick
 after a B press. Holding B does not repeat the failure. Normal `logical_state`
 behavior is unchanged. `tests/fixtures/investigation.toml` enables automatic local
-reports; `python3 tests/investigation.py` exercises recording, queued input,
+reports; `python3 -m tests.acceptance.rendered.investigation` exercises recording, queued input,
 Inspect/Capture, reconnects, reports, management stop and replay in a fresh session.
 The experimental monitor selection and delayed window creation were removed on
 user request. Windows use their original automatic placement; the 640×360 size
@@ -198,7 +198,7 @@ first explicit tick. Native input and time remain unchanged without the feature.
 ```sh
 cargo build --features cli --bin woodpecker
 cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bin blend_modes
-python3 tests/blend_modes.py
+python3 -m tests.acceptance.rendered.blend_modes
 ```
 
 Keep window dimensions, scale and display assignment stable during acceptance.

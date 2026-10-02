@@ -253,10 +253,10 @@ fn control_scene(
     camera: Single<(Entity, &mut Transform, Has<Hdr>, &mut SceneState), With<CameraTarget>>,
     mut display: Single<&mut Text, With<StatusDisplay>>,
     mut clear_color: ResMut<ClearColor>,
-    time: Res<Time>,
-    input: Res<ButtonInput<KeyCode>>,
+    controls: (Res<Time>, Res<ButtonInput<KeyCode>>),
     mut commands: Commands,
 ) {
+    let (time, input) = controls;
     let (camera_entity, mut camera_transform, has_hdr, mut state) = camera.into_inner();
     if input.pressed(KeyCode::ArrowUp) {
         state.alpha = (state.alpha + time.delta_secs()).min(1.0);
@@ -387,8 +387,7 @@ mod blend_modes_tests {
                 unlit: true,
             },
         ));
-        let mut state = SceneState::default();
-        state.seed = seed;
+        let state = SceneState { seed, ..default() };
         let camera = app
             .world_mut()
             .spawn((

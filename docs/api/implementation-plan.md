@@ -3,7 +3,9 @@
 Die wesentliche Command- und Session-Funktionalität ist implementiert.
 Die ergänzten Steuerungsfälle und technischen Screenshot-Prüfungen bei stabilen
 Fensterbedingungen sowie der zusammenhängende Untersuchungsablauf sind abgenommen.
-Die gezielten Last-/Fehlerprüfungen sind abgeschlossen; offen sind Schlussprüfungen.
+Die gezielten Last-/Fehlerprüfungen und die Schlussprüfungen im aktuellen Umfang
+bei stabilen Fensterbedingungen sind abgeschlossen. Diese Fortschreibung versioniert
+Testordnung, gezielte Clippy-Bereinigung und Abschlussnachweise.
 Dynamische Fensterwechsel sind
 ausdrücklich zurückgestellt.
 Vollständig verdeckte Fenster sind beim Screenshot nicht zugesichert und kein
@@ -74,9 +76,9 @@ Sollbildvergleich sind keine Abschlussaufgaben.
 
 ### Schlussprüfung
 
-- [ ] Öffentliche Requests, Capabilities, Fehlerformen und Features gegen `target.md` prüfen.
-- [ ] Root-Tests, separates Bevy-Paket, Feature-Builds und CLI-Abnahmen ausführen.
-- [ ] Prüfstand, verbleibende Einschränkungen und Dokumentationslinks aktualisieren.
+- [x] Öffentliche Requests, Capabilities, Fehlerformen und Features gegen `target.md` prüfen.
+- [x] Root-Tests, separates Bevy-Paket, Feature-Builds und CLI-Abnahmen ausführen.
+- [x] Prüfstand, verbleibende Einschränkungen und Dokumentationslinks aktualisieren.
 
 [Kriterien](#5-vertrags--und-dokumentationsabgleich-abschließen)
 
@@ -117,7 +119,7 @@ Zustandsprüfungen. Relevante Layout-/Hierarchiewechsel und tote Handles mitprü
 
 #### Beispiel 1: Mausklick in logical_state
 
-In [tests/logical_state.py](../../tests/logical_state.py) den Button
+In [logical_state.py](../../tests/acceptance/rendered/logical_state.py) den Button
 `logical-button` nach einem expliziten Layout-Tick per Inspect finden.
 Den virtuellen Pointer zur gelesenen Mitte bewegen und per Tick positionieren.
 `pointer_presses` aus `SessionObservation` lesen, dann links drücken.
@@ -164,7 +166,7 @@ Die lokalen Artefakte sind nicht im Git-Transfer enthalten.
 
 #### Beispiel 2: Tastenkürzel und Quit in game_menu
 
-In [tests/game_menu.py](../../tests/game_menu.py) das Hauptmenü erreichen.
+In [game_menu.py](../../tests/acceptance/rendered/game_menu.py) das Hauptmenü erreichen.
 `s` drücken und die nötigen expliziten Ticks für Eingabeverarbeitung und
 State-Wechsel ausführen: Es müssen die Einstellungen erscheinen. Taste freigeben.
 Mit `Escape` entsprechend ins Hauptmenü zurückkehren; `n` muss dort das Spiel starten.
@@ -299,7 +301,7 @@ Lauf und der separate Library-Start-Timeout bleiben als historische Befunde erha
 
 #### Beispiel 3: Objekt verschwindet während eines Drags
 
-In [tests/ui_drag_drop.py](../../tests/ui_drag_drop.py) die Kachel Amber greifen
+In [ui_drag_drop.py](../../tests/acceptance/rendered/ui_drag_drop.py) die Kachel Amber greifen
 und mit expliziten Ticks einen Drag beginnen. Während die Taste gehalten wird,
 lässt die Testszene Amber bei einem festgelegten weiteren Tick verschwinden.
 Danach den Pointer weiterbewegen, loslassen und die Eingaben per Tick verarbeiten.
@@ -358,7 +360,7 @@ Die lokalen Artefakte sind nicht im Git-Transfer enthalten.
 
 #### Beispiel 4: Vertikaler Drag und weitere Meshes
 
-In [tests/mesh_picking.py](../../tests/mesh_picking.py) den Würfel greifen und
+In [mesh_picking.py](../../tests/acceptance/rendered/mesh_picking.py) den Würfel greifen und
 den virtuellen Pointer beispielsweise zwölf logische Pixel nach unten bewegen.
 Vor dem Warp bleiben Transform und Drag-Zähler unverändert. Nach dem Tick muss
 `drag_events` um eins steigen und die Rotation den vertikalen Drag berücksichtigen.
@@ -1252,6 +1254,12 @@ Gesamtlauf bleibt offen.
 
 ### 5. Vertrags- und Dokumentationsabgleich abschließen
 
+Die Tests wurden nach dem Commit neu geordnet; aktuelle Pfade und Befehle sowie
+Behalten-/Zusammenlegen-Entscheidungen stehen in [tests/README.md](../../tests/README.md).
+Historische Befehle und Dateinamen in den folgenden Nachweisen bezeichnen bewusst
+den damaligen Prüfstand. Source-Links und aktuelle Bedienbefehle verwenden die neue
+Ordnung. Grafikläufe nach dieser Neuordnung sind noch nicht abgenommen.
+
 Öffentliche Requests, Capabilities, Fehlerformen und Feature-Kombinationen gegen
 `target.md` prüfen. Root- und Test-App-Paket getrennt bauen und testen;
 `bevy_test_apps` ist kein Workspace-Member. Die Root-Untergrenze `0.19.0` und die
@@ -1265,6 +1273,110 @@ benennen. Historische grüne Läufe ersetzen diese Abschlussabnahme nicht.
 Anschließend Status, Grenzen und Links abgleichen. Die Bedienung bleibt in
 `usage.md`, die Abdeckung hier, die technischen Befunde unter `diagnostics/`.
 
+#### Schlussprüfung: aktueller Headless-Stand
+
+Bisheriger Abnahmestand auf ausdrücklichen Auftrag committed:
+`eeeb8d0a86147067a4e92a9cf0b9628b4c6e0a8b`
+(`test: complete stable-window investigation and failure acceptance`). Die eigenen
+unversionierten Assets, `alien_cake_addict.rs`, `docs/api/image.png` und npm-
+`package-lock.json` blieben außerhalb des Commits. Darauf wurden die folgenden
+Checks ausgeführt, damals ohne GUI-Start oder Produktänderung. Diese Tabelle hält
+den historischen HEAD-Prüfstand fest; die nachfolgende Fortschreibung beschreibt
+Testneuordnung, Clippy-Bereinigung und neue Grafikläufe im damals uncommitted Arbeitsbaum.
+Plattform Darwin arm64, Rust/Cargo 1.97.1.
+Logs, begrenzte Run-Ergebnisse und Zusammenfassung: `target/final-validation/`.
+
+| Prüfung | Aktueller Ausgang |
+| --- | --- |
+| Früher hängende Session-Tests einzeln | Beide bestanden: Pipe-Fortschritt 0,34 s, Recording-/Prozessende 0,37 s |
+| `cargo test --all-features --lib --tests -- --test-threads=1` | 141 Library-Tests und 25 Integrationstests bestanden: Activity 1, Observation 7, Abort 1, Session 16 |
+| `cargo test --no-default-features --lib` | 92 bestanden |
+| Einzelne Features `ui`, `screenshot`, `server`, `client` | Jeweils `cargo check --no-default-features --features …` bestanden |
+| CLI-Build | `cargo build --features cli` bestanden |
+| Root-Doctests | `cargo test --all-features --doc` bestanden |
+| Separates Bevy-Paket | `cargo test --manifest-path bevy_test_apps/Cargo.toml --all-features --all-targets`: 10 Tests bestanden |
+| Bevy ohne Slice | `cargo check --manifest-path bevy_test_apps/Cargo.toml --no-default-features --all-targets` bestanden |
+| Headless CLI | `slice.py`, `observation.py`, `script.py`, `repl.py`, `shutdown.py` alle bestanden |
+| Python-Orakel | 7 Unittests bestanden |
+| Root-Clippy | `cargo clippy --all-features --all-targets -- -D warnings` bestanden |
+| Bevy-Clippy | **Fehlgeschlagen**, siehe unten |
+| Builds für weitere grafische Abnahme | `cargo build --manifest-path bevy_test_apps/Cargo.toml --features slice --bins` bestanden: **BUILD_READY**, noch keine neue GUI-Freigabe |
+| Format und Diff | Root-/Bevy-Format und `git diff --check` bestanden |
+
+Die beiden früher hängenden Session-Tests sind im aktuellen Einzel- und gesamten
+seriellen Prüfstand grün. Die Ursache des früheren Hängers ist damit nicht ermittelt;
+keine Behauptung eines ursächlichen Produktfixes oder bestandener paralleler Suite.
+Der zuvor ebenfalls auffällige Report-Starttest ist im vollständigen Library-Lauf
+mitgeprüft. Alte Fehlerlogs bleiben erhalten. Bei keinem aktuellen Run war ein
+Timeout oder automatischer Retry nötig.
+
+Vertragsabgleich: alle 18 Command-Namen, zugehörige Request-/Output-Typen und die
+versiegelte Request-Zuordnung; Spielprotokoll v3/äußerer Codec v1; strikte Ready-
+Capabilities und Renderer-abhängiges Screenshot-Angebot; öffentliche Session-
+Fehlergruppen und stabile fachliche Codes; Recording-/Replay-/Script-Formate sowie
+Feature-Grenzen. Die entsprechenden Codec-, Reflection-, Input-, Screenshot-,
+Recording-, Replay-, Netzwerk- und Script-Tests sind im grünen Root-Lauf enthalten.
+Im Zieltext fehlten bisher die ausdrücklichen Namen `replay.start`/`replay.stop`;
+die bestehende Kodierung samt vier Session-eigenen Command-Outputs wurde als
+zusätzliche Tabelle dokumentiert, ohne Verhalten oder Umfang zu ändern.
+
+Der zusätzliche strenge Bevy-Clippy-Lauf findet sechs bestehende Lints:
+`too_many_arguments` in Blend/Game-Menu, `type_complexity` in Mesh-Picking und zwei
+Game-Menu-Queries sowie `field_reassign_with_default` im Blend-Test. Diese drei
+Quelldateien sind gegenüber `2e02815` unverändert. Log `bevy-clippy.log`, Status 101;
+keine Suppression, kein Abschwächen und keine ungefragte Handler-Optimierung.
+Dieser Lauf ist **nicht bestanden** und bleibt als Schlussprüfungsbefund sichtbar.
+
+**Fortschreibung nach Freigabe:** Die sechs Befunde sind gezielt bereinigt:
+benannte Query-Typen, zusammengehörige Systemparameter als Tupel und direkte
+`SceneState`-Initialisierung. Keine Lint-Suppression, kein zusätzlicher Tick und
+keine Änderung von Schedules, Filtern oder Fensterverhalten. Der erneut ausgeführte
+strenge Gesamt-Clippy-Lauf besteht. Alle 10 Bevy-Tests, der All-Targets-Check ohne
+Features und Format-/Diff-Prüfung bestehen ebenfalls. Logs:
+`target/clippy-cleanup/{before,after,tests,no-features,format-final}.log`.
+Der historische fehlgeschlagene Lauf wird dadurch nicht nachträglich grün.
+
+#### Grafische Schlussprüfung: 7/7 bestanden
+
+Auf erneute ausdrückliche Freigabe wurden CLI und alle Slice-Binaries gebaut,
+**BUILD_READY** gemeldet und die sieben aktuellen Python-Module nacheinander
+geprüft. Prüfstand während der Läufe: Branch `reference/window`, HEAD `eeeb8d0` plus uncommitted
+Testneuordnung und gezielte Clippy-Bereinigung; Darwin arm64 / Bevy 0.19.1.
+Keine Fenster-/Displayänderung, kein Fokus-Eingriff und kein automatischer Retry.
+
+| Abnahme | Neue Evidenz |
+| --- | --- |
+| Context Menu | `target/ui-1ub9sma6/` |
+| Logical State | `target/logical-state-2u8a5477/` |
+| Game Menu | `target/game-menu-v3zgtc2y/` |
+| UI Drag & Drop | `target/ui-drag-drop-bktjf_kn/` |
+| Mesh Picking | `target/mesh-picking-x1jxbqat/` |
+| Blend Modes | `target/blend-modes-pztbse9e/` |
+| Investigation | `target/investigation-dkaj5b6i/` |
+
+Die erste Investigation-Ausführung `target/investigation-xld_z4qa/` scheiterte an
+der fehlenden Sichtbarkeitsbestätigung innerhalb von 300 Sekunden vor dem ersten
+Tick. Sie bleibt fehlgeschlagen, inklusive Log und Artefakten. Erst nach erneuter
+Nutzerfreigabe wurde genau ein neuer Versuch gestartet. Der Nutzer bestätigte
+beide Fenster getrennt; die Gates wurden nicht automatisch übergangen.
+
+Der neue Versuch bestand mit zwei Sessions, je fünf expliziten Ticks, sechs
+pixelgleichen 640×360-PNGs, derselben Failure-/Report-Signatur, unveränderlichen
+Reports und gestoppten Recordings mit 18 bzw. 20 Commands. Die kopierte Quelle
+enthält ebenfalls 18 Commands. Recording-SHA256:
+`cb6f80aa3b3b099f3c817ed45d61c11a08fa1b8e7dd10646b9f5a4d747ff328c`.
+Beide Fixture-PIDs wurden anschließend unabhängig als nicht mehr vorhanden geprüft;
+keine eigenen Spiel-/Serverprozesse bleiben aktiv.
+
+Maschinenübersicht samt allen Evidenzpfaden, historischem Fehlversuch und Cleanup:
+`target/graphical-final-validation/summary.json`. Bounded Runner-Ergebnisse und
+Logs: `target/final-validation/graphical-final-*.{json,log}`; Builds unter
+`target/graphical-final-validation/`. Damit sind die Schluss-Checkboxen für den
+aktuellen Umfang erfüllt. Dynamische Resize-/DPI-/Display-Wechsel bleiben
+zurückgestellt; die unbeschränkte Report-Queue bleibt dokumentierte Betriebsgrenze.
+Diese Fortschreibung wird auf ausdrücklichen Nutzerauftrag zusammen mit Testordnung
+und Clippy-Bereinigung versioniert; lokale `target/`-Evidenz bleibt außerhalb von Git.
+
 ## Abdeckungsmatrix
 
 CLI-Abnahmen verwenden CLI, HTTP/WebSocket, Session und Bevy. Native Tests
@@ -1275,16 +1387,16 @@ konkrete historische Ergebnisse stehen in
 
 | Bereich | Vorhandener Nachweis | Noch offen im Abschluss |
 | --- | --- | --- |
-| `counter` | [slice.py](../../tests/slice.py): Ticks, Stillstand, Pace/Stop, Isolation, Recording/Replay und Verwaltungs-Stopp. | Kombinierter Lifecycle und Last. |
-| `context_menu` | [ui.py](../../tests/ui.py): virtuelle Inputs, Fokus, Unicode-Werte und Grenzen, Menüersetzung/-auswahl, Itemlayout, tote Teilbaum-Handles, Bilder, Recording/Replay und zwei Sessions. | Keine zusätzliche Steuerungsvariante. |
-| `logical_state` | [logical_state.py](../../tests/logical_state.py): Update, FixedUpdate, Timer, Keyboard- und Pointer-Press/Hold/Release, Stillstand und fünf PNGs einschließlich vorgemerkter Inputs. | Keine zusätzliche Steuerungsvariante. |
-| `game_menu` | [game_menu.py](../../tests/game_menu.py): Navigation, Einstellungen, Timer, Klicks, Hierarchien, tote Handles, Keyboard-Kurzwege, neun PNGs und Quit mit Failure/Report sowie Session-Isolation. | Keine zusätzliche Steuerungsvariante. |
-| `ui_drag_drop` | [ui_drag_drop.py](../../tests/ui_drag_drop.py): gültiger/ungültiger Drop, Zwischenposition, Drag-Phasen, Belegung, Darstellung, Despawn während Drag, tote Handles/Hierarchie, erneuter Drag und acht PNGs. | Keine zusätzliche Steuerungsvariante. |
-| `mesh_picking` | [mesh_picking.py](../../tests/mesh_picking.py): Hover/Press/Release/Out aller Meshes, horizontaler/vertikaler Würfel-Drag, diagonale Kugel-/Zylinder-Drags, vollständige Rotation/Isolation, 48 Ticks und 19 PNGs. | Keine zusätzliche Steuerungsvariante. |
-| `blend_modes` | [blend_modes.py](../../tests/blend_modes.py): zwei Sessions, gehaltene Tasten, Orbit, Alpha-Grenzen, HDR/Unlit, Materialidentität, reproduzierbare Farben und sechs PNGs. | Keine zusätzliche Steuerungsvariante; vollständige Blend-/HDR-Validierung ist zurückgestellt. |
-| Inspect | [Entity-Tests](../../src/session/inspect/entities/tests.rs), Reflection-Matrix sowie Game-Menu-, Context-Menu- und Drag-Lebenszyklen mit toten Handles. | Große Ausgaben im Lastnachweis; keine neue Inspect-Architektur. |
-| Recording/Replay/Reports | [session.rs](../../tests/session.rs), [observation.py](../../tests/observation.py), [Report-Tests](../../src/server/report_tests.rs). | Kombinationen aus Aufnahme/Wiedergabe, Failure, Lücke und gemeinsamem Shutdown; `panic=abort`-Build. |
-| CLI/REPL/Script | [repl.py](../../tests/repl.py), [script.py](../../tests/script.py), Netzwerkfixtures. | Große Outputs, anhaltende Activity und langsame Clients. |
+| `counter` | [session_lifecycle.py](../../tests/acceptance/headless/session_lifecycle.py): Ticks, Stillstand, Pace/Stop, Isolation, Recording/Replay und Verwaltungs-Stopp. | Kombinierter Lifecycle und Last bestanden; Schlussprüfung im aktuellen Umfang abgeschlossen. |
+| `context_menu` | [context_menu.py](../../tests/acceptance/rendered/context_menu.py): virtuelle Inputs, Fokus, Unicode-Werte und Grenzen, Menüersetzung/-auswahl, Itemlayout, tote Teilbaum-Handles, Bilder, Recording/Replay und zwei Sessions. | Keine zusätzliche Steuerungsvariante. |
+| `logical_state` | [logical_state.py](../../tests/acceptance/rendered/logical_state.py): Update, FixedUpdate, Timer, Keyboard- und Pointer-Press/Hold/Release, Stillstand und fünf PNGs einschließlich vorgemerkter Inputs. | Keine zusätzliche Steuerungsvariante. |
+| `game_menu` | [game_menu.py](../../tests/acceptance/rendered/game_menu.py): Navigation, Einstellungen, Timer, Klicks, Hierarchien, tote Handles, Keyboard-Kurzwege, neun PNGs und Quit mit Failure/Report sowie Session-Isolation. | Keine zusätzliche Steuerungsvariante. |
+| `ui_drag_drop` | [ui_drag_drop.py](../../tests/acceptance/rendered/ui_drag_drop.py): gültiger/ungültiger Drop, Zwischenposition, Drag-Phasen, Belegung, Darstellung, Despawn während Drag, tote Handles/Hierarchie, erneuter Drag und acht PNGs. | Keine zusätzliche Steuerungsvariante. |
+| `mesh_picking` | [mesh_picking.py](../../tests/acceptance/rendered/mesh_picking.py): Hover/Press/Release/Out aller Meshes, horizontaler/vertikaler Würfel-Drag, diagonale Kugel-/Zylinder-Drags, vollständige Rotation/Isolation, 48 Ticks und 19 PNGs. | Keine zusätzliche Steuerungsvariante. |
+| `blend_modes` | [blend_modes.py](../../tests/acceptance/rendered/blend_modes.py): zwei Sessions, gehaltene Tasten, Orbit, Alpha-Grenzen, HDR/Unlit, Materialidentität, reproduzierbare Farben und sechs PNGs. | Keine zusätzliche Steuerungsvariante; vollständige Blend-/HDR-Validierung ist zurückgestellt. |
+| Inspect | [Entity-Tests](../../src/session/inspect/entities/tests.rs), Reflection-Matrix sowie Game-Menu-, Context-Menu- und Drag-Lebenszyklen mit toten Handles. | Lastnachweis bestanden; keine neue Inspect-Architektur. |
+| Recording/Replay/Reports | [session.rs](../../tests/integration/session.rs), [automatic_reports.py](../../tests/acceptance/headless/automatic_reports.py), [Report-Tests](../../src/server/report_tests.rs). | Kombinations-, Last-/Shutdown-, Abort- und frische grafische Nachweise bestanden; Schlussprüfung abgeschlossen. |
+| CLI/REPL/Script | [repl.py](../../tests/acceptance/headless/repl.py), [script.py](../../tests/acceptance/headless/script.py), Netzwerkfixtures. | Große Outputs/Activity und langsame Clients geprüft; frische headless CLI-Nachweise bestanden. |
 
 ### Reflection-Matrix
 

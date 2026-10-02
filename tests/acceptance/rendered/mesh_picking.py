@@ -12,100 +12,22 @@ import subprocess
 import tempfile
 import time
 
-from slice import CLI, ROOT
-from ui import read_png
-
-
-def rotate(q, v):
-    """Apply an xyzw unit quaternion to a vector."""
-    x, y, z, w = q
-    vx, vy, vz = v
-    tx, ty, tz = 2 * (y * vz - z * vy), 2 * (z * vx - x * vz), 2 * (x * vy - y * vx)
-    return [vx + w * tx + y * tz - z * ty,
-            vy + w * ty + z * tx - x * tz,
-            vz + w * tz + x * ty - y * tx]
-
-
-def tick_rotation(q, delta=(0.0, 0.0)):
-    """Fixture oracle: world Y/X drag in PreUpdate, then 20 ms of Y spin."""
-    def product(a, b):
-        x, y, z, w = a
-        vx, vy, vz, vw = b
-        return [w * vx + x * vw + y * vz - z * vy,
-                w * vy - x * vz + y * vw + z * vx,
-                w * vz + x * vy - y * vx + z * vw,
-                w * vw - x * vx - y * vy - z * vz]
-
-    dx, dy = delta
-    yaw = [0.0, math.sin(dx * 0.01), 0.0, math.cos(dx * 0.01)]
-    pitch = [math.sin(dy * 0.01), 0.0, 0.0, math.cos(dy * 0.01)]
-    spin = [0.0, math.sin(0.005), 0.0, math.cos(0.005)]
-    return product(spin, product(pitch, product(yaw, q)))
-
-
-def rgb_pixels(path):
-    width, height, scanlines = read_png(path)
-    stride = width * 3
-    previous = bytearray(stride)
-    image = []
-    for row in range(height):
-        offset = row * (stride + 1)
-        kind = scanlines[offset]
-        assert 0 <= kind <= 4, kind
-        decoded = bytearray(scanlines[offset + 1:offset + 1 + stride])
-        for i in range(stride):
-            left = decoded[i - 3] if i >= 3 else 0
-            up = previous[i]
-            corner = previous[i - 3] if i >= 3 else 0
-            if kind == 0:
-                predictor = 0
-            elif kind == 1:
-                predictor = left
-            elif kind == 2:
-                predictor = up
-            elif kind == 3:
-                predictor = (left + up) // 2
-            else:
-                p = left + up - corner
-                predictor = min((left, up, corner), key=lambda value: abs(p - value))
-            decoded[i] = (decoded[i] + predictor) & 255
-        image.append(decoded)
-        previous = decoded
-    return width, height, image
+from tests.support.runtime import ROOT, cli_call, spawn_server, wait_until as until
+from tests.support.images import rgb_pixels
+from tests.support.rotation import rotate, tick_rotation
 
 
 def run():
     directory = Path(tempfile.mkdtemp(prefix="mesh-picking-", dir=ROOT / "target"))
     print(f"Evidence: {directory}", flush=True)
     with (directory / "server.log").open("w") as log, (directory / "commands.jsonl").open("w") as evidence:
-        server = subprocess.Popen(
-            [str(CLI), "--address", "127.0.0.1:0", "server", "start",
-             "--artifact-dir", str(directory / "artifacts"), "--shutdown-seconds", "10"],
-            cwd=ROOT, stdout=subprocess.PIPE, stderr=log, text=True,
-        )
+        server = spawn_server(directory, log)
         try:
             assert select.select([server.stdout], [], [], 10)[0], "server did not become Ready"
             address = json.loads(server.stdout.readline())["address"]
 
             def cli(*args):
-                result = subprocess.run(
-                    [str(CLI), "--address", address, *args], cwd=ROOT,
-                    capture_output=True, text=True, timeout=40,
-                )
-                evidence.write(json.dumps({"arguments": args, "exit": result.returncode,
-                                           "stdout": result.stdout, "stderr": result.stderr}) + "\n")
-                evidence.flush()
-                assert result.returncode == 0, (args, result.stdout, result.stderr)
-                return json.loads(result.stdout)
-
-            def until(check, description, timeout=15):
-                deadline = time.monotonic() + timeout
-                while time.monotonic() < deadline:
-                    value = check()
-                    if value:
-                        return value
-                    time.sleep(0.025)
-                raise AssertionError(description)
+                return cli_call(address, *args, journal=evidence)
 
             session = cli("session", "create", "--config", str(ROOT / "tests/fixtures/mesh_picking.toml"))["id"]
 

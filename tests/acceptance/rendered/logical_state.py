@@ -1,7 +1,7 @@
 """Real CLI acceptance of the existing logical_state scene.
 
 Requires a desktop session. Build woodpecker with cli and logical_state with slice.
-Run: python3 tests/logical_state.py
+Run: python3 -m tests.acceptance.rendered.logical_state
 Logs and command evidence are retained under target/logical-state-* on failure too.
 """
 import json
@@ -12,42 +12,21 @@ import subprocess
 import tempfile
 import time
 
-from slice import CLI, ROOT
-from mesh_picking import rgb_pixels
+from tests.support.runtime import ROOT, cli_call, spawn_server, wait_until as until
+from tests.support.images import rgb_pixels
 
 
 def run():
     directory = Path(tempfile.mkdtemp(prefix="logical-state-", dir=ROOT / "target"))
     print(f"Evidence: {directory}", flush=True)
     with (directory / "server.log").open("w") as log, (directory / "commands.jsonl").open("w") as evidence:
-        server = subprocess.Popen(
-            [str(CLI), "--address", "127.0.0.1:0", "server", "start",
-             "--artifact-dir", str(directory / "artifacts"), "--shutdown-seconds", "10"],
-            cwd=ROOT, stdout=subprocess.PIPE, stderr=log, text=True,
-        )
+        server = spawn_server(directory, log)
         try:
             assert select.select([server.stdout], [], [], 10)[0], "server did not become Ready"
             address = json.loads(server.stdout.readline())["address"]
 
             def cli(*args):
-                result = subprocess.run(
-                    [str(CLI), "--address", address, *args], cwd=ROOT,
-                    capture_output=True, text=True, timeout=40,
-                )
-                evidence.write(json.dumps({"arguments": args, "exit": result.returncode,
-                                           "stdout": result.stdout, "stderr": result.stderr}) + "\n")
-                evidence.flush()
-                assert result.returncode == 0, (args, result.stdout, result.stderr)
-                return json.loads(result.stdout)
-
-            def until(check, description, timeout=15):
-                deadline = time.monotonic() + timeout
-                while time.monotonic() < deadline:
-                    value = check()
-                    if value:
-                        return value
-                    time.sleep(0.025)
-                raise AssertionError(description)
+                return cli_call(address, *args, journal=evidence)
 
             session = cli("session", "create", "--config", str(ROOT / "tests/fixtures/logical_state.toml"))["id"]
 

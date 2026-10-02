@@ -19,10 +19,10 @@ import time
 
 TESTS = Path(__file__).resolve().parents[1]
 ROOT = TESTS.parent
-sys.path.insert(0, str(TESTS))
+sys.path.insert(0, str(ROOT))
 
-from mesh_picking import rgb_pixels  # noqa: E402
-from slice import CLI  # noqa: E402
+from tests.support.images import rgb_pixels  # noqa: E402
+from tests.support.runtime import CLI  # noqa: E402
 
 
 def run(session_count, capture_count, verify_surface_guard=False):

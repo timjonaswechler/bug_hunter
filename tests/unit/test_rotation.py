@@ -5,7 +5,7 @@ Run: python3 -m unittest discover -s tests -p 'test_mesh_rotation.py'
 import math
 import unittest
 
-from mesh_picking import rotate, tick_rotation
+from tests.support.rotation import rotate, tick_rotation
 
 
 class MeshRotationTests(unittest.TestCase):

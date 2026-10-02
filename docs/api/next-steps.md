@@ -21,12 +21,48 @@ Aufgabenstatus und Abdeckungsmatrix; [usage.md](usage.md) die ausführbaren Befe
 
 ## Nächste Aktion
 
+Die [Testordnung](../../tests/README.md) ist umgesetzt: Rust-Integrationstests unter
+`tests/integration/`, Python-Abnahmen unter `tests/acceptance/headless/` und
+`tests/acceptance/rendered/`, kleine Prüforakel unter `tests/unit/`, gemeinsame
+Hilfen unter `tests/support/`. Lifecycle und automatische Reports laufen jetzt
+in **einer** headless Abnahme mit sechs Sessions statt zwei getrennten Runnern.
+Alle vier neuen headless Runner und der komplette serielle Root-Testlauf bestanden.
+Sieben Prüforakel bestehen ebenfalls; inzwischen sind auch alle sieben grafischen
+Abnahmen nach frischem Build und ausdrücklicher Freigabe bestanden. Die unten genannten
+alten Dateinamen gehören zu historischen Läufen; aktuelle Befehle im Test-README.
+Neuordnung und fortgeschriebene Dokumentation sind Teil dieses Abschluss-Checkpoints;
+Nutzerdateien bleiben unverändert und außerhalb des Commits.
+
 Mit [Abschnitt 4: Last, Ergebnislücken und Shutdown](implementation-plan.md#4-last-ergebnislücken-und-shutdown-prüfen)
-ist mit vier gezielten Nachweisen abgeschlossen. Als Nächstes
-[Schlussprüfung](implementation-plan.md#5-vertrags--und-dokumentationsabgleich-abschließen):
-Requests/Capabilities/Fehlerformen/Features gegen `target.md` prüfen und den offenen
-Gesamtteststand klären, insbesondere die zuvor hängenden Session-Tests. Keine
-vollständige Suite als bestanden behaupten, bevor sie tatsächlich abgeschlossen ist.
+ist mit vier gezielten Nachweisen abgeschlossen. Auch die
+[Schlussprüfung](implementation-plan.md#grafische-schlussprüfung-77-bestanden) ist
+für den aktuellen stabilen Fensterumfang abgeschlossen. Historischer Headless-Stand:
+Headless-Prüfstand auf Commit `eeeb8d0` ist durchgeführt: 141 Library- und 25
+Integrationstests mit allen Features (seriell), 92 ohne Features, 10 Tests des
+separaten Bevy-Pakets, Einzel-Feature-Checks, Doctests und alle fünf headless CLI-
+Abnahmen bestanden. Die früher hängenden Session-Tests sind einzeln und im seriellen
+Gesamtlauf grün; ihre frühere Ursache bleibt ungeklärt. Root-Clippy bestanden.
+
+Der zusätzliche strenge **Bevy-Clippy**-Befund ist nach ausdrücklicher Freigabe
+behoben: Query-Aliase, gebündelte Systemparameter und direkte Testinitialisierung,
+keine Suppression und keine Timing-/Fensteränderung. Der vollständige Lauf mit
+`--all-features --all-targets -- -D warnings`, alle 10 Bevy-Tests, der Check ohne
+Features und Format-/Diff-Prüfung bestanden. Logs: `target/clippy-cleanup/`;
+der ursprüngliche Fehler bleibt in `target/final-validation/bevy-clippy.log`
+und der erneuten Reproduktion `target/clippy-cleanup/before.log` erhalten.
+Die neuen grafischen Abschlussläufe sind **7/7 bestanden**. Übersicht und Cleanup:
+`target/graphical-final-validation/summary.json`; Logs
+`target/final-validation/graphical-final-*.{json,log}`. Investigation bestand unter
+`target/investigation-dkaj5b6i/` mit zwei separat vom Nutzer bestätigten Fenstern,
+je fünf Ticks und sechs pixelgleichen PNGs. Der vorherige Bestätigungs-Timeout
+`target/investigation-xld_z4qa/` bleibt erhalten; der neue Versuch wurde ausdrücklich
+freigegeben. Keine eigenen Spiel-/Serverprozesse bleiben aktiv.
+
+Die Testneuordnung, gezielte Clippy-Bereinigung und Doku-Fortschreibung werden mit
+diesem Abschluss-Checkpoint auf ausdrücklichen Nutzerauftrag versioniert.
+Der aktuelle Umfang ist abgenommen; weitere Produktarbeit erst nach neuem Auftrag.
+Lokale Evidenz unter `target/` ist nicht in Git enthalten. Nutzerdateien weiterhin
+ausschließen. Keine weiteren GUI-Läufe ohne neue Freigabe.
 Keine weitere Queue-Optimierung; die unbeschränkte Queue bleibt eine
 [dokumentierte Betriebsgrenze](implementation-plan.md#report-queue-bemessen-betriebsgrenze-dokumentiert).
 
@@ -57,7 +93,7 @@ Die Queue ist unbeschränkt; dieser begrenzte Test belegt **keine** Dauerlastsic
 Eine neue Überlastregel bleibt optional für tatsächlichen Bedarf, nicht als nächste
 Abschlussaufgabe. Keine Queue-Grenze oder stille Drop-Regel ergänzt.
 
-Der erste Lastpunkt ist abgenommen: `tests/activity.rs` mit echtem headless Bevy-
+Der erste Lastpunkt ist abgenommen: `tests/integration/activity_retention.rs` mit echtem headless Bevy-
 Prozess prüft 5-MiB-Inspect, vollständige 2-MiB-Ergebnisse, verzögerten Activity-Abruf,
 eine nicht lesende WebSocket-Verbindung und einen 11.540.769-Byte-Report gegen die
 unveränderte 4-MiB-Activity-Grenze. Verlorene Outcomes bleiben unbekannt; Session und
@@ -142,19 +178,14 @@ erhaltenen vorherigen Diffs: `target/resize-rollback-validation/`.
   [Abschlussplan](implementation-plan.md#zurückgestellte-arbeit-und-bekannte-grenzen)
   beachten. Insbesondere keine Sicherheitsregeln für macOS-Fixtures ändern.
 
-### Vorläufige Clippy-Ausnahmen der Bevy-Szenen
+### Strenges Clippy der Bevy-Szenen
 
-Nur gezielt beim jeweiligen Target verwenden, keine `allow`-Attribute oder
-Cargo-Features ergänzen. Nach einem Bevy-Update zuerst ohne Ausnahmen prüfen:
+Die früheren gezielten Ausnahmen sind nicht mehr nötig. Ohne Suppression prüfen:
 
 ```sh
-cargo clippy --manifest-path bevy_test_apps/Cargo.toml --features slice --bin game_menu \
-  -- -D warnings -A clippy::type_complexity -A clippy::too_many_arguments
-cargo clippy --manifest-path bevy_test_apps/Cargo.toml --features slice --bin mesh_picking \
-  -- -D warnings -A clippy::type_complexity
-cargo clippy --manifest-path bevy_test_apps/Cargo.toml --features slice --bin blend_modes \
-  -- -D warnings -A clippy::too_many_arguments
+cargo clippy --manifest-path bevy_test_apps/Cargo.toml --all-features --all-targets -- -D warnings
 ```
 
-Root-Clippy bleibt ohne diese Ausnahmen. Build- und Test-App-Hinweise stehen im
+Frühere Ausnahmebefehle in historischen Nachweisen bleiben als damaliger Prüfstand
+sichtbar; sie sind keine aktuelle Prüfempfehlung. Build- und Test-App-Hinweise stehen im
 [Bevy-README](../../bevy_test_apps/README.md).

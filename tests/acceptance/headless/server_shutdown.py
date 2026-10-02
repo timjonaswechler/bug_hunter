@@ -9,8 +9,7 @@ import sys
 import tempfile
 import time
 
-ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "target/debug/woodpecker"
+from tests.support.runtime import ROOT, cli_call, spawn_server
 
 
 def scenario(mode, interruption, expected, timeout):
@@ -25,23 +24,13 @@ def scenario(mode, interruption, expected, timeout):
         source = source.replace("arguments = []", f'arguments = ["{mode}"]')
         config.write_text(source)
         with (directory / "log").open("w+") as log:
-            server = subprocess.Popen(
-                [str(CLI), "--address", "127.0.0.1:0",
-                 "server", "start", "--artifact-dir", str(directory / "artifacts"),
-                 "--shutdown-seconds", str(timeout)],
-                cwd=ROOT, stdout=subprocess.PIPE, stderr=log, text=True,
-            )
+            server = spawn_server(directory, log, shutdown_seconds=timeout)
             try:
                 assert select.select([server.stdout], [], [], 10)[0]
                 address = json.loads(server.stdout.readline())["address"]
 
                 def cli(*args):
-                    result = subprocess.run(
-                        [str(CLI), "--address", address, *args],
-                        cwd=ROOT, capture_output=True, text=True, timeout=10,
-                    )
-                    assert result.returncode == 0, result.stderr
-                    return json.loads(result.stdout)
+                    return cli_call(address, *args, timeout=10)
 
                 sessions = [cli("session", "create", "--config", str(config)) for _ in range(3)]
                 deadline = time.monotonic() + 60

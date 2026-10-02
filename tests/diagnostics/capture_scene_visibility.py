@@ -20,7 +20,8 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 TESTS = ROOT / "tests"
 sys.path.insert(0, str(TESTS))
-from mesh_picking import rgb_pixels  # noqa: E402
+sys.path.insert(0, str(ROOT))
+from tests.support.images import rgb_pixels  # noqa: E402
 from diagnostics.capture_scene_visibility_instrument import (  # noqa: E402
     instrument_adapter,
     instrument_bevy,
@@ -36,7 +37,9 @@ TEMP_ROOT = WORK / "root"
 BEVY_VERSION = "0.19.1"
 SCENES = ("blend_modes", "mesh_picking", "ui")
 BINARIES = {"blend_modes": "blend_modes", "mesh_picking": "mesh_picking", "ui": "context_menu"}
-TEST_FILES = {"blend_modes": "blend_modes.py", "mesh_picking": "mesh_picking.py", "ui": "ui.py"}
+TEST_FILES = {"blend_modes": "acceptance/rendered/blend_modes.py",
+              "mesh_picking": "acceptance/rendered/mesh_picking.py",
+              "ui": "acceptance/rendered/context_menu.py"}
 FIXTURES = {"blend_modes": "blend_modes.toml", "mesh_picking": "mesh_picking.toml", "ui": "context_menu.toml"}
 
 
@@ -102,9 +105,9 @@ def patch_full_test(path, scene):
     if "import os\n" not in text:
         marker = "import json\n"
         text = text.replace(marker, marker + "import os\n", 1)
-    import_marker = "from diagnostics.capture_scene_visibility_support import VisibilityController\n"
+    import_marker = "from tests.diagnostics.capture_scene_visibility_support import VisibilityController\n"
     if import_marker not in text:
-        first_local = "from slice import"
+        first_local = "from tests.support.runtime import"
         index = text.index(first_local)
         text = text[:index] + import_marker + text[index:]
     body_indent = "                " if scene == "ui" else "            "
@@ -141,11 +144,12 @@ def patch_full_test(path, scene):
         )
     else:
         variable = "before" if scene == "blend_modes" else "frozen"
-        seam = f'                {variable} = snapshot()\n                path = f"screenshots/{{name}}.png"\n'
+        # Match the capture entry, not adjacency to the filename: Blend also
+        # inspects camera/UI composition between its snapshot and capture path.
+        seam = f'            def capture(name):\n                {variable} = snapshot()\n'
         replacement = (
-            f'                {variable} = snapshot()\n'
-            '                visibility.place(session, artifact_dir, visibility_condition)\n'
-            '                path = f"screenshots/{name}.png"\n'
+            seam
+            + '                visibility.place(session, artifact_dir, visibility_condition)\n'
         )
         if seam not in text:
             raise RuntimeError(f"capture seam missing in {path}")
@@ -481,7 +485,8 @@ def run_full_test(scene, condition, helper, versions):
         WOODPECKER_CAPTURE_SCENE_VISIBILITY_FULL_EVIDENCE=str(evidence),
         WOODPECKER_CAPTURE_SCENE_VISIBILITY_CONDITION=condition,
     )
-    arguments = [sys.executable, str(TEMP_ROOT / "tests" / TEST_FILES[scene])]
+    module = "tests." + TEST_FILES[scene].removesuffix(".py").replace("/", ".")
+    arguments = [sys.executable, "-m", module]
     if scene == "ui":
         arguments += ["--capture-dir", str(evidence / "images")]
     completed = subprocess.run(arguments, cwd=TEMP_ROOT, env=env, capture_output=True, text=True, timeout=900)

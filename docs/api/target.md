@@ -903,7 +903,18 @@ Die Tabelle beschreibt Schemas, nicht durchweg wörtliche JSON-Werte.
 Pace wird `{"kind":"as_fast_as_possible"}` oder
 `{"kind":"ticks_per_second","target":60.0}`.
 Recording und Replay nutzen dieselbe qualifizierte Command-Form, werden aber ausschließlich
-in der Session ausgeführt und sind keine zusätzlichen Spiel-Wire-Commands.
+in der Session ausgeführt und sind keine zusätzlichen Spiel-Wire-Commands:
+
+| Qualifizierter Name | arguments | Erfolgreicher output |
+| --- | --- | --- |
+| `recording.start` | `{"path":"recordings/run.jsonl"}` | `{"path":"recordings/run.jsonl"}` |
+| `recording.stop` | `{}` | `{"path":"recordings/run.jsonl","recorded_commands":n}` |
+| `replay.start` | `{"path":"recordings/run.jsonl"}` | `{"outcome":{"kind":"completed"}}`, alternativ `stopped` oder `blocked` mit `code` und `message` im Outcome |
+| `replay.stop` | `{}` | `{"was_running":true}`, alternativ `false` |
+
+Ein `blocked`-Replay-Outcome ist ein technischer Planabschluss, kein erfolgreicher
+Nachweis des aufgezeichneten Ablaufs. Die normalen Start-/Stop-Ablehnungen und
+Ladefehler bleiben wie oben beschrieben.
 
 Inspect-Argumente:
 

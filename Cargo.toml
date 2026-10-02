@@ -39,6 +39,22 @@ name = "woodpecker"
 path = "src/cli/main.rs"
 required-features = ["cli"]
 
+[[test]]
+name = "session"
+path = "tests/integration/session.rs"
+
+[[test]]
+name = "failure_reports"
+path = "tests/integration/failure_reports.rs"
+
+[[test]]
+name = "activity_retention"
+path = "tests/integration/activity_retention.rs"
+
+[[test]]
+name = "panic_abort"
+path = "tests/integration/panic_abort.rs"
+
 [[example]]
 name = "activity_fixture"
 path = "tests/fixtures/activity.rs"

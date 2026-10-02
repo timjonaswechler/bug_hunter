@@ -1,7 +1,7 @@
 """Acceptance-oracle regression: managed shutdown is not an unexpected endevent."""
 import unittest
 
-from investigation import managed_end
+from tests.support.lifecycle import managed_end
 
 
 class ManagedEndTests(unittest.TestCase):

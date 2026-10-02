@@ -487,12 +487,25 @@ fn set_pressed_interaction(
     }
 }
 
-fn button_colors(
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor, Has<SelectedSetting>),
-        (Changed<Interaction>, With<Button>),
-    >,
-) {
+type ChangedButtonColors<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Interaction,
+        &'static mut BackgroundColor,
+        Has<SelectedSetting>,
+    ),
+    (Changed<Interaction>, With<Button>),
+>;
+
+type ChangedButtonIntents<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Interaction, &'static ButtonIntent, Entity),
+    (Changed<Interaction>, With<Button>),
+>;
+
+fn button_colors(mut buttons: ChangedButtonColors) {
     for (interaction, mut color, selected) in &mut buttons {
         *color = match (*interaction, selected) {
             (Interaction::Pressed, _) => SELECTED_BUTTON.into(),
@@ -504,15 +517,15 @@ fn button_colors(
 }
 
 fn button_actions(
-    buttons: Query<(&Interaction, &ButtonIntent, Entity), (Changed<Interaction>, With<Button>)>,
+    buttons: ChangedButtonIntents,
     mut selected: Query<(Entity, &mut BackgroundColor), With<SelectedSetting>>,
     mut commands: Commands,
-    mut quality: ResMut<DisplayQuality>,
-    mut volume: ResMut<Volume>,
+    settings: (ResMut<DisplayQuality>, ResMut<Volume>),
     mut next_game: ResMut<NextState<ScreenState>>,
     mut next_menu: ResMut<NextState<MenuState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    let (mut quality, mut volume) = settings;
     for (interaction, intent, entity) in &buttons {
         if *interaction != Interaction::Pressed {
             continue;

@@ -1,7 +1,7 @@
 """Prevalidated scripts through real CLI, server, Session and Bevy.
 
 Build woodpecker --features cli and bevy_test_apps counter --features slice first.
-Run from the repository root: python3 tests/script.py
+Run from the repository root: python3 -m tests.acceptance.headless.script
 """
 import json
 from pathlib import Path
@@ -9,10 +9,8 @@ import select
 import signal
 import subprocess
 import tempfile
-import time
 
-ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "target/debug/woodpecker"
+from tests.support.runtime import CLI, ROOT, cli_call, until, spawn_server
 
 
 def command(name, **arguments):
@@ -28,32 +26,14 @@ def run():
     with tempfile.TemporaryDirectory(prefix="script-", dir=ROOT / "target") as directory:
         directory = Path(directory)
         with (directory / "server.log").open("w+") as log:
-            server = subprocess.Popen(
-                [str(CLI), "--address", "127.0.0.1:0", "server", "start",
-                 "--artifact-dir", str(directory / "artifacts"), "--shutdown-seconds", "10"],
-                cwd=ROOT, stdout=subprocess.PIPE, stderr=log, text=True,
-            )
+            server = spawn_server(directory, log)
             processes = []
             try:
                 assert select.select([server.stdout], [], [], 10)[0]
                 address = json.loads(server.stdout.readline())["address"]
 
                 def cli(*args, success=True):
-                    result = subprocess.run(
-                        [str(CLI), "--address", address, *args], cwd=ROOT,
-                        capture_output=True, text=True, timeout=40,
-                    )
-                    assert (result.returncode == 0) == success, (args, result.stdout, result.stderr)
-                    return json.loads(result.stdout) if result.stdout else None
-
-                def until(callback):
-                    deadline = time.monotonic() + 90
-                    while time.monotonic() < deadline:
-                        value = callback()
-                        if value:
-                            return value
-                        time.sleep(0.025)
-                    raise AssertionError("condition did not become true")
+                    return cli_call(address, *args, success=success, allow_empty=True)
 
                 def detail(session):
                     return cli("session", "inspect", session)

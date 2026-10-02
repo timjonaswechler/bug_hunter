@@ -1,7 +1,7 @@
 """Rendered context-menu acceptance through CLI -> server -> session -> Bevy.
 
 Requires a desktop session and the CLI and context_menu binaries built with `slice`.
-Run from the repository root: python3 tests/ui.py
+Run from the repository root: python3 -m tests.acceptance.rendered.context_menu
 """
 import json
 import math
@@ -10,42 +10,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import select
 import signal
-import struct
 import subprocess
 import sys
 import tempfile
 from threading import Lock
-import zlib
-
-from slice import CLI, ROOT, until
-
-
-def read_png(path):
-    """Check the complete PNG, including CRCs and decompressible RGB scanlines."""
-    data = path.read_bytes()
-    assert data[:8] == b"\x89PNG\r\n\x1a\n", path
-    offset, compressed = 8, bytearray()
-    width = height = None
-    while offset < len(data):
-        length = struct.unpack(">I", data[offset:offset + 4])[0]
-        kind = data[offset + 4:offset + 8]
-        payload = data[offset + 8:offset + 8 + length]
-        crc = struct.unpack(">I", data[offset + 8 + length:offset + 12 + length])[0]
-        assert zlib.crc32(kind + payload) == crc, (path, kind)
-        offset += length + 12
-        if kind == b"IHDR":
-            width, height, bits, color, compression, filtering, interlace = struct.unpack(">IIBBBBB", payload)
-            assert (bits, color, compression, filtering, interlace) == (8, 2, 0, 0, 0)
-        elif kind == b"IDAT":
-            compressed.extend(payload)
-        elif kind == b"IEND":
-            assert offset == len(data)
-            break
-    else:
-        raise AssertionError("missing PNG end")
-    pixels = zlib.decompress(compressed)
-    assert len(pixels) == height * (1 + width * 3)
-    return width, height, pixels
+from tests.support.runtime import ROOT, until, cli_call, spawn_server
+from tests.support.images import read_png
 
 
 def run(capture_dir=None):
@@ -54,26 +24,14 @@ def run(capture_dir=None):
         evidence_lock = Lock()
         print(f"Evidence: {directory}", flush=True)
         with (directory / "server.log").open("w+") as log:
-            server = subprocess.Popen(
-                [str(CLI), "--address", "127.0.0.1:0", "server", "start",
-                 "--artifact-dir", str(directory / "artifacts"), "--shutdown-seconds", "10"],
-                cwd=ROOT, stdout=subprocess.PIPE, stderr=log, text=True,
-            )
+            server = spawn_server(directory, log)
             try:
                 assert select.select([server.stdout], [], [], 10)[0], "no server Ready"
                 address = json.loads(server.stdout.readline())["address"]
 
                 def cli(*args):
-                    result = subprocess.run(
-                        [str(CLI), "--address", address, *args],
-                        cwd=ROOT, capture_output=True, text=True, timeout=40,
-                    )
-                    with evidence_lock:
-                        evidence.write(json.dumps({"arguments": args, "exit": result.returncode,
-                                                   "stdout": result.stdout, "stderr": result.stderr}) + "\n")
-                        evidence.flush()
-                    assert result.returncode == 0, (args, result.stdout, result.stderr)
-                    return json.loads(result.stdout) if result.stdout.strip() else None
+                    return cli_call(address, *args, journal=evidence,
+                                    journal_lock=evidence_lock, allow_empty=True)
 
                 session = cli("session", "create", "--config",
                               str(ROOT / "tests/fixtures/context_menu.toml"))["id"]

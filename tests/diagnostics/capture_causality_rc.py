@@ -21,7 +21,8 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 TESTS = ROOT / "tests"
 sys.path.insert(0, str(TESTS))
-from mesh_picking import rgb_pixels  # noqa: E402
+sys.path.insert(0, str(ROOT))
+from tests.support.images import rgb_pixels  # noqa: E402
 from diagnostics.capture_causality_rc_instrument import instrument  # noqa: E402
 
 BEVY_VERSION = "0.20.0-rc.1"
