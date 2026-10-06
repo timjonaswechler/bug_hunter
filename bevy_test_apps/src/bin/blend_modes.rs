@@ -2,10 +2,7 @@
 
 use bevy::{camera::Hdr, color::palettes::css::ORANGE, prelude::*, window::WindowResolution};
 use bevy_test_apps::composition;
-use rand::{rngs::StdRng, Rng, SeedableRng};
-
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 const COLOR_SEED: u64 = 0x5eed_b1e5;
 const INITIAL_ALPHA: f32 = 0.9;
@@ -20,6 +17,7 @@ fn main() {
             title: "Controlled blend modes test".into(),
             resolution: WindowResolution::new(1280, 720).with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
@@ -29,8 +27,20 @@ fn main() {
         .register_type::<ObservedMaterialHandle>()
         .register_type::<SceneState>()
         .add_systems(Startup, setup)
-        .add_systems(Update, (control_scene, position_labels).chain())
-        .run();
+        .add_systems(Update, (control_scene, position_labels).chain());
+    #[cfg(feature = "slice")]
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(20),
+    ))
+    .add_systems(
+        First,
+        // Cluster dimensions are initialized by the first explicit simulation
+        // tick, not by the idle renderer before that tick.
+        (|mut camera: Single<&mut Camera, With<Camera3d>>| camera.is_active = true)
+            .run_if(run_once),
+    )
+    .add_plugins(woodpecker::session::Plugin);
+    app.run();
 }
 
 #[derive(Component)]
@@ -120,8 +130,6 @@ fn setup(
                     color_slot: slot,
                     unlit: true,
                 },
-                #[cfg(feature = "automation")]
-                AutomationTarget,
             ))
             .id();
         spheres.push((entity, name));
@@ -170,9 +178,11 @@ fn setup(
         CameraTarget,
         SceneState::default(),
         Camera3d::default(),
+        Camera {
+            is_active: !cfg!(feature = "slice"),
+            ..default()
+        },
         Transform::from_translation(CAMERA_POSITION).looking_at(Vec3::ZERO, Vec3::Y),
-        #[cfg(feature = "automation")]
-        AutomationTarget,
         #[cfg(target_arch = "wasm32")]
         Msaa::Off,
     ));
@@ -243,10 +253,10 @@ fn control_scene(
     camera: Single<(Entity, &mut Transform, Has<Hdr>, &mut SceneState), With<CameraTarget>>,
     mut display: Single<&mut Text, With<StatusDisplay>>,
     mut clear_color: ResMut<ClearColor>,
-    time: Res<Time>,
-    input: Res<ButtonInput<KeyCode>>,
+    controls: (Res<Time>, Res<ButtonInput<KeyCode>>),
     mut commands: Commands,
 ) {
+    let (time, input) = controls;
     let (camera_entity, mut camera_transform, has_hdr, mut state) = camera.into_inner();
     if input.pressed(KeyCode::ArrowUp) {
         state.alpha = (state.alpha + time.delta_secs()).min(1.0);
@@ -377,8 +387,7 @@ mod blend_modes_tests {
                 unlit: true,
             },
         ));
-        let mut state = SceneState::default();
-        state.seed = seed;
+        let state = SceneState { seed, ..default() };
         let camera = app
             .world_mut()
             .spawn((

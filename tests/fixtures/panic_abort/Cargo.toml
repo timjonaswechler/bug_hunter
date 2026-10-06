@@ -1,0 +1,16 @@
+[package]
+name = "panic_abort_fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[profile.dev]
+panic = "abort"
+
+[dependencies]
+woodpecker = { path = "../../.." }
+bevy = { version = "0.19.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_log"] }
+libc = "0.2"
+tracing = "0.1"

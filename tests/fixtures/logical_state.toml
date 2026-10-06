@@ -1,0 +1,21 @@
+version = 1
+
+[launch]
+manifest_path = "bevy_test_apps/Cargo.toml"
+package = "bevy_test_apps"
+features = ["slice"]
+arguments = []
+
+[launch.target]
+kind = "binary"
+name = "logical_state"
+
+[tick.pace]
+kind = "as_fast_as_possible"
+
+[report]
+tracing_errors = false
+output = "reports"
+
+[report.provider]
+kind = "local"

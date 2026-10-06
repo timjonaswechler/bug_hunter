@@ -1,4 +1,4 @@
-/// Dimensions of the data-only surface used for Logical Mode UI layout and pointer targeting.
+/// Dimensions of the data-only surface used by UI composition tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LogicalSurface {
     width: u32,
@@ -32,36 +32,21 @@ pub mod composition {
         window::{PrimaryWindow, WindowResolution},
     };
 
-    /// Adds a rendered Player Run or, with `automation`, a rendered Controlled Session.
+    /// Adds a normal rendered application with native input.
     pub fn rendered(app: &mut App, window: Window) -> &mut App {
-        #[cfg(feature = "automation")]
-        {
-            app.add_plugins(
-                DefaultPlugins
-                    .set(WindowPlugin {
-                        primary_window: Some(window),
-                        ..default()
-                    })
-                    .build()
-                    .disable::<bevy::input::InputPlugin>()
-                    .disable::<bevy::gilrs::GilrsPlugin>(),
-            )
-            .add_plugins((
-                bug_hunter::AutomationControlPlugin::rendered_stdio(),
-                bug_hunter::screenshot::Plugin::default(),
-            ))
-        }
-
-        #[cfg(not(feature = "automation"))]
-        {
-            app.add_plugins(DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(window),
-                ..default()
-            }))
-        }
+        let plugins = DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(window),
+            ..default()
+        });
+        #[cfg(feature = "slice")]
+        let plugins = plugins.set(bevy::log::LogPlugin {
+            custom_layer: woodpecker::session::tracing_error_layer,
+            ..default()
+        });
+        app.add_plugins(plugins)
     }
 
-    /// Adds a renderer-free Logical Mode composition with one fixed, data-only UI surface.
+    /// Adds a renderer-free test composition with one fixed, data-only UI surface.
     pub fn logical(app: &mut App, surface: LogicalSurface) -> &mut App {
         app.add_plugins(MinimalPlugins)
             .add_plugins(AssetPlugin::default())
@@ -77,9 +62,6 @@ pub mod composition {
                 UiPlugin,
                 EditableTextInputPlugin,
             ));
-
-        #[cfg(feature = "automation")]
-        app.add_plugins(bug_hunter::AutomationControlPlugin::logical_stdio());
 
         app.world_mut().spawn((
             Name::new("logical-surface"),

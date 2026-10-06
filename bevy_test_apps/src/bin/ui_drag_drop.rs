@@ -5,9 +5,6 @@ use bevy::{
     window::{Window, WindowResolution},
 };
 
-#[cfg(feature = "automation")]
-use bug_hunter::AutomationTarget;
-
 const TILE_SIZE: f32 = 120.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Reflect)]
@@ -76,6 +73,7 @@ fn main() {
             title: "UI drag and drop test".into(),
             resolution: WindowResolution::new(640, 480).with_scale_factor_override(1.0),
             resizable: false,
+            focused: !cfg!(feature = "slice"),
             ..default()
         },
     );
@@ -86,8 +84,35 @@ fn main() {
         .register_type::<TileId>()
         .register_type::<DragPhase>()
         .register_type::<SceneState>()
-        .add_systems(Startup, setup)
-        .run();
+        .add_systems(Startup, setup);
+    #[cfg(feature = "slice")]
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(20),
+    ))
+    .add_plugins(woodpecker::session::Plugin)
+    .add_systems(Update, despawn_dragged_amber);
+    app.run();
+}
+
+// Test-scene trigger, not a woodpecker mutation command. D only removes
+// Amber during an active drag, on the explicit tick that consumes the key.
+#[cfg(feature = "slice")]
+fn despawn_dragged_amber(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    tiles: Query<(Entity, &Tile)>,
+    mut state: Single<&mut SceneState>,
+) {
+    if !keys.just_pressed(KeyCode::KeyD) || state.active_tile != Some(TileId::Amber) {
+        return;
+    }
+    for (entity, tile) in &tiles {
+        if tile.0 == TileId::Amber {
+            commands.entity(entity).despawn();
+            state.occupancy.retain(|tile| *tile != TileId::Amber);
+            state.active_tile = None;
+        }
+    }
 }
 
 fn setup(mut commands: Commands) {
@@ -126,7 +151,6 @@ fn setup(mut commands: Commands) {
                     SceneState::default(),
                 ))
                 .id();
-            mark_automation_target(&mut root.commands(), grid);
             root.commands().entity(grid).with_children(|grid| {
                 for (index, tile, color) in [
                     (0, TileId::Amber, Color::from(AMBER_500)),
@@ -145,7 +169,7 @@ fn spawn_tile(parent: &mut ChildSpawnerCommands, index: i16, tile: TileId, color
     let column = index % 2 + 1;
     let border = color.darker(0.12);
     let (name, label) = tile.metadata();
-    let entity = parent
+    parent
         .spawn((
             Name::new(name),
             Tile(tile),
@@ -200,9 +224,49 @@ fn spawn_tile(parent: &mut ChildSpawnerCommands, index: i16, tile: TileId, color
             TextFont::from_font_size(20.0),
             TextColor(Color::WHITE),
             Pickable::IGNORE,
-        ))
-        .id();
-    mark_automation_target(&mut parent.commands(), entity);
+        ));
+}
+
+#[cfg(all(test, feature = "slice"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn despawn_trigger_requires_key_and_active_amber_drag() {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .add_systems(Update, despawn_dragged_amber);
+        let grid = app.world_mut().spawn(SceneState::default()).id();
+        let amber = app.world_mut().spawn(Tile(TileId::Amber)).id();
+        let blue = app.world_mut().spawn(Tile(TileId::Blue)).id();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyD);
+        app.update();
+        assert!(app.world().get_entity(amber).is_ok());
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .get_mut::<SceneState>(grid)
+            .unwrap()
+            .active_tile = Some(TileId::Amber);
+        app.update();
+        assert!(app.world().get_entity(amber).is_ok());
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyD);
+        app.update();
+        assert!(app.world().get_entity(amber).is_err());
+        assert!(app.world().get_entity(blue).is_ok());
+        let state = app.world().get::<SceneState>(grid).unwrap();
+        assert_eq!(state.active_tile, None);
+        assert_eq!(state.occupancy, [TileId::Blue, TileId::Green, TileId::Rose]);
+        assert!(
+            state.drag_sequence.is_empty(),
+            "despawn must not invent drag events"
+        );
+    }
 }
 
 mod drag {
@@ -250,8 +314,12 @@ mod drag {
         if source == destination {
             return;
         }
-        let Ok([(source_tile, mut source_node), (destination_tile, mut destination_node)]) =
-            tiles.get_many_mut([source, destination])
+        let Ok(
+            [
+                (source_tile, mut source_node),
+                (destination_tile, mut destination_node),
+            ],
+        ) = tiles.get_many_mut([source, destination])
         else {
             return;
         };
@@ -295,11 +363,3 @@ mod drag {
         }
     }
 }
-
-#[cfg(feature = "automation")]
-fn mark_automation_target(commands: &mut Commands, entity: Entity) {
-    commands.entity(entity).insert(AutomationTarget);
-}
-
-#[cfg(not(feature = "automation"))]
-fn mark_automation_target(_commands: &mut Commands, _entity: Entity) {}

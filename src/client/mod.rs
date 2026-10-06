@@ -1,7 +1,6 @@
-//! Controlled Session integration that runs inside the child application.
+//! HTTP management and fixed-session WebSocket access.
 
-mod plugin;
-pub mod transport;
-
-pub use plugin::{AutomationControlPlugin, InputFactory};
-pub use transport::{Input, JsonLinesInput, Output, StdoutOutput};
+mod access;
+#[cfg(feature = "cli")]
+pub(crate) use access::Interrupt;
+pub use access::{Client, Error, Management};
