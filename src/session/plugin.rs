@@ -16,6 +16,8 @@ use std::{
 /// Native mouse, keyboard, touch and IME input is discarded in controlled sessions.
 /// Enable the `ui` feature for applications using Bevy UI's `Interaction` components.
 /// Enable `screenshot` for PNG capture with an application-installed renderer.
+/// Renderer extraction and updates wait for the first completed explicit tick; startup
+/// alone does not prepare camera/light data. No application schedules run to warm it up.
 #[derive(Default)]
 pub struct Plugin;
 
@@ -98,7 +100,7 @@ impl bevy::app::Plugin for Plugin {
     }
 }
 
-fn install(
+pub(super) fn install(
     app: &mut App,
     input: mpsc::Receiver<String>,
     output: mpsc::Sender<(Message, Option<mpsc::Sender<()>>)>,
@@ -122,6 +124,12 @@ fn install(
         input_gate: Default::default(),
     })
     .add_systems(Control, run);
+    render::install(app);
+}
+
+#[cfg(feature = "screenshot")]
+pub(super) fn render_waiting(world: &World) -> bool {
+    render::waiting(world)
 }
 
 fn ready(world: &World) {
@@ -195,6 +203,9 @@ fn run(world: &mut World) {
             }
             bridge.input_gate.swap_window_events(world);
             bridge.ticks = bridge.ticks.checked_add(1).expect("tick counter exhausted");
+            if bridge.ticks == 1 {
+                render::start(world);
+            }
             let active = bridge.active.as_mut().unwrap();
             active.executed += 1;
             active.last_tick = Some(Instant::now());
@@ -353,8 +364,13 @@ fn dispatch(world: &mut World, bridge: &mut Bridge, id: u64, command: Command) -
     Some(protocol::completed(id, name, value))
 }
 
+mod render;
+
 #[cfg(test)]
 mod input_tests;
+
+#[cfg(test)]
+mod render_tests;
 
 #[cfg(test)]
 mod tests {

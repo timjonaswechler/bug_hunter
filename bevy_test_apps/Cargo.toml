@@ -7,18 +7,16 @@ autobins = false
 
 [dependencies]
 bevy = { version = "0.19.1", features = [] }
-woodpecker = { path = "../", optional = true }
+woodpecker = { path = "../", features = ["ui", "screenshot"] }
 rand = "0.9"
+rand_10 = { package = "rand", version = "0.10" }
+chacha20 = { version = "0.10", default-features = false, features = ["rng"] }
 
 [features]
 default = []
-slice = [
-    "dep:woodpecker",
-    "woodpecker/ui",
-    "woodpecker/screenshot",
-    "woodpecker/headless-2d",
-]
-headless-3d-session = ["slice", "woodpecker/headless-3d"]
+# Legacy compile-time switch for the other existing controlled fixtures.
+# Alien Cake selects session mode at runtime; it does not require this feature.
+slice = []
 
 [[bin]]
 name = "context_menu"
@@ -45,16 +43,10 @@ name = "logical_state"
 path = "src/bin/logical_state.rs"
 
 [[bin]]
+name = "alien_cake_addict"
+path = "src/bin/alien_cake_addict.rs"
+
+[[bin]]
 name = "counter"
 path = "src/bin/counter.rs"
 required-features = ["slice"]
-
-[[bin]]
-name = "headless_session"
-path = "src/bin/headless_session.rs"
-required-features = ["slice"]
-
-[[bin]]
-name = "headless_session_3d"
-path = "src/bin/headless_session_3d.rs"
-required-features = ["headless-3d-session"]

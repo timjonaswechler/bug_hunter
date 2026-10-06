@@ -178,6 +178,36 @@ fn slow_reports_outlive_sessions_and_share_server_deadline_and_forced_cleanup() 
                         == 2
                 });
             }
+            // Keep accepted simulation work open while both providers are blocked.
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let active_ids: Vec<_> = entries
+                .iter()
+                .map(|entry| {
+                    let protocol::Result::Pending { request_id, .. } = runtime.block_on(
+                        entry.submit(
+                            crate::command::tick::warp::Start {
+                                ticks: 1000,
+                                pace: Some(crate::command::tick::warp::Pace::TicksPerSecond {
+                                    target: 1.0,
+                                }),
+                            }
+                            .into(),
+                        ),
+                    ) else {
+                        panic!("long warp was not accepted")
+                    };
+                    wait(|| {
+                        entry
+                            .snapshot()
+                            .pending
+                            .iter()
+                            .any(|pending| pending.request_id == request_id)
+                    });
+                    request_id
+                })
+                .collect();
             inner.stop(false);
             let started = Instant::now();
             let deadline = inner.directory.lock().unwrap().deadline;
@@ -205,8 +235,32 @@ fn slow_reports_outlive_sessions_and_share_server_deadline_and_forced_cleanup() 
                 started.elapsed() < Duration::from_secs(3),
                 "one shared deadline, not one per report"
             );
-            for entry in &entries {
+            let mut summaries = Vec::new();
+            for (entry, active_id) in entries.iter().zip(&active_ids) {
                 let events = activity(entry);
+                let warp = events
+                    .iter()
+                    .find(|e| e["kind"] == "completed" && e["request_id"] == *active_id)
+                    .expect("active warp must be resolved");
+                assert_eq!(warp["output"]["requested_ticks"], 1000);
+                assert_eq!(warp["output"]["outcome"], "stopped");
+                assert!(warp["output"]["executed_ticks"].as_u64().unwrap() < 1000);
+                assert!(entry.snapshot().pending.is_empty());
+                let game_pid: i32 =
+                    fs::read_to_string(entry.detail().artifact_dir.join("fixture-pid"))
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                assert_eq!(
+                    unsafe { libc::kill(game_pid, 0) },
+                    -1,
+                    "game process survived cleanup"
+                );
+                assert_eq!(
+                    std::io::Error::last_os_error().raw_os_error(),
+                    Some(libc::ESRCH)
+                );
+                summaries.push(serde_json::json!({"session":entry.detail().id,"game_pid":game_pid,"warp":warp}));
                 let ended = events
                     .iter()
                     .position(|e| e["kind"] == "lifecycle" && e["state"] == "Ended")
@@ -236,15 +290,35 @@ fn slow_reports_outlive_sessions_and_share_server_deadline_and_forced_cleanup() 
             }
             for file in fs::read_dir(&phase_root).unwrap() {
                 let file = file.unwrap();
-                if file.file_name().to_string_lossy().starts_with("entered-") {
+                if file.file_name().to_string_lossy().starts_with("entered-")
+                    || file
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("descendant-")
+                {
                     let pid: i32 = fs::read_to_string(file.path()).unwrap().parse().unwrap();
                     assert_ne!(
                         unsafe { libc::kill(pid, 0) },
                         0,
-                        "gh process survived cleanup"
+                        "provider process or descendant survived cleanup"
+                    );
+                    assert_eq!(
+                        std::io::Error::last_os_error().raw_os_error(),
+                        Some(libc::ESRCH)
                     );
                 }
             }
+            fs::write(
+                phase_root.join("result.json"),
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "acceptance":"passed", "phase":phase, "sessions":summaries,
+                    "shared_deadline_ms":800, "elapsed_ms":started.elapsed().as_millis(),
+                    "reports":if phase == "graceful" {"submitted"} else {"interrupted"},
+                    "game_provider_and_descendant_cleanup":true
+                }))
+                .unwrap(),
+            )
+            .unwrap();
         }
         return;
     }
@@ -285,6 +359,9 @@ fi
     let output = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "server::tests::slow_reports_outlive_sessions_and_share_server_deadline_and_forced_cleanup", "--nocapture"])
         .env(ROOT, &root).env("PATH", std::env::join_paths(paths).unwrap()).output().unwrap();
+    fs::write(root.join("stdout.log"), &output.stdout).unwrap();
+    fs::write(root.join("stderr.log"), &output.stderr).unwrap();
+    eprintln!("multisession evidence: {}", root.display());
     assert!(
         output.status.success(),
         "{}\n{}",

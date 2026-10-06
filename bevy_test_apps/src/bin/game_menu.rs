@@ -7,13 +7,6 @@ use bevy::{
     prelude::*,
     window::{Window, WindowResolution},
 };
-#[cfg(feature = "slice")]
-use bevy::{
-    app::ScheduleRunnerPlugin,
-    camera::{ImageRenderTarget, RenderTarget},
-    render::render_resource::TextureFormat,
-    window::ExitCondition,
-};
 
 const TEXT_COLOR: Color = Color::srgb(0.92, 0.92, 0.92);
 const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);
@@ -21,12 +14,6 @@ const HOVERED_BUTTON: Color = Color::srgb(0.25, 0.25, 0.25);
 const SELECTED_BUTTON: Color = Color::srgb(0.35, 0.75, 0.35);
 const SPLASH_SECONDS: f32 = 1.0;
 const GAME_SECONDS: f32 = 5.0;
-#[cfg(feature = "slice")]
-const HEADLESS_WIDTH: u32 = 800;
-#[cfg(feature = "slice")]
-const HEADLESS_HEIGHT: u32 = 600;
-#[cfg(feature = "slice")]
-const HEADLESS_SCALE_FACTOR: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Reflect, States)]
 enum ScreenState {
@@ -126,57 +113,27 @@ struct SplashTimer(Timer);
 struct ReturnTimer(Timer);
 
 fn main() {
-    let headless = std::env::args_os().skip(1).any(|arg| arg == "--headless");
     let mut app = App::new();
-    if headless {
-        #[cfg(feature = "slice")]
-        add_headless_plugins(&mut app);
-        #[cfg(not(feature = "slice"))]
-        panic!("--headless requires the slice feature");
-    } else {
-        bevy_test_apps::composition::rendered(
-            &mut app,
-            Window {
-                title: "Controlled game menu test".into(),
-                resolution: WindowResolution::new(800, 600).with_scale_factor_override(1.0),
-                resizable: false,
-                focused: !cfg!(feature = "slice"),
-                ..default()
-            },
-        );
-    }
-    add_game_menu(&mut app, headless);
+    bevy_test_apps::composition::rendered(
+        &mut app,
+        Window {
+            title: "Controlled game menu test".into(),
+            resolution: WindowResolution::new(800, 600).with_scale_factor_override(1.0),
+            resizable: false,
+            focused: !cfg!(feature = "slice"),
+            ..default()
+        },
+    );
+    add_game_menu(&mut app);
     #[cfg(feature = "slice")]
     app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-        std::time::Duration::from_millis(if headless { 20 } else { 100 }),
+        std::time::Duration::from_millis(100),
     ))
     .add_plugins(woodpecker::session::Plugin);
     app.run();
 }
 
-#[cfg(feature = "slice")]
-fn add_headless_plugins(app: &mut App) {
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: None,
-                exit_condition: ExitCondition::DontExit,
-                ..default()
-            })
-            .set(bevy::log::LogPlugin {
-                custom_layer: woodpecker::session::tracing_error_layer,
-                ..default()
-            })
-            .disable::<bevy::winit::WinitPlugin>()
-            .disable::<bevy::audio::AudioPlugin>()
-            .disable::<bevy::gilrs::GilrsPlugin>(),
-    )
-    .add_plugins(ScheduleRunnerPlugin::run_loop(
-        std::time::Duration::from_millis(1),
-    ));
-}
-
-fn add_game_menu(app: &mut App, headless: bool) {
+fn add_game_menu(app: &mut App) {
     app.insert_resource(DisplayQuality::default())
         .insert_resource(Volume(7))
         .init_state::<ScreenState>()
@@ -185,16 +142,9 @@ fn add_game_menu(app: &mut App, headless: bool) {
         .register_type::<MenuState>()
         .register_type::<DisplayQuality>()
         .register_type::<Volume>()
-        .register_type::<SessionObservation>();
-    if headless {
-        #[cfg(feature = "slice")]
-        app.add_systems(Startup, setup_headless);
-        #[cfg(not(feature = "slice"))]
-        unreachable!("headless game menu requires slice");
-    } else {
-        app.add_systems(Startup, setup);
-    }
-    app.add_systems(OnEnter(ScreenState::Splash), present_splash)
+        .register_type::<SessionObservation>()
+        .add_systems(Startup, setup)
+        .add_systems(OnEnter(ScreenState::Splash), present_splash)
         .add_systems(
             Update,
             splash_countdown.run_if(in_state(ScreenState::Splash)),
@@ -216,28 +166,6 @@ fn add_game_menu(app: &mut App, headless: bool) {
 
 fn setup(mut commands: Commands) {
     commands.spawn((Name::new("menu-camera"), Camera2d));
-    commands.spawn((Name::new("game-menu-state"), SessionObservation::default()));
-}
-
-#[cfg(feature = "slice")]
-fn setup_headless(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
-    let image = images.add(Image::new_target_texture(
-        HEADLESS_WIDTH,
-        HEADLESS_HEIGHT,
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    ));
-    commands.spawn((
-        Name::new("menu-camera"),
-        Camera2d,
-        Msaa::Off,
-        RenderTarget::Image(ImageRenderTarget {
-            handle: image,
-            scale_factor: HEADLESS_SCALE_FACTOR,
-        }),
-        IsDefaultUiCamera,
-        woodpecker::session::HeadlessCaptureCamera2d,
-    ));
     commands.spawn((Name::new("game-menu-state"), SessionObservation::default()));
 }
 
@@ -536,7 +464,6 @@ fn add_button(
             intent,
         ))
         .observe(set_pressed_interaction)
-        .observe(set_released_interaction)
         .id();
     commands.entity(button).with_child((
         Text::new(label.to_owned()),
@@ -560,21 +487,25 @@ fn set_pressed_interaction(
     }
 }
 
-fn set_released_interaction(
-    release: On<Pointer<Release>>,
-    mut buttons: Query<&mut Interaction, With<Button>>,
-) {
-    if let Ok(mut interaction) = buttons.get_mut(release.event_target()) {
-        *interaction = Interaction::None;
-    }
-}
+type ChangedButtonColors<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Interaction,
+        &'static mut BackgroundColor,
+        Has<SelectedSetting>,
+    ),
+    (Changed<Interaction>, With<Button>),
+>;
 
-fn button_colors(
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor, Has<SelectedSetting>),
-        (Changed<Interaction>, With<Button>),
-    >,
-) {
+type ChangedButtonIntents<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Interaction, &'static ButtonIntent, Entity),
+    (Changed<Interaction>, With<Button>),
+>;
+
+fn button_colors(mut buttons: ChangedButtonColors) {
     for (interaction, mut color, selected) in &mut buttons {
         *color = match (*interaction, selected) {
             (Interaction::Pressed, _) => SELECTED_BUTTON.into(),
@@ -586,15 +517,15 @@ fn button_colors(
 }
 
 fn button_actions(
-    buttons: Query<(&Interaction, &ButtonIntent, Entity), (Changed<Interaction>, With<Button>)>,
+    buttons: ChangedButtonIntents,
     mut selected: Query<(Entity, &mut BackgroundColor), With<SelectedSetting>>,
     mut commands: Commands,
-    mut quality: ResMut<DisplayQuality>,
-    mut volume: ResMut<Volume>,
+    settings: (ResMut<DisplayQuality>, ResMut<Volume>),
     mut next_game: ResMut<NextState<ScreenState>>,
     mut next_menu: ResMut<NextState<MenuState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    let (mut quality, mut volume) = settings;
     for (interaction, intent, entity) in &buttons {
         if *interaction != Interaction::Pressed {
             continue;
@@ -695,7 +626,7 @@ mod tests {
             .insert_resource(Time::<()>::default())
             .insert_resource(ButtonInput::<KeyCode>::default())
             .init_resource::<Messages<AppExit>>();
-        add_game_menu(&mut app, false);
+        add_game_menu(&mut app);
         app.update();
         app
     }
@@ -730,38 +661,6 @@ mod tests {
 
     mod game_menu {
         use super::*;
-
-        #[cfg(feature = "slice")]
-        #[test]
-        fn headless_setup_has_one_fixed_scaled_image_camera_and_no_window() {
-            let mut app = App::new();
-            app.init_resource::<Assets<Image>>()
-                .add_systems(Startup, setup_headless);
-            app.update();
-
-            assert_eq!(
-                app.world_mut().query::<&Window>().iter(app.world()).count(),
-                0
-            );
-            let mut cameras = app.world_mut().query_filtered::<
-                (&Camera, &RenderTarget),
-                With<woodpecker::session::HeadlessCaptureCamera2d>,
-            >();
-            let (camera, target) = cameras.single(app.world()).unwrap();
-            assert!(camera.is_active);
-            assert!(camera.viewport.is_none());
-            let RenderTarget::Image(target) = target else {
-                panic!("headless menu camera must target an image")
-            };
-            assert_eq!(target.scale_factor, HEADLESS_SCALE_FACTOR);
-            let image = app
-                .world()
-                .resource::<Assets<Image>>()
-                .get(&target.handle)
-                .unwrap();
-            assert_eq!(image.texture_descriptor.size.width, HEADLESS_WIDTH);
-            assert_eq!(image.texture_descriptor.size.height, HEADLESS_HEIGHT);
-        }
 
         #[test]
         fn controlled_time_drives_splash_and_game_timers() {

@@ -387,4 +387,5 @@ mod tests {
     }
 
     include!("report_tests.rs");
+    include!("report_load_tests.rs");
 }

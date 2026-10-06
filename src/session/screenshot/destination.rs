@@ -119,7 +119,13 @@ pub(super) mod tests {
         let first = sandbox.root("first");
         let second = sandbox.root("second");
         assert!(!write(&first, "images/ä.png", b"first").unwrap());
+        // An existing reader must keep the old file while a new open sees the
+        // replacement. An in-place truncate/write would fail this assertion.
+        let mut previous = first.open("images/ä.png").unwrap();
         assert!(write(&first, "images/ä.png", b"replacement").unwrap());
+        let mut old_bytes = Vec::new();
+        std::io::Read::read_to_end(&mut previous, &mut old_bytes).unwrap();
+        assert_eq!(old_bytes, b"first");
         assert!(!write(&second, "images/ä.png", b"second").unwrap());
         assert_eq!(first.read("images/ä.png").unwrap(), b"replacement");
         assert_eq!(second.read("images/ä.png").unwrap(), b"second");
@@ -130,6 +136,43 @@ pub(super) mod tests {
         );
         assert!(first.metadata("directory.png").unwrap().is_dir());
         assert_eq!(first.read_dir("images").unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn in_root_leaf_links_are_replaced_without_changing_their_targets() {
+        use std::os::unix::fs::symlink;
+        let sandbox = Sandbox::new();
+        let root = sandbox.root("root");
+        root.write("keep.png", b"unchanged target").unwrap();
+        symlink("keep.png", sandbox.0.join("root/leaf.png")).unwrap();
+        assert!(write(&root, "leaf.png", b"new image").unwrap());
+        assert!(
+            !root
+                .symlink_metadata("leaf.png")
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(root.read("leaf.png").unwrap(), b"new image");
+        assert_eq!(root.read("keep.png").unwrap(), b"unchanged target");
+
+        symlink("missing.png", sandbox.0.join("root/dangling.png")).unwrap();
+        assert!(write(&root, "dangling.png", b"created image").unwrap());
+        assert!(!root.exists("missing.png"));
+        assert_eq!(root.read("dangling.png").unwrap(), b"created image");
+        // Absolute links are forbidden even when their target is inside root.
+        symlink(
+            sandbox.0.join("root/keep.png"),
+            sandbox.0.join("root/absolute.png"),
+        )
+        .unwrap();
+        assert_eq!(
+            write(&root, "absolute.png", b"bad").unwrap_err().code,
+            "invalid_screenshot_path"
+        );
+        assert_eq!(root.read("keep.png").unwrap(), b"unchanged target");
+        assert_eq!(root.entries().unwrap().count(), 4, "temporary file leaked");
     }
 
     #[cfg(unix)]

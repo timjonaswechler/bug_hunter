@@ -89,8 +89,30 @@ fn main() {
     app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
         std::time::Duration::from_millis(20),
     ))
-    .add_plugins(woodpecker::session::Plugin);
+    .add_plugins(woodpecker::session::Plugin)
+    .add_systems(Update, despawn_dragged_amber);
     app.run();
+}
+
+// Test-scene trigger, not a woodpecker mutation command. D only removes
+// Amber during an active drag, on the explicit tick that consumes the key.
+#[cfg(feature = "slice")]
+fn despawn_dragged_amber(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    tiles: Query<(Entity, &Tile)>,
+    mut state: Single<&mut SceneState>,
+) {
+    if !keys.just_pressed(KeyCode::KeyD) || state.active_tile != Some(TileId::Amber) {
+        return;
+    }
+    for (entity, tile) in &tiles {
+        if tile.0 == TileId::Amber {
+            commands.entity(entity).despawn();
+            state.occupancy.retain(|tile| *tile != TileId::Amber);
+            state.active_tile = None;
+        }
+    }
 }
 
 fn setup(mut commands: Commands) {
@@ -203,6 +225,48 @@ fn spawn_tile(parent: &mut ChildSpawnerCommands, index: i16, tile: TileId, color
             TextColor(Color::WHITE),
             Pickable::IGNORE,
         ));
+}
+
+#[cfg(all(test, feature = "slice"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn despawn_trigger_requires_key_and_active_amber_drag() {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .add_systems(Update, despawn_dragged_amber);
+        let grid = app.world_mut().spawn(SceneState::default()).id();
+        let amber = app.world_mut().spawn(Tile(TileId::Amber)).id();
+        let blue = app.world_mut().spawn(Tile(TileId::Blue)).id();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyD);
+        app.update();
+        assert!(app.world().get_entity(amber).is_ok());
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .get_mut::<SceneState>(grid)
+            .unwrap()
+            .active_tile = Some(TileId::Amber);
+        app.update();
+        assert!(app.world().get_entity(amber).is_ok());
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyD);
+        app.update();
+        assert!(app.world().get_entity(amber).is_err());
+        assert!(app.world().get_entity(blue).is_ok());
+        let state = app.world().get::<SceneState>(grid).unwrap();
+        assert_eq!(state.active_tile, None);
+        assert_eq!(state.occupancy, [TileId::Blue, TileId::Green, TileId::Rose]);
+        assert!(
+            state.drag_sequence.is_empty(),
+            "despawn must not invent drag events"
+        );
+    }
 }
 
 mod drag {

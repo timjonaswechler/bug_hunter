@@ -171,16 +171,19 @@ fn spawn_test_mesh(
         .observe(rotate_on_drag);
 }
 
+type MeshInteractionQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut MeshMaterial3d<StandardMaterial>,
+        &'static mut MeshInteractionState,
+    ),
+>;
+
 fn update_on<E: EntityEvent>(
     material: Handle<StandardMaterial>,
     interaction: MeshEvent,
-) -> impl Fn(
-    On<E>,
-    Query<(
-        &mut MeshMaterial3d<StandardMaterial>,
-        &mut MeshInteractionState,
-    )>,
-) {
+) -> impl Fn(On<E>, MeshInteractionQuery) {
     move |event, mut meshes| {
         if let Ok((mut current_material, mut state)) = meshes.get_mut(event.event_target()) {
             current_material.0 = material.clone();

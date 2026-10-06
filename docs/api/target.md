@@ -11,56 +11,6 @@ Der [Umsetzungsplan](implementation-plan.md) steht getrennt davon.
 Die nummerierten ADRs dokumentieren Entscheidungsherkunft, nicht
 einen zusätzlich zu pflegenden Zielstand.
 
-## Headless-Betrieb
-
-Der Agent muss eine Spiel-Session ohne natives Fenster und ohne Displayserver
-steuern können: Bild anfordern, virtuelle Tastatur- oder Mauseingaben vormerken,
-explizite Ticks ausführen und das Ergebnis erneut beobachten. Ein geeignetes
-Grafik-Backend bleibt erforderlich; Headless bedeutet nicht Rendering ohne
-Grafikgerät oder Treiber.
-
-Ziel ist ein nahezu unverändertes Bevy-Spiel. Die Anwendung behält ihre echte
-Main-World-`Window`-Identität sowie Camera2d/Camera3d, Projektion/FoV, Viewports,
-Kamera-Order und -Stacks, Transforms, Materialien, Licht, UI und normalen
-Picking-Observer. Woodpecker verlangt keine markierte Capture-Kamera, keinen
-manuellen 2D-/3D-Schalter, keine Parallelkamera und keine Umschreibung der
-Spielkamera auf `RenderTarget::Image`. Eine konfigurierte Window-Entity ist
-weder automatisch ein OS-Fenster noch eine erfundene Dummyidentität.
-
-Woodpecker übernimmt zentral nur Ausgabequelle, virtuelle Eingabequelle und die
-bereits vorhandene explizite Ticksteuerung. Bevy bleibt für Kameraableitung,
-Rendering, UI-Layout und Picking verantwortlich. Woodpecker baut keine eigene
-Projektionsformel, Raycasting- oder Sichtbarkeitslogik und verlangt keinen
-Szenenadapter.
-
-Eine gerenderte Session besitzt eine eindeutig gewählte primäre
-**Ausgabeidentität**, unabhängig von einer Fensteroberfläche. Ihre Pixelgröße,
-logische Größe, Skalierung und normalisierte Zielidentität müssen für Capture,
-UI-Layout und Pointer-Picking übereinstimmen. Absolute Eingaben und Bildausgabe
-beziehen sich auf denselben Koordinatenraum. Mehrere Kameras desselben Ziels
-bilden einen Stack; mehrere unabhängige Ziele dürfen nicht still durch „erste
-Kamera“ entschieden werden.
-
-Die Anwendung besitzt ihre Kameras und darf Projektion, Zoom, FoV, Blickrichtung,
-Viewport und Stack durch Spielregeln verändern. Headless verändert diese Werte
-nicht stillschweigend. Capture und Picking müssen denselben Kamera-, Projektions-,
-Viewport- und Zielstand verwenden. Resize, Skalierungs- und Zielwechsel dürfen
-nicht zu veralteten Koordinaten oder einem falsch zugeordneten Readback führen.
-
-Rendering, GPU-Readback und Command-Verarbeitung dürfen ohne Simulationsfortschritt
-weiterlaufen. Nur Warps führen Spiel- und Eingabesysteme aus. Weder Bildaufnahme
-noch Renderbereitschaft dürfen versteckte Ticks, Fokusänderungen oder einen
-physischen Cursor benötigen. Der vorhandene Capture-Service behält Queue,
-Protokoll-v3-Requestkorrelation, Deadline, PNG-Schreiben, sichere Pfade und
-Cleanup; Headless eröffnet keinen zweiten Screenshot-Service.
-
-Dies ist das Ziel, nicht der heutige Implementierungsstand. Der aktuelle
-Marker-/Imagekameraweg ist eine begrenzte Fixture und bleibt nur bis zu grünen
-Ersatznachweisen erhalten. Öffentliche Bevy-0.19.1-Anschlussstellen sind
-CPU-seitig belegt; GPU-, Readback- und Pixelparität sind es noch nicht. Der
-maßgebliche IST/ZIEL-Stand und die dateigenaue Reihenfolge stehen in
-[`headless-integration.md`](headless-integration.md).
-
 ## Verantwortlichkeiten
 
 | Modul | Besitzt |
@@ -380,6 +330,18 @@ Endgründe sind `ProcessExit { status }`, `TransportClosed { channel }`,
 `TransportFailed { channel, message }` und `EventQueueOverflow { capacity, dropped_events }`.
 Kanäle sind stdin, stdout und stderr. Auch ein unerwarteter Exit-Status 0 ist ein Prozessende.
 EOF nach bereits beobachtetem Prozessende gehört zum abschließenden Drain.
+Kommt stdout-/stderr-EOF vor dem beobachtbaren Prozessstatus, beginnt ab dem ersten
+EOF eine begrenzte, abbrechbare Klärungsfrist (derzeit eine reale Sekunde). Weitere
+EOFs verlängern sie nicht. Neue Commands werden ohne Annahme mit `Ended` abgewiesen;
+vorgemerkte Commands und Replay werden nicht weiter zum Spiel gesendet. Bereits
+unterwegs befindliche Responses und Diagnosebytes werden weiterhin verarbeitet.
+Ein innerhalb der Frist beobachtetes natürliches Prozessende verwendet seinen
+Exitstatus und die normalen Failure-/Drain-Regeln. Bleibt der Prozess am Ende der
+Frist am Leben, wird `TransportClosed` für den ersten EOF-Kanal verbindlich und die
+Prozessgruppe bereinigt, ohne zusätzlichen ProcessExit-Failure. Konkrete I/O-Fehler,
+Überlauf und eigener Abbruch warten nicht auf diese Frist. Die Frist erzeugt keine
+Ticks und ist keine Zusicherung, dass beliebig lange App-Aufräumarbeiten natürlich
+beendet werden können.
 
 Bei einem unerwarteten Ende verarbeitet die Session letzte Responses und Marker aus den Pipes,
 schließt Recording nach Möglichkeit ab und reiht `Ended` nach den übrigen Events genau einmal
@@ -459,23 +421,16 @@ Ohne Session-Plugin bleibt die native Bedienung unverändert.
 
 Der virtuelle Pointer verwendet Bevys Picking-Eingabe mit eigener Pointer-Identität.
 Seine Position steht am zugehörigen `PointerLocation`, nicht am Betriebssystemfenster.
-Bevys UI-`Interaction` muss ebenfalls diesen Pointer verwenden. UI-Layout und
-Picking erhalten Größe und Kamera vom Bildziel, nicht von einem nativen Fenster.
-Direkte Betriebssystemabfragen und `RawWinitWindowEvent` sind keine kontrollierten
-Eingabekanäle. Falls eine Anwendung zusätzlich native Fenster besitzt, dürfen
-deren Fokus und Sichtbarkeit die virtuelle Eingabe nicht bestimmen.
+Bevys UI-`Interaction` muss ebenfalls diesen Pointer verwenden. Fenster-Metadaten und
+Fensterverwaltung, etwa Resize und Close, bleiben nativ; direkte Betriebssystemabfragen
+und `RawWinitWindowEvent` sind keine kontrollierten Eingabekanäle.
 Textfokus bezeichnet ausschließlich den Fokus innerhalb des jeweiligen Bevy World.
 
 Keyboard verwendet eigene stabile, layoutunabhängige Key-Tokens mit fester interner Abbildung
 auf physisches `KeyCode` und logisches Bevy-`Key`.
-Pointer verwendet das Bildziel. `MoveTo` benutzt logische Pixel vom linken oberen Rand,
+Pointer verwendet das Spielfenster. `MoveTo` benutzt logische Pixel vom linken oberen Rand,
 `MoveBy` ein Delta zur bekannten Position. Das Ziel muss `0 <= x < width` und
 `0 <= y < height` erfüllen; Ablehnung verändert die Position nicht.
-Relative Mausbewegung zur Blicksteuerung muss auch ohne Cursorposition und
-Cursor-Capture des Betriebssystems möglich sein. Sie ist von der begrenzten
-Pointerverschiebung `MoveBy` zu unterscheiden. Ihr Command-Format und ihre
-Bevy-Zustellung werden im Headless-Durchstich festgelegt; die bestehende
-`MoveBy`-Semantik darf nicht stillschweigend umgedeutet werden.
 Buttons sind `left`, `right`, `middle` und wirken an der aktuellen Position.
 Scroll übergibt horizontales und vertikales Delta samt Vorzeichen in Bevy-Zeileneinheiten;
 `[0,0]` ist erlaubt. Text geht an den eindeutigen lebenden, editierbaren Bevy-Fokus
@@ -487,8 +442,7 @@ Erst beim nächsten Tick erhält dieses Feld den vorgemerkten Edit; Bevys normal
 Selektions-, Zeichenfilter- und Längenregeln bestimmen dessen Verarbeitung.
 Ist das Feld dann nicht mehr vorhanden oder editierbar, wird nichts an ein anderes
 Feld zugestellt. Der bestätigte Command-Erfolg bleibt eine Vormerkungsbestätigung.
-Leerer Text ist zulässig, er benötigt dieselben UI-Fokusprüfungen.
-Keyboard und Text benötigen kein natives Fenster.
+Leerer Text ist zulässig, er benötigt dieselben Fenster- und Fokusprüfungen.
 
 ### Tick-Warp
 
@@ -568,23 +522,46 @@ Fixtures gegen Bevy 0.19.1 sichern den Vertrag bei Upgrades.
 
 ### Screenshot
 
-`Capture { path }` nimmt das primäre Bildziel einschließlich seiner zugeordneten
-Kamera- und UI-Ausgaben auf. Die Response wartet auf Renderdurchlauf,
-asynchronen GPU-Readback und erfolgreiches PNG-Schreiben.
+`Capture { path }` nimmt genau das primäre gerenderte Spielfenster auf. Die Response wartet
+auf Renderdurchlauf, asynchronen GPU-Readback und erfolgreiches PNG-Schreiben.
 Simulationsticks und simulierte Zeit bleiben unverändert.
-Ohne vollständige Unterstützung oder eindeutiges Bildziel wird der Command abgelehnt.
-Erfolg erfordert die Zuordnung der gerenderten Ausgabe, GPU-Kopie und Bilddaten
-zum Request. Ein vorbereiteter Buffer oder ein erfolgreiches Mapping allein
-genügt nicht. Eine tatsächlich schwarze Szene bleibt gültig; Pixelwerte sind
-keine allgemeine Bereitschaftsprüfung.
+Ohne vollständige Unterstützung oder eindeutiges Fenster wird der Command abgelehnt.
 
-Der Adapter benötigt begrenztes Warten auf seine Render-/Readback-Voraussetzungen
-mit ausdrücklichem Fehlerabschluss, ohne Simulationsticks. Die beobachtbaren
-Bereitschaftskriterien für Assets, Pipelines und Kameraausgabe müssen im
-Durchstich festgelegt und getestet werden. Eine pauschale Anzahl Startframes
-oder wiederholte Captures bis zum ersten passenden Bild sind kein Zielverhalten.
-Session-`Ready` bestätigt den Handshake, nicht automatisch die Bereitschaft
-jedes späteren Bildes.
+Vor dem ersten vollständig ausgeführten expliziten Tick bleiben Render-Extraction
+und Render-Schedule angehalten, damit unvorbereitete Startup-Kamera-/Lichtdaten nicht
+in den Renderer gelangen. Das native Fenster kann zunächst schwarz bleiben. Capture
+endet in diesem Zustand sofort mit `screenshot_window_unavailable`, ohne Queueing,
+Dateiänderung oder Simulationstick. Danach läuft der ursprüngliche Renderpfad auch
+zwischen Warps weiter. Kameraaktivität, Anwendungsschedules und Zeitpolitik werden
+nicht verändert; es gibt weder einen versteckten Starttick noch einen zusätzlichen
+PostUpdate-Lauf. Der Bootstrap schützt auch Anwendungen ohne Screenshot-Feature.
+
+Der aktuelle Umfang setzt während der kontrollierten Session unveränderte
+Fenstergröße, Skalierung und Bildschirmzuordnung voraus. Dynamische Resize-,
+DPI- und Bildschirmwechsel sind zurückgestellt und kein Abschlussblocker.
+Korrekte Darstellung nach solchen Änderungen ohne Tick ist nicht zugesichert;
+es gibt dafür keine zusätzliche Darstellungsaufbereitung und keine versteckten
+Reparatur-Ticks. Die frühere Freigabe eines Resize-Umbaus ist durch diese
+Umfangsentscheidung ersetzt.
+
+Ab Aktivierung einer Aufnahme gilt derzeit eine Readback-Frist von 30 realen
+Sekunden; die Wartezeit in der seriellen Capture-Queue zählt nicht dazu. Beim Poll
+wird die Frist vor der Übernahme eines Readbacks zum Encoding geprüft. Ist sie
+abgelaufen, wird die noch auf Readback wartende Aufnahme mit `screenshot_failed`
+abgeschlossen, auch wenn bereits ein Bild im Kanal liegt. Späte Antworten dürfen
+weder Dateien schreiben noch einen anderen Request abschließen. Bereits gestartetes
+Encoding und Schreiben fallen nicht unter diese Readback-Frist. Die Prüfung erfolgt
+kooperativ im Poll, nicht durch einen Echtzeit-Timer; daraus folgt keine harte
+30-Sekunden-Garantie für die Zustellung einer Response. Capture erzeugt auch beim
+Warten oder bei einem Timeout keine Simulationsticks.
+
+Aufnahmen vollständig verdeckter Fenster sind im aktuellen Umfang nicht zugesichert.
+Fehlt die Renderoberfläche im Capture-Frame, folgt `screenshot_window_unavailable`
+ohne Schreiben oder Ersetzen einer Datei. Diese Einschränkung blockiert den
+Abschluss der allgemeinen Spielsteuerung nicht.
+Ein tatsächlich gerendertes schwarzes Bild ist gültig. Der Command bewertet weder
+Pixelfarben noch die visuelle Richtigkeit des Spiels; ein Vergleich mit einem
+Sollbild gehört nicht zum aktuellen Produktumfang.
 
 Der konkrete Pfad ist normalisiert, nicht leer, UTF-8, relativ zum Artefakt-Root und endet auf
 `.png`. Er verwendet `/`, keine leeren Komponenten, `.`/`..` oder Backslashes und darf
@@ -935,7 +912,18 @@ Die Tabelle beschreibt Schemas, nicht durchweg wörtliche JSON-Werte.
 Pace wird `{"kind":"as_fast_as_possible"}` oder
 `{"kind":"ticks_per_second","target":60.0}`.
 Recording und Replay nutzen dieselbe qualifizierte Command-Form, werden aber ausschließlich
-in der Session ausgeführt und sind keine zusätzlichen Spiel-Wire-Commands.
+in der Session ausgeführt und sind keine zusätzlichen Spiel-Wire-Commands:
+
+| Qualifizierter Name | arguments | Erfolgreicher output |
+| --- | --- | --- |
+| `recording.start` | `{"path":"recordings/run.jsonl"}` | `{"path":"recordings/run.jsonl"}` |
+| `recording.stop` | `{}` | `{"path":"recordings/run.jsonl","recorded_commands":n}` |
+| `replay.start` | `{"path":"recordings/run.jsonl"}` | `{"outcome":{"kind":"completed"}}`, alternativ `stopped` oder `blocked` mit `code` und `message` im Outcome |
+| `replay.stop` | `{}` | `{"was_running":true}`, alternativ `false` |
+
+Ein `blocked`-Replay-Outcome ist ein technischer Planabschluss, kein erfolgreicher
+Nachweis des aufgezeichneten Ablaufs. Die normalen Start-/Stop-Ablehnungen und
+Ladefehler bleiben wie oben beschrieben.
 
 Inspect-Argumente:
 
@@ -986,12 +974,6 @@ Aufrufers; technische Details bleiben in `message`.
 | Inspect | `unknown_type_path`, `entity_not_found` |
 | Screenshot | `invalid_screenshot_path`, `screenshot_window_unavailable`, `screenshot_unavailable`, `screenshot_failed` |
 
-Die oben aufgeführten `*_window_unavailable`-Codes beschreiben noch die
-vorhandenen Fensteradapter. Vor der Headless-Integration sind ihre Ablösung
-für fehlende Bildziele, betroffene Clients und die Protokollversionierung
-festzulegen. Sie dürfen im Zielbetrieb nicht wegen eines fehlenden nativen
-Fensters zurückgegeben oder ohne dokumentierte Migration umgedeutet werden.
-Die folgenden Regeln beschreiben den bis dahin geschützten Fensterpfad:
 Fensterfehler umfassen fehlende oder nicht eindeutige benötigte Fenster.
 `screenshot_window_unavailable` umfasst auch eine im Capture-Frame nicht verfügbare
 Fenster-Renderoberfläche. Ein nicht gefüllter Readback darf nicht als Erfolg gespeichert werden.

@@ -1,19 +1,6 @@
 use super::protocol::{Diagnostic, Message};
 use bevy::prelude::*;
 
-/// Explicitly selects the single full-image 2D camera supported by the first
-/// headless capture slice. Applications must also enable `headless-2d`.
-#[cfg(feature = "headless-2d")]
-#[derive(Component, Default)]
-pub struct HeadlessCaptureCamera2d;
-
-/// Explicitly selects the single fixed-perspective 3D image camera supported by
-/// the narrow procedural-scene capture slice. Applications must also enable
-/// `headless-3d`.
-#[cfg(feature = "headless-3d")]
-#[derive(Component, Default)]
-pub struct HeadlessCaptureCamera3d;
-
 #[cfg(feature = "screenshot")]
 mod capture;
 #[cfg(feature = "screenshot")]
@@ -51,7 +38,15 @@ pub(super) fn pending(world: &World, id: u64) -> bool {
 pub(super) fn start(world: &mut World, id: u64, path: String) -> Result<(), Diagnostic> {
     validate(&path)?;
     #[cfg(feature = "screenshot")]
-    return capture::start(world, id, path);
+    {
+        if available(world) && super::plugin::render_waiting(world) {
+            return Err(Diagnostic::new(
+                "screenshot_window_unavailable",
+                "primary window has no rendered surface before the first explicit tick",
+            ));
+        }
+        capture::start(world, id, path)
+    }
     #[cfg(not(feature = "screenshot"))]
     {
         let _ = (world, id);
