@@ -54,7 +54,10 @@ The server and CLI currently require Unix process groups.
 
 The library exposes `command`, `handle`, `session` and report configuration.
 Use `session::Plugin` in the game and `session::Session` for direct process control.
-The default library has no HTTP/CLI dependencies and does not require a renderer.
+The default library has no HTTP/CLI dependencies and does not install or require a
+renderer. It uses Bevy Render types to guard an application-installed RenderApp:
+extraction and rendering begin after the first completed explicit tick, then
+continue while simulation is paused. Startup never runs a hidden warm-up tick.
 
 | Feature | Entry points |
 | --- | --- |

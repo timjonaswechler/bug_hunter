@@ -7,12 +7,16 @@ autobins = false
 
 [dependencies]
 bevy = { version = "0.19.1", features = [] }
-woodpecker = { path = "../", optional = true }
+woodpecker = { path = "../", features = ["ui", "screenshot"] }
 rand = "0.9"
+rand_10 = { package = "rand", version = "0.10" }
+chacha20 = { version = "0.10", default-features = false, features = ["rng"] }
 
 [features]
 default = []
-slice = ["dep:woodpecker", "woodpecker/ui", "woodpecker/screenshot"]
+# Legacy compile-time switch for the other existing controlled fixtures.
+# Alien Cake selects session mode at runtime; it does not require this feature.
+slice = []
 
 [[bin]]
 name = "context_menu"
@@ -37,6 +41,10 @@ path = "src/bin/ui_drag_drop.rs"
 [[bin]]
 name = "logical_state"
 path = "src/bin/logical_state.rs"
+
+[[bin]]
+name = "alien_cake_addict"
+path = "src/bin/alien_cake_addict.rs"
 
 [[bin]]
 name = "counter"

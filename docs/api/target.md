@@ -527,6 +527,15 @@ auf Renderdurchlauf, asynchronen GPU-Readback und erfolgreiches PNG-Schreiben.
 Simulationsticks und simulierte Zeit bleiben unverändert.
 Ohne vollständige Unterstützung oder eindeutiges Fenster wird der Command abgelehnt.
 
+Vor dem ersten vollständig ausgeführten expliziten Tick bleiben Render-Extraction
+und Render-Schedule angehalten, damit unvorbereitete Startup-Kamera-/Lichtdaten nicht
+in den Renderer gelangen. Das native Fenster kann zunächst schwarz bleiben. Capture
+endet in diesem Zustand sofort mit `screenshot_window_unavailable`, ohne Queueing,
+Dateiänderung oder Simulationstick. Danach läuft der ursprüngliche Renderpfad auch
+zwischen Warps weiter. Kameraaktivität, Anwendungsschedules und Zeitpolitik werden
+nicht verändert; es gibt weder einen versteckten Starttick noch einen zusätzlichen
+PostUpdate-Lauf. Der Bootstrap schützt auch Anwendungen ohne Screenshot-Feature.
+
 Der aktuelle Umfang setzt während der kontrollierten Session unveränderte
 Fenstergröße, Skalierung und Bildschirmzuordnung voraus. Dynamische Resize-,
 DPI- und Bildschirmwechsel sind zurückgestellt und kein Abschlussblocker.

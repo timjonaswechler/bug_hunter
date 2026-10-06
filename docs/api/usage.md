@@ -60,6 +60,14 @@ selbst. Das Session-Plugin meldet die Capability erst, wenn RenderApp, RenderDev
 Bevys Screenshot-Kanal und das Artefaktverzeichnis verfügbar sind. Server und CLI
 benötigen dieses Feature nicht.
 
+Vor dem ersten vollständig ausgeführten expliziten Tick bleiben Render-Extraction
+und Render-Schedule angehalten: Startup allein bereitet die Kamera-/Lichtdaten nicht
+auf. Das native Fenster kann dabei schwarz bleiben. Capture wird vorher sofort mit
+`screenshot_window_unavailable` abgelehnt, ohne Aufnahme-Queue oder Dateiänderung.
+Nach diesem Tick rendert die Anwendung auch zwischen Warps weiter. Der Bootstrap
+verändert weder Kameraaktivität noch Anwendungsschedules oder Zeitpolitik; es gibt
+keinen versteckten Starttick. Ein tatsächlich gerendertes schwarzes Bild bleibt gültig.
+
 Während der kontrollierten Session Fenstergröße und Skalierung unverändert lassen
 und das Fenster nicht auf einen anderen Bildschirm verschieben. Dynamische
 Resize-/DPI-/Bildschirmwechsel sind aus dem aktuellen Umfang zurückgestellt;
@@ -363,8 +371,10 @@ Die Prozessverwaltung dieses Durchstichs unterstützt Unix-Prozessgruppen.
 Alle sieben Szenen des Testpackages verwenden für kontrollierte Sessions das Feature
 `slice`. Ohne dieses Feature bleibt die native Bedienung erhalten; das alte Feature
 `automation` wurde entfernt.
-Ohne `screenshot` benötigt die Bibliothek keinen Renderer. Das optionale Feature
-verwendet Bevy Render und PNG-Encoding, installiert aber keinen Renderer.
+Auch ohne `screenshot` installiert oder benötigt die Bibliothek keinen Renderer.
+Bevy-Render-Typen gehören für den Render-Bootstrap zum Kern; dessen Schutz wirkt auch
+ohne PNG-Capability. `screenshot` aktiviert den Readback-/PNG-Adapter, installiert
+aber keinen Renderer.
 Die übrigen Render-/UI-Abhängigkeiten der Testanwendungen gehören zu deren eigenem Manifest.
 
 Die Lockfiles halten die geprüfte Auflösung auf Bevy 0.19.1 fest.

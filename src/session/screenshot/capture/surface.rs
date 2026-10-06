@@ -56,3 +56,46 @@ pub(super) fn check(frame: Res<Frame>, windows: Option<Res<ExtractedWindows>>) {
     // This is a per-request, first-frame result, not a mutable global flag.
     let _ = result.set(available);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::app::SubApp;
+
+    #[test]
+    fn surface_guard_observes_preparation_before_render_on_bevys_real_base_schedule() {
+        let mut app = App::new();
+        let mut render = SubApp::new();
+        render.add_schedule(Render::base_schedule());
+        app.insert_sub_app(RenderApp, render);
+        install(&mut app);
+        let result = Arc::new(OnceLock::new());
+        let window = app.world_mut().spawn_empty().id();
+        let render = app.sub_app_mut(RenderApp);
+        render
+            .world_mut()
+            .insert_resource(Frame::new(window, result.clone()));
+        render.add_systems(
+            Render,
+            (
+                (|frame: Res<Frame>| {
+                    assert!(
+                        frame.0.as_ref().unwrap().1.get().is_none(),
+                        "guard ran before preparation finished"
+                    );
+                })
+                .in_set(RenderSystems::Prepare),
+                (|frame: Res<Frame>| {
+                    assert_eq!(
+                        frame.0.as_ref().unwrap().1.get(),
+                        Some(&false),
+                        "guard did not inspect this frame before rendering"
+                    );
+                })
+                .in_set(RenderSystems::Render),
+            ),
+        );
+        render.world_mut().run_schedule(Render);
+        assert_eq!(result.get(), Some(&false));
+    }
+}

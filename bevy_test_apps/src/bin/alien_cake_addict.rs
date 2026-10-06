@@ -1,23 +1,28 @@
 use std::f32::consts::PI;
 
-use bevy::prelude::*;
+use bevy::{asset::AssetPlugin, prelude::*};
 
 use chacha20::ChaCha8Rng;
 use rand::{RngExt, SeedableRng};
+use rand_10 as rand;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Reflect, States)]
 enum GameState {
     #[default]
     Playing,
     GameOver,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Reflect)]
+#[reflect(Resource)]
 struct BonusSpawnTimer(Timer);
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(AssetPlugin {
+            file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into(),
+            ..default()
+        }))
         .init_resource::<Game>()
         .insert_resource(BonusSpawnTimer(Timer::from_seconds(
             5.0,
@@ -42,14 +47,23 @@ fn main() {
             Update,
             game_over_keyboard.run_if(in_state(GameState::GameOver)),
         )
+        .add_plugins(|app: &mut App| {
+            if std::env::var_os("WOODPECKER_ARTIFACT_DIR").is_some() {
+                app.register_type::<Game>()
+                    .register_type::<State<GameState>>()
+                    .register_type::<BonusSpawnTimer>()
+                    .add_plugins(woodpecker::session::Plugin);
+            }
+        })
         .run();
 }
 
+#[derive(Reflect)]
 struct Cell {
     height: f32,
 }
 
-#[derive(Default)]
+#[derive(Default, Reflect)]
 struct Player {
     entity: Option<Entity>,
     i: usize,
@@ -57,7 +71,7 @@ struct Player {
     move_cooldown: Timer,
 }
 
-#[derive(Default)]
+#[derive(Default, Reflect)]
 struct Bonus {
     entity: Option<Entity>,
     i: usize,
@@ -65,7 +79,8 @@ struct Bonus {
     handle: Handle<WorldAsset>,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Reflect)]
+#[reflect(Resource)]
 struct Game {
     board: Vec<Vec<Cell>>,
     player: Player,
@@ -262,11 +277,13 @@ fn move_player(
     }
 }
 
+type CameraTransforms<'w, 's> = Query<'w, 's, &'static mut Transform, With<Camera3d>>;
+
 // change the focus of the camera
 fn focus_camera(
     time: Res<Time>,
     mut game: ResMut<Game>,
-    mut transforms: ParamSet<(Query<&mut Transform, With<Camera3d>>, Query<&Transform>)>,
+    mut transforms: ParamSet<(CameraTransforms, Query<&Transform>)>,
 ) {
     const SPEED: f32 = 2.0;
     // if there is both a player and a bonus, target the mid-point of them

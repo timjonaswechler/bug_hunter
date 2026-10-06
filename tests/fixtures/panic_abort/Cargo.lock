@@ -587,6 +587,7 @@ dependencies = [
  "bevy_ptr",
  "bevy_reflect",
  "bevy_render",
+ "bevy_shader",
  "bevy_state",
  "bevy_tasks",
  "bevy_time",

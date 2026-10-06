@@ -38,7 +38,15 @@ pub(super) fn pending(world: &World, id: u64) -> bool {
 pub(super) fn start(world: &mut World, id: u64, path: String) -> Result<(), Diagnostic> {
     validate(&path)?;
     #[cfg(feature = "screenshot")]
-    return capture::start(world, id, path);
+    {
+        if available(world) && super::plugin::render_waiting(world) {
+            return Err(Diagnostic::new(
+                "screenshot_window_unavailable",
+                "primary window has no rendered surface before the first explicit tick",
+            ));
+        }
+        capture::start(world, id, path)
+    }
     #[cfg(not(feature = "screenshot"))]
     {
         let _ = (world, id);

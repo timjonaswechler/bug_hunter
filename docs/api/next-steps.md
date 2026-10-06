@@ -4,7 +4,7 @@
 
 Session-/Prozessverwaltung, explizite Warps, virtuelle Eingaben, Inspect,
 Screenshot-Grundfunktion, Recording/Replay und Reports sind implementiert.
-Alle sieben Bevy-Szenen besitzen CLI-Abnahmen; die ergänzte Steuerungsabnahme
+Die sieben bisherigen Bevy-Szenen besitzen CLI-Abnahmen; die ergänzte Steuerungsabnahme
 und die Screenshot-Prüfungen bei stabilen Fensterbedingungen sind abgeschlossen.
 Auch alle drei Punkte des zusammenhängenden Untersuchungsablaufs sind abgenommen.
 
@@ -19,7 +19,172 @@ Beim Einstieg Branch und `git status --short` prüfen; bestehende Änderungen un
 unversionierte Dateien erhalten. [Abschlussplan](implementation-plan.md) enthält
 Aufgabenstatus und Abdeckungsmatrix; [usage.md](usage.md) die ausführbaren Befehle.
 
-## Nächste Aktion
+## Neuer Auftrag: Alien Cake Addict vorbereiten
+
+Nach dem Abschluss-Commit `de4fbe4` wurde auf Nutzerauftrag zuerst der bereitgestellte
+Alien-Cake-Ausgangsstand samt drei GLB-Modellen in `b085470` gesichert. Die zunächst
+invasive Anpassung wurde auf ausdrücklichen Nutzerauftrag zurückgenommen:
+keine geänderte Spiellogik, Systemreihenfolge, Zufallsauswahl, Cooldown-/Spawn-Timer,
+Neustartlogik, Fenster-/Kamera-Konfiguration oder feste Tickdauer. Zusätzlicher
+Beobachtungszustand, Bewegungs-Script und Tests für geänderte Logik wurden entfernt;
+Archiv und historische Prüflogs bleiben unter `target/alien-cake-preparation/`.
+Diese 13-Test-Ergebnisse sind historisch und kein Nachweis der Minimal-Anbindung.
+
+Die minimale Vorbereitung benötigt **kein `slice`**. Die Anwendung bleibt nativ,
+wenn die interne Session-Umgebung fehlt, und installiert ansonsten das bestehende
+`woodpecker::session::Plugin`. Der Plugin-Vertrag selbst ist unverändert und verlangt
+derzeit diese Umgebung; bedingungsloses Installieren unterstützt noch keinen normalen
+nativen Start. `slice` bleibt nur für die übrigen bestehenden Fixtures als Legacy-
+Umschalter bestehen. Woodpecker ist im Test-App-Paket eine normale Abhängigkeit;
+`ui` und `screenshot` werden dort aktiviert, nicht durch eine geänderte Spiellogik.
+
+Reflection-Derives und Registrierungen machen die **vorhandenen** Ressourcen `Game`,
+`State<GameState>` und `BonusSpawnTimer` inspizierbar. Private Rust-Daten ohne solche
+Metadaten sind nicht automatisch lesbar. Der Asset-Pfad und die ursprünglichen RNG-
+Abhängigkeiten sind für direkte Binärstarts eingerichtet; ein Query-Alias hält
+Clippy ohne Suppression grün. Fixture: `tests/fixtures/alien_cake_addict.toml`,
+`features = []`. Bedienung und Grenzen im
+[Bevy-README](../../bevy_test_apps/README.md#alien-cake-addict-controlled-preparation).
+Prüfstand/Logs: `target/alien-cake-minimal/`. Alle neun Spiel-Funktionskörper und die
+Update-Systemreihenfolge stimmen mit `b085470` überein (ohne Format-/Kommentarvergleich).
+Die zehn bisherigen Bevy-Tests, strenges Clippy, All-Targets-Check ohne Features und
+Alien-Build ohne Features bestehen. Keine neuen Tests behaupten eine Abnahme geänderter
+Logik. Build/Tests sind keine reale Session- oder grafische Abnahme; der Live-Inspect
+von `Game` ist noch nicht geprüft.
+Vorbereitung noch uncommitted. Ein neuer GUI-Lauf erfordert frische Freigabe.
+
+### Neuer SDK-Fix: Render-Bootstrap ohne versteckten Tick
+
+Zwei reale Starts endeten vor dem ersten Tick mit einer GPU-Validierung für
+`clustering dummy texture`, `Dimension X is zero`; der zweite ohne Spielagenten.
+Die historische Evidenz bleibt unter `target/alien-score-cli/` und
+`target/alien-score-cli-retry-1/`. Die öffentliche headless Diagnose unter
+`target/render-init-diagnosis/` zeigte: aktive 3D-Kamera mit gültigem Viewport,
+aber mangels PostUpdate nullwertige Cluster; nach einem expliziten Tick gültig.
+
+Auf Nutzerauftrag wartet der SDK-Bootstrap jetzt mit Render-Extraction und dem
+ursprünglichen Render-Einstiegsschedule bis zum ersten vollständig ausgeführten
+expliziten Tick. Danach rendert die Anwendung auch zwischen Warps weiter. Das Gate
+bleibt bei Bevys pipelined Render-Handoff am RenderApp. Keine zusätzlichen
+Anwendungsschedules, Kameraänderungen oder Zeitüberschreibungen. Bevy-Render-Typen
+gehören dafür zum SDK-Kern, unabhängig von der optionalen PNG-Capability; kein
+Renderer wird installiert. Capture vor dem ersten Tick endet sofort mit
+`screenshot_window_unavailable`, ohne Queueing oder Dateischreiben.
+
+Prüfstand `target/render-bootstrap-fix/`: Regression erst rot, danach grün;
+144 Library- und 25 Integrationstests seriell, 94 Tests ohne Features,
+zehn Bevy-Tests, strenges Root-/Bevy-Clippy, Feature-Check, Builds und Format-/Diff-
+Prüfung bestanden. Eine öffentliche headless Probe mit echten Bevy-Kamera-/Licht-
+Systemen bestätigt: vor dem Tick keine Render-Extraction; danach gültige Cluster
+und Rendering. Eine erste vollständige Prüfung hatte einen 30-s-Timeout im
+bestehenden Report-Queue-Test bei parallelen Cargo-Builds; isolierte und anschließend
+vollständige serielle Prüfung bestanden mit unveränderten Fristen. Historische
+Fehlerlogs bleiben erhalten, die genaue Timeout-Ursache ist nicht abschließend geklärt.
+
+**Grafischer Versuch noch nicht bestanden:** Unter `target/render-bootstrap-gui/`
+blieb das Fenster vor dem ersten Tick stabil und wurde vom Nutzer schwarz sichtbar
+bestätigt. Genau ein expliziter Tick wurde abgeschlossen. Beim einzigen Capture
+panikte die Bootstrap-Prüfung, weil Control `Bridge` mittels `resource_scope`
+vorübergehend aus der World entnimmt. Session/Server wurden beendet; kein Retry.
+Ein roter Test über den tatsächlichen Command-Dispatch reproduzierte dies. Der
+Render-Startmarker liegt jetzt unabhängig von Bridge in der World und wird erst
+nach dem ersten vollständig ausgeführten Tick geöffnet. Command-Pfad-Regression,
+144 Library-/25 Integrationstests, 94 Tests ohne Features, Clippy und öffentliche
+Kamera-/Lichtprobe bestehen nach der Korrektur. Der explizit genehmigte zweite
+Versuch (`target/render-bootstrap-gui-retry-1/`) blieb ebenfalls vor dem Tick
+stabil, führte genau einen Tick aus und panikte nicht. Der einzige Capture wurde
+jedoch mit `screenshot_window_unavailable` abgelehnt: `primary window has no render
+surface for this capture frame`. Session/Server wurden beendet (Server-Exit 0),
+keine weiteren Ticks oder Capture-Retries. Reale 3D-Ausgabe und Capture sind weiter
+nicht abgenommen. Diagnose ohne neuen GUI-Lauf unter
+`target/capture-surface-diagnosis/`: Die Guard-Prüfung entspricht Bevy 0.19.1s
+Window-Copy-Voraussetzungen und läuft im echten Render-Basisschedule nach Prepare
+und vor Render (neuer Test). 17 Screenshot-Tests, Clippy und synthetische öffentliche
+Kamera-/Lichtprobe bestehen. Der konkrete native Surface-Ausfall ist aus den
+bisherigen Logs nicht reproduzierbar: Fenster/View/Format und Kamera-Ziele wurden
+nicht einzeln protokolliert. Kein Verhalten geändert, Guard nicht abgeschwächt.
+Nächster Schritt ist gezielte Capture-Frame-Instrumentierung vor einem separat
+freigegebenen GUI-Versuch; Root Cause und grafische Abnahme bleiben offen.
+Der genehmigte instrumentierte Versuch (`target/render-bootstrap-gui-retry-2/`)
+führte genau einen Tick und einen erfolgreichen Capture aus. View und Format waren
+vorhanden; eine schreibende Kamera zielte auf das Fenster. Die 1280×720-PNG ist jedoch
+vollständig einfarbig RGB (43, 44, 47): kein bestätigter Spielinhalt. Die reflektierte
+Game-Resource war lesbar und blieb durch Capture unverändert. Session/Server sauber
+beendet, keine weiteren Ticks/Retrys. Temporäre SDK-Logs entfernt, 17 Screenshot-Tests
+nach Cleanup bestanden. Der Erfolg mit Instrumentierung beweist keine Ursache oder
+Behebung des vorherigen Surface-Ausfalls. Der folgende Neustart
+(`target/render-bootstrap-gui-retry-3/`) endete vor jeglichem Tick nach Ablauf der
+expliziten Aktionsfreigabe-Wartefrist; kein Capture, kein automatischer Neustart.
+Erst nach erneuter Freigabe lief `target/render-bootstrap-gui-retry-4/`: menschliche
+Sichtbarkeitsbestätigung, genau 10 explizite Ticks bei 60 Ticks/s ohne Input, ein
+1280×720-Capture. Das Bild zeigt 3D-Kachelbrett, zentrale Figur und `Sugar Rush: 0`
+(2684 RGB-Farben, SHA256
+`cb1ae3d5fcbd457b0219dce33904e5f5d1cde86cf88f3cd3ece059033c0ae646`).
+Reflektierte Game-Resource lesbar, Score 0, durch Capture unverändert. Session/Server
+sauber beendet. Echte 3D-Ausgabe und Capture nach expliziten Ticks sind damit in
+diesem Lauf bestätigt; Cake-Modell zur Laufzeit und source-blinder Score-30-Test
+bleiben offen. Die frühere Surface-Ablehnung bleibt historisch ungeklärt.
+Der anschließende source-blinde Sol-6.1-Medium-Test
+(`target/alien-score-native-1/`) erreichte maximal **Score 7**, nicht 30. Agent nur
+mit `game`/`contact_supervisor`, keine Quellzugriffsversuche. Nach einem lokalen
+Inspect-Schemafehler wurde derselbe Agent mit ausdrücklicher Nutzerfreigabe und
+reiner API-Klarstellung fortgesetzt. Der Spielprozess endete später unerwartet
+mit Exit 0: Monitor-Removed-Meldung, danach fehlende Window-Komponente, schließlich
+`No windows are open, exiting`. Ursache nicht bewiesen; keine automatische
+Wiederholung. Watchdog sah Failed und beendete den Server; Shutdown meldete
+`shutdown_incomplete`. Keine Spiel-/Server-Prozesse übrig. Finaler Teilbericht und
+Fehlerhistorie erhalten. Score-30-Abnahme bleibt offen.
+Ein erneut ausdrücklich genehmigter frischer Spieler
+(`target/alien-score-native-2/`, Workflow `19358739-7ac7-4805-8818-322346d5ffd4`)
+erreichte maximal **24**, mit nur zwei relevanten Captures und null
+Quellzugriffsversuchen. Derselbe beobachtete Fensterablauf trat wieder auf:
+Monitor-Removed, fehlende Window-Komponente, `No windows are open, exiting`,
+unexpected exit 0. Agent stoppte ohne Retry; Watchdog-Shutdown meldete erneut
+`shutdown_incomplete`. Keine Spiel-/Server-Prozesse übrig. Ursache weiterhin
+nicht etabliert; wiederholte zeitliche Korrelation ist kein Kausalnachweis.
+Teilbericht/Audit erhalten; vor weiterer grafischer Wiederholung den
+Fenster-Lifecycle-Befund gezielt diagnostizieren, ohne Gameplay-Quellzugriff.
+Der ausdrücklich genehmigte instrumentierte Lauf `target/window-loss-gui-1/`
+führte genau zehn Ticks ohne Input/Capture aus und beobachtete anschließend
+20 Minuten nur passiv. Ergebnis `passive_deadline_no_symptom`; danach absichtlicher
+Shutdown, keine Spiel-/Server-Prozesse übrig. Der historische Fensterfehler wurde
+nicht reproduziert und gilt nicht als behoben.
+Der anschließend separat genehmigte instrumentierte source-blinde Score-30-Lauf
+unter `target/alien-score-instrumented-1/` ist **bestanden: Live-Score 31,
+17 Kuchen**. Frischer Sol 6.1 Medium, nur `game`/`contact_supervisor`, null
+Quellzugriffsversuche, vier relevante Captures, 1.931 explizite Agent-Ticks und
+keine Parent-Ticks. Keine Ticks nach Erfolgsnachweis; unabhängiger Parent-Inspect
+bestätigte identisches Game, Gewinn-PNG zeigt `Sugar Rush: 31`. Recording sauber
+mit 448 Commands abgeschlossen; Session/Server/Watchdog beendet, Prozesse absent.
+Keine Fenster-Komponentenverluste oder Winit-Query-Warnungen in diesem Lauf;
+die historischen Ursachen bleiben ungeklärt, kein Fenster-Fix behauptet.
+Temporäre opt-in Beobachter (`[DEBUG-window-loss-20261005]`) samt sechs geprüften
+Headless-Diagnose-Seams archiviert unter `target/window-loss-diagnosis/instrumentation/`
+und danach aus dem SDK entfernt. Nach Cleanup 145 Library-/25 Integrationstests
+seriell und striktes Clippy bestanden. Erster paralleler Cleanup-Testlauf hatte
+einen Before-Ready-SIGKILL im Session-Fixture; Fehlerlog erhalten, isolierter und
+serieller Gesamtlauf bestanden ohne Deadlineänderungen, Ursache nicht behauptet.
+Der Spielquellcode wurde für Diagnose/Fix nicht gelesen oder geändert.
+Score-30-Abnahme gilt für den erhaltenen instrumentierten Lauf; Cake-Modell-
+Pixelabnahme separat, soweit nicht durch frühere Captures bestätigt.
+SDK-Fix und minimale Alien-Anbindung werden mit dem ausdrücklich freigegebenen
+Abschluss-Commit versioniert. Die lokale Evidenz unter `target/` bleibt unversioniert.
+
+### Git-Abschluss: Merge-Zuordnung offen
+
+Die Vorprüfung zum Abschluss bestätigt `upstream` als
+`https://github.com/timjonaswechler/bug_hunter.git`; `main` und `upstream/main`
+stehen auf `2bca2df`. Der offene Draft-[PR #3 „Code ownership“](https://github.com/timjonaswechler/bug_hunter/pull/3)
+zielt von `code_ownership` auf `main`, nicht von `reference/window`.
+Sein Head `b89d781` enthält fünf zusätzliche Commits seit dem gemeinsamen Stand
+`7378230`, darunter die abweichende Headless-Implementierung. Diese gehören nicht
+zum hier abgenommenen Fenster-Stand. Deshalb sind Merge und PR-Abschluss bis zur
+Klärung dieser Branch-Zuordnung ausgesetzt; kein Force-Push, Reset oder Verwerfen
+der abweichenden Arbeit. Format- und Diff-Prüfung wurden vor dem Abschluss-Commit
+erneut bestanden; die oben genannten seriellen Tests und Clippy sind durch die
+erhaltenen Cleanup-Logs belegt, nicht durch einen neuen Grafiklauf.
+
+## Vorheriger Abschluss-Checkpoint
 
 Die [Testordnung](../../tests/README.md) ist umgesetzt: Rust-Integrationstests unter
 `tests/integration/`, Python-Abnahmen unter `tests/acceptance/headless/` und

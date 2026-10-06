@@ -315,6 +315,80 @@ mod tests {
     }
 
     #[test]
+    fn capture_before_first_tick_is_rejected_without_queueing_or_advancing() {
+        use bevy::{app::SubApp, render::RenderApp, window::PrimaryWindow};
+        let sandbox = Sandbox::new();
+        let root = sandbox.root("root");
+        let reader = root.try_clone().unwrap();
+        let (mut fixture, _entity, _images) = fixture(root);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.world_mut().spawn((Window::default(), PrimaryWindow));
+        app.world_mut()
+            .insert_resource(fixture.remove_resource::<Service>().unwrap());
+        app.world_mut()
+            .insert_resource(fixture.remove_resource::<CapturedScreenshots>().unwrap());
+        app.insert_sub_app(RenderApp, SubApp::new());
+        let (sender, input) = mpsc::channel();
+        let (output, receiver) = mpsc::channel();
+        crate::session::plugin::install(
+            &mut app,
+            input,
+            output,
+            crate::command::tick::warp::Pace::AsFastAsPossible,
+        );
+        app.update();
+        let before = app.world().resource::<Time<Real>>().elapsed();
+        let capture = |id, path: &str| {
+            sender
+                .send(crate::session::protocol::encode(
+                    id,
+                    &crate::command::screenshot::Capture { path: path.into() }.into(),
+                ))
+                .unwrap();
+        };
+        // Use the actual command path: Control temporarily owns Bridge outside
+        // the World while dispatching this request.
+        capture(88, "images/early.png");
+        app.update();
+        assert!(matches!(receiver.try_recv().unwrap().0,
+            Message::Rejected { request_id: 88, error, .. }
+            if error.code == "screenshot_window_unavailable"));
+        assert!(app.world().resource::<Service>().queue.is_empty());
+        assert_eq!(app.world().resource::<Time<Real>>().elapsed(), before);
+        assert!(!reader.exists("images/early.png"));
+        // Normal path validation remains ahead of the render-bootstrap guard.
+        capture(89, "../early.png");
+        app.update();
+        assert!(matches!(receiver.try_recv().unwrap().0,
+            Message::Rejected { request_id: 89, error, .. }
+            if error.code == "invalid_screenshot_path"));
+        sender
+            .send(crate::session::protocol::encode(
+                90,
+                &crate::command::tick::warp::Start {
+                    ticks: 1,
+                    pace: None,
+                }
+                .into(),
+            ))
+            .unwrap();
+        app.update();
+        assert!(matches!(
+            receiver.try_recv().unwrap().0,
+            Message::Completed { request_id: 90, .. }
+        ));
+        capture(91, "images/after.png");
+        app.update();
+        // The bootstrap is now open. This headless fixture still has no raw
+        // native window, so ordinary surface validation, not bootstrap, rejects.
+        assert!(matches!(receiver.try_recv().unwrap().0,
+            Message::Rejected { request_id: 91, error, .. }
+            if error.code == "screenshot_window_unavailable"
+                && error.message == "expected one primary rendered window"));
+    }
+
+    #[test]
     fn prepared_readback_without_render_surface_is_rejected_not_encoded() {
         let sandbox = Sandbox::new();
         let root = sandbox.root("root");

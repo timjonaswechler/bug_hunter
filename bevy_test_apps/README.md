@@ -22,7 +22,7 @@ session's internal launch environment.
 feature it remains a native application. The acceptance test finds named entities
 through general Inspect, reads layout coordinates, queues pointer input and checks
 that application state changes only after an explicit Warp.
-`slice` enables `woodpecker/ui` so both picking observers and legacy `Interaction`
+The woodpecker dependency enables `ui` so both picking observers and legacy `Interaction`
 use the virtual pointer. The controlled window starts without requesting focus.
 The test runs two concurrent sessions with independent pointer/button states.
 It also presses, holds and releases `a` independently in both sessions and checks
@@ -30,7 +30,7 @@ the reflected key counters. Keyboard events do not insert text.
 The test then focuses each text field with its virtual pointer and submits different
 Unicode strings through `input.text.input`. The reflected text is sampled after
 Bevy applies text edits, so a single explicit tick shows the resulting value.
-`slice` also enables `woodpecker/screenshot`. The test captures the closed and open
+The dependency also enables `screenshot`. The test captures the closed and open
 menu, validates PNG chunks and pixel data, and checks that capture changes neither
 the reflected tick counter nor simulated time. It covers overwrite, concurrent
 requests, symlink escape rejection and separate session artifact roots.
@@ -236,9 +236,90 @@ not guaranteed to be capturable and do not block completion of the current scope
 Pixel checks validate capture for these known fixtures, not a general product
 feature for comparing screenshots against reference images.
 
+## Alien Cake Addict: controlled preparation
+
+The provided example and three bundled GLB models were preserved in commit
+`b085470` before adaptation. `alien_cake_addict` is now an explicit Cargo target.
+It needs **no `slice` feature**. Without the session launch environment it runs
+normally with `DefaultPlugins`. When `WOODPECKER_ARTIFACT_DIR` is present it also
+installs `woodpecker::session::Plugin`. The bridge currently requires that environment;
+installing it unconditionally would not support a normal native launch.
+
+The original gameplay functions, RNG selection, float cooldown, restart behavior,
+system ordering, camera and window defaults are retained. No observation system,
+fixed timestep or controlled-only game logic. Only Reflection derives/registrations
+expose the existing `Game`, `State<GameState>` and `BonusSpawnTimer` resources.
+Private Rust values are not automatically inspectable without Reflection metadata.
+The asset path is anchored to this package's `assets/` for direct executable launches.
+The original RNG APIs use `chacha20` + `rand` 0.10; a dependency alias keeps the
+other examples on their existing `rand` 0.9 APIs.
+
+Safe build/headless checks (do not open a window):
+
+```sh
+cargo build --features cli
+cargo build --manifest-path bevy_test_apps/Cargo.toml --no-default-features --bin alien_cake_addict
+cargo test --manifest-path bevy_test_apps/Cargo.toml --all-features --all-targets
+```
+
+After **fresh GUI approval**, use the normal server/session workflow:
+
+```sh
+# Terminal 1, repository root:
+target/debug/woodpecker --address 127.0.0.1:4100 server start --artifact-dir target/alien-cake
+# Terminal 2: this create command opens the game window.
+target/debug/woodpecker --address 127.0.0.1:4100 session create --config tests/fixtures/alien_cake_addict.toml
+# Copy the returned full session ID, and wait until session inspect reports Ready.
+ID='paste-the-full-session-id-here'
+target/debug/woodpecker --address 127.0.0.1:4100 session inspect "$ID"
+target/debug/woodpecker --address 127.0.0.1:4100 session repl "$ID"
+```
+
+Use the normal `input.keyboard.press` / `release` commands with `arrow_up`,
+`arrow_down`, `arrow_left`, `arrow_right` and `space`, then explicit `tick.warp.start`
+commands. The plugin controls when the application's schedules execute; it preserves
+the application's normal time policy. A tick is **not** guaranteed to be 100 ms and
+three ticks do not promise a movement. Use pacing when exercising time-based movement.
+The original cooldown and bonus timers still decide the effects. Inspect alone does
+not advance gameplay. Native RNG behavior and the original `GITHUB_ACTIONS` seed
+condition are unchanged; the session does not force a seed.
+
+Inspect the registered **resource** with this command payload, using `session
+submit` + correlated Activity polling or the normal Script/REPL interface:
+
+```json
+{"command":"inspect.query","arguments":{"source":"resources","selector":{"kind":"type","type_path":"alien_cake_addict::Game"},"projection":{"kind":"value"}}}
+```
+
+`Game` contains the existing board, player/bonus, score, cakes eaten and camera
+focus fields. No extra counters, seed field or entity naming was added. Read the
+state/timer through their registered resource types and standard Bevy components
+through general Inspect. This is metadata, not a new gameplay state model.
+
+Stop explicitly when done:
+
+```sh
+target/debug/woodpecker --address 127.0.0.1:4100 session stop "$ID"
+target/debug/woodpecker --address 127.0.0.1:4100 server stop
+```
+
+The previous invasive adaptation, custom observation, movement script and tests
+for changed gameplay were withdrawn. Original gameplay bodies are compared against
+`b085470`; build, existing tests and Clippy are checked separately. These are not a
+real session/asset-loading or pixel acceptance. Separate approved GUI evidence is
+preserved in `target/render-bootstrap-gui-retry-4/` (rendered board/character) and
+`target/alien-score-instrumented-1/` (fresh source-blind player reached live score
+31 with 17 cakes). The parent independently confirmed the frozen Game, no later
+ticks, no source attempts, four captures and clean shutdown. The winning PNG
+shows `Sugar Rush: 31`. This score acceptance used temporary SDK diagnostics,
+which were archived and removed afterwards. Historical intermittent window loss
+was not reproduced or causally fixed; the previous seven-scene acceptance remains
+separate. Cake-model pixel rendering is not inferred merely from the score.
+
 ## Native application fixtures
 
-The binaries without `slice` use native Bevy input. Their systems, semantic state,
+The other existing fixtures still use `slice` as a legacy native/controlled switch;
+Alien Cake selects this at runtime instead. Their systems, semantic state,
 reflection registrations and unit tests are retained for later Input, Inspect
 and Screenshot acceptance. They do not expose the removed v2 integration.
 There is no `automation` feature or automation marker.
@@ -251,6 +332,7 @@ There is no `automation` feature or automation marker.
 | `ui_drag_drop` | Valid and invalid drops, layout and drag lifecycle |
 | `game_menu` | Menu navigation, state-scoped entities, settings and timers |
 | `logical_state` | Update/FixedUpdate, held keys, pointer presses and reflected timer state |
+| `alien_cake_addict` | Original gameplay and virtual-keyboard restart; minimal plugin binding, rendered board and source-blind score 31 verified |
 
 For example:
 
